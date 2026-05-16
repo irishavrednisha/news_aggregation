@@ -105,7 +105,7 @@ def main():
 
         print("\nПубликация готовых кластеров в MAX...")
         publish_ready_clusters(
-            limit=100
+            limit=30
         )
 
     finally:
