@@ -1,0 +1,11 @@
+feedparser
+requests
+beautifulsoup4
+playwright
+sqlalchemy
+psycopg2-binary
+python-dotenv
+scikit-learn
+pgvector
+sentence-transformers
+apscheduler
