@@ -161,12 +161,52 @@ def fetch_html(url: str) -> str:
     browser_domains = [
         "nornickel.ru",
         "заводы.рф",
+        "xn--80az8a.xn--p1ai",
+        "производства.рф",
+        "xn--80adahnf5bdekrm.xn--p1ai",
     ]
 
     if any(domain_name in domain for domain_name in browser_domains):
         return fetch_html_with_browser(url)
 
     return fetch_html_with_requests(url)
+
+
+# =========================
+# Обрезка хвостов похожих новостей
+# =========================
+
+def cut_related_news(text: str) -> str:
+    markers = [
+        "Главное в отраслевых СМИ",
+        "Читайте также",
+        "Другие материалы",
+        "Материалы по теме",
+        "Новости по теме",
+        "Еще по теме",
+        "Ещё по теме",
+        "Смотрите также",
+        "Популярное",
+        "Последние новости",
+        "Ранее сообщалось",
+        "Подписывайтесь",
+        "Печатная версия статьи",
+        "Печатная версия",
+    ]
+
+    lowered = text.lower()
+    positions = []
+
+    for marker in markers:
+        pos = lowered.find(marker.lower())
+
+        if pos != -1:
+            positions.append(pos)
+
+    if positions:
+        text = text[:min(positions)]
+
+    return text.strip()
 
 
 # =========================
@@ -207,6 +247,7 @@ def extract_text_generic(soup: BeautifulSoup, title: str | None = None) -> str:
         ".article p",
         ".news p",
         ".content p",
+        "div[itemprop='articleBody'] p",
         "div[class*='content'] p",
         "div[class*='text'] p",
         "div[class*='article'] p",
@@ -214,17 +255,78 @@ def extract_text_generic(soup: BeautifulSoup, title: str | None = None) -> str:
 
     return extract_by_selectors(soup, selectors, min_len=250, title=title)
 
+
 def extract_text_proizvodstva(soup: BeautifulSoup, title: str | None = None) -> str:
     selectors = [
         "article p",
+        ".post p",
         ".post-content p",
         ".entry-content p",
         ".wp-block-post-content p",
+        ".single-post p",
+        ".article p",
+        ".article-content p",
         "main p",
+        "div[class*='post'] p",
+        "div[class*='article'] p",
         "div[class*='content'] p",
+        "div[class*='text'] p",
     ]
 
-    return extract_by_selectors(soup, selectors, min_len=200, title=title)
+    text = extract_by_selectors(soup, selectors, min_len=150, title=title)
+
+    if text:
+        return text
+
+    paragraphs = [
+        p.get_text(" ", strip=True)
+        for p in soup.find_all("p")
+    ]
+
+    paragraphs = filter_paragraphs(paragraphs, title=title)
+    text = normalize_article_text(" ".join(paragraphs), title=title)
+    text = cut_related_news(text)
+
+    if len(text) >= 120:
+        return text
+
+    return ""
+
+
+def extract_text_zavody(soup: BeautifulSoup, title: str | None = None) -> str:
+    selectors = [
+        "article p",
+        ".publication p",
+        ".publication-content p",
+        ".article-content p",
+        ".post-content p",
+        ".entry-content p",
+        "main p",
+        "div[class*='publication'] p",
+        "div[class*='article'] p",
+        "div[class*='content'] p",
+        "div[class*='text'] p",
+    ]
+
+    text = extract_by_selectors(soup, selectors, min_len=150, title=title)
+
+    if text:
+        return text
+
+    paragraphs = [
+        p.get_text(" ", strip=True)
+        for p in soup.find_all("p")
+    ]
+
+    paragraphs = filter_paragraphs(paragraphs, title=title)
+    text = normalize_article_text(" ".join(paragraphs), title=title)
+    text = cut_related_news(text)
+
+    if len(text) >= 120:
+        return text
+
+    return ""
+
 
 def extract_text_rosatom(soup: BeautifulSoup, title: str | None = None) -> str:
     selectors = [
@@ -257,9 +359,55 @@ def extract_text_rosatom(soup: BeautifulSoup, title: str | None = None) -> str:
             text = block.get_text(" ", strip=True)
 
         text = normalize_article_text(text, title=title)
+        text = cut_related_news(text)
 
         if len(text) >= 250:
             return text
+
+    return ""
+
+
+def extract_text_military_media(soup: BeautifulSoup, title: str | None = None) -> str:
+    selectors = [
+        "article p",
+        "main p",
+        ".article p",
+        ".article_text p",
+        ".article-text p",
+        ".news_text p",
+        ".news-text p",
+        ".material p",
+        ".material-text p",
+        ".content p",
+        ".text p",
+        "div[itemprop='articleBody'] p",
+        "div[class*='article'] p",
+        "div[class*='material'] p",
+        "div[class*='content'] p",
+        "div[class*='text'] p",
+    ]
+
+    text = extract_by_selectors(
+        soup=soup,
+        selectors=selectors,
+        min_len=120,
+        title=title
+    )
+
+    if text:
+        return text
+
+    paragraphs = [
+        p.get_text(" ", strip=True)
+        for p in soup.find_all("p")
+    ]
+
+    paragraphs = filter_paragraphs(paragraphs, title=title)
+    text = normalize_article_text(" ".join(paragraphs), title=title)
+    text = cut_related_news(text)
+
+    if len(text) >= 120:
+        return text
 
     return ""
 
@@ -296,14 +444,17 @@ def extract_article_text(url: str, title: str | None = None) -> str:
         return extract_text_rosatom(soup, title=title)
 
     if (
-            "военное.рф" in domain
-            or "flotprom.ru" in domain
-            or "отраслевое.рф" in domain
-            or "flot.com" in domain
+        "военное.рф" in domain
+        or "xn--b1aga5aadd.xn--p1ai" in domain
+        or "flotprom.ru" in domain
+        or "отраслевое.рф" in domain
+        or "xn--80aegqufhcjg6b.xn--p1ai" in domain
+        or "flot.com" in domain
     ):
         return extract_text_military_media(soup, title=title)
 
     return extract_text_generic(soup, title=title)
+
 
 # =========================
 # Проверка ссылок
@@ -522,6 +673,82 @@ def collect_links_by_path(
     return previews
 
 
+def collect_vestnikprom_previews(source, limit: int) -> list[ArticlePreview]:
+    previews = []
+
+    print("=" * 100)
+    print(f"HTML-источник: {source.name}")
+    print(f"URL: {source.url}")
+
+    html = fetch_html(source.url)
+
+    if not html:
+        return previews
+
+    soup = BeautifulSoup(html, "html.parser")
+    seen_urls = set()
+
+    heading = soup.find(
+        lambda tag: tag.name in ["h2", "h3"]
+        and "Промышленные новости" in tag.get_text(" ", strip=True)
+    )
+
+    if not heading:
+        print("Блок 'Промышленные новости' не найден")
+        return previews
+
+    current = heading.find_next()
+
+    while current and len(previews) < limit:
+        text = current.get_text(" ", strip=True)
+
+        if current.name in ["h2", "h3"] and "Промышленные новости" not in text:
+            break
+
+        links = current.select("a[href]")
+
+        for a in links:
+            title = clean_text(a.get_text(" ", strip=True))
+            href = a.get("href")
+
+            if not title or not href or len(title) < 15:
+                continue
+
+            absolute_url = urljoin(source.url, href)
+
+            if not same_domain(absolute_url, source.url):
+                continue
+
+            if absolute_url in seen_urls:
+                continue
+
+            parent_text = current.get_text(" ", strip=True)
+
+            if "Новости" not in parent_text and "/category/news" not in absolute_url:
+                continue
+
+            seen_urls.add(absolute_url)
+
+            previews.append(
+                ArticlePreview(
+                    source=source.name,
+                    title=normalize_title(title, source.name),
+                    url=absolute_url,
+                    published_at=None,
+                    preview_text="",
+                )
+            )
+
+            if len(previews) >= limit:
+                break
+
+        current = current.find_next_sibling()
+
+    print(f"Найдено HTML-кандидатов: {len(previews)}")
+
+    return previews
+
+
 def collect_html_previews(source, limit: int) -> list[ArticlePreview]:
     previews = []
 
@@ -613,22 +840,16 @@ def collect_news(
         if source.source_type == "rss":
             previews = collect_rss_previews(source, limit=limit_per_source)
 
-
         elif source.source_type == "html":
-
             if source.name == "Росатом":
-
                 previews = collect_rosatom_previews(source, limit=limit_per_source)
 
-
             elif source.name == "Вестник промышленности":
-
                 previews = collect_vestnikprom_previews(source, limit=limit_per_source)
 
-
             else:
-
                 previews = collect_html_previews(source, limit=limit_per_source)
+
         else:
             continue
 
@@ -644,22 +865,12 @@ def collect_news(
 
     return all_articles
 
+
 def debug_collect_news(
     sources: list,
     limit_per_source: int = 3,
     text_preview_length: int = 1200,
 ):
-    """
-    Временная отладочная функция.
-    Показывает:
-    - заголовок
-    - ссылку
-    - дату
-    - источник текста
-    - длину текста
-    - начало текста
-    """
-
     articles = collect_news(
         sources=sources,
         limit_per_source=limit_per_source
@@ -671,22 +882,15 @@ def debug_collect_news(
     print("=" * 140)
 
     for index, article in enumerate(articles, start=1):
-
         print("\n" + "-" * 140)
-
         print(f"[{index}] {article.title}")
-
         print(f"\nИсточник: {article.source}")
-
         print(f"\nURL:")
         print(article.url)
-
         print(f"\nДата:")
         print(article.published_at)
-
         print(f"\nИсточник текста:")
         print(article.text_source)
-
         print(f"\nДлина текста:")
         print(len(article.text))
 
@@ -700,179 +904,6 @@ def debug_collect_news(
 
         print("-" * 140)
 
-def cut_related_news(text: str) -> str:
-    markers = [
-        "Главное в отраслевых СМИ",
-        "Читайте также",
-        "Другие материалы",
-        "Материалы по теме",
-        "Новости по теме",
-        "Еще по теме",
-        "Смотрите также",
-        "Популярное",
-        "Последние новости",
-        "Ранее сообщалось",
-        "Подписывайтесь",
-        "Печатная версия статьи",
-        "Печатная версия",
-    ]
-
-    lowered = text.lower()
-    positions = []
-
-    for marker in markers:
-        pos = lowered.find(marker.lower())
-        if pos != -1:
-            positions.append(pos)
-
-    if positions:
-        text = text[:min(positions)]
-
-    return text.strip()
-
-def extract_text_proizvodstva(soup: BeautifulSoup, title: str | None = None) -> str:
-    selectors = [
-        "article p",
-        ".post-content p",
-        ".entry-content p",
-        ".wp-block-post-content p",
-        "main p",
-        "div[class*='content'] p",
-    ]
-
-    return extract_by_selectors(soup, selectors, min_len=200, title=title)
-
-
-def extract_text_zavody(soup: BeautifulSoup, title: str | None = None) -> str:
-    selectors = [
-        "article p",
-        ".publication p",
-        ".publication-content p",
-        ".article-content p",
-        ".post-content p",
-        ".entry-content p",
-        "main p",
-        "div[class*='publication'] p",
-        "div[class*='article'] p",
-        "div[class*='content'] p",
-        "div[class*='text'] p",
-    ]
-
-    return extract_by_selectors(soup, selectors, min_len=180, title=title)
-
-
-def extract_text_rosatom(soup: BeautifulSoup, title: str | None = None) -> str:
-    selectors = [
-        ".news-detail",
-        ".detail_text",
-        ".detail-text",
-        ".news-detail__text",
-        ".content",
-        ".page-content",
-        ".main-content",
-        "main",
-        "article",
-    ]
-
-    for selector in selectors:
-        block = soup.select_one(selector)
-
-        if not block:
-            continue
-
-        paragraphs = [
-            p.get_text(" ", strip=True)
-            for p in block.find_all("p")
-        ]
-
-        if paragraphs:
-            paragraphs = filter_paragraphs(paragraphs, title=title)
-            text = " ".join(paragraphs)
-        else:
-            text = block.get_text(" ", strip=True)
-
-        text = normalize_article_text(text, title=title)
-
-        if len(text) >= 250:
-            return text
-
-    return ""
-
-def collect_vestnikprom_previews(source, limit: int) -> list[ArticlePreview]:
-    previews = []
-
-    print("=" * 100)
-    print(f"HTML-источник: {source.name}")
-    print(f"URL: {source.url}")
-
-    html = fetch_html(source.url)
-
-    if not html:
-        return previews
-
-    soup = BeautifulSoup(html, "html.parser")
-    seen_urls = set()
-
-    heading = soup.find(
-        lambda tag: tag.name in ["h2", "h3"]
-        and "Промышленные новости" in tag.get_text(" ", strip=True)
-    )
-
-    if not heading:
-        print("Блок 'Промышленные новости' не найден")
-        return previews
-
-    current = heading.find_next()
-
-    while current and len(previews) < limit:
-        text = current.get_text(" ", strip=True)
-
-        # Останавливаемся, когда дошли до следующего крупного раздела
-        if current.name in ["h2", "h3"] and "Промышленные новости" not in text:
-            break
-
-        links = current.select("a[href]")
-
-        for a in links:
-            title = clean_text(a.get_text(" ", strip=True))
-            href = a.get("href")
-
-            if not title or not href or len(title) < 15:
-                continue
-
-            absolute_url = urljoin(source.url, href)
-
-            if not same_domain(absolute_url, source.url):
-                continue
-
-            if absolute_url in seen_urls:
-                continue
-
-            # Берём только записи из категории "Новости"
-            parent_text = current.get_text(" ", strip=True)
-            if "Новости" not in parent_text and "/category/news" not in absolute_url:
-                continue
-
-            seen_urls.add(absolute_url)
-
-            previews.append(
-                ArticlePreview(
-                    source=source.name,
-                    title=normalize_title(title, source.name),
-                    url=absolute_url,
-                    published_at=None,
-                    preview_text="",
-                )
-            )
-
-            if len(previews) >= limit:
-                break
-
-        current = current.find_next_sibling()
-
-    print(f"Найдено HTML-кандидатов: {len(previews)}")
-
-    return previews
 
 if __name__ == "__main__":
     from database.db import get_session
@@ -892,48 +923,3 @@ if __name__ == "__main__":
     )
 
     session.close()
-
-
-    def extract_text_military_media(soup: BeautifulSoup, title: str | None = None) -> str:
-        selectors = [
-            "article p",
-            "main p",
-            ".article p",
-            ".article_text p",
-            ".article-text p",
-            ".news_text p",
-            ".news-text p",
-            ".material p",
-            ".material-text p",
-            ".content p",
-            ".text p",
-            "div[itemprop='articleBody'] p",
-            "div[class*='article'] p",
-            "div[class*='material'] p",
-            "div[class*='content'] p",
-            "div[class*='text'] p",
-        ]
-
-        text = extract_by_selectors(
-            soup=soup,
-            selectors=selectors,
-            min_len=120,
-            title=title
-        )
-
-        if text:
-            return text
-
-        # запасной вариант: берём все p, но фильтруем мусор
-        paragraphs = [
-            p.get_text(" ", strip=True)
-            for p in soup.find_all("p")
-        ]
-
-        paragraphs = filter_paragraphs(paragraphs, title=title)
-        text = normalize_article_text(" ".join(paragraphs), title=title)
-
-        if len(text) >= 120:
-            return text
-
-        return ""
