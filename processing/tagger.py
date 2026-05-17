@@ -882,7 +882,7 @@ def tag_cluster(
         scored_tags=scored_tags,
         min_score=min_score,
         max_tags=max_tags,
-        max_gap_from_best=0.12
+        max_gap_from_best=0.05
     )
 
     if selected_tags:

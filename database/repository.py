@@ -42,6 +42,23 @@ def get_or_create_source(
 
     return source
 
+def news_url_exists(session, url: str) -> bool:
+    """
+    Проверяет, есть ли новость с таким URL в базе данных.
+    Используется до парсинга полного текста, чтобы не тратить время
+    на повторную загрузку уже обработанных страниц.
+    """
+
+    if not url:
+        return False
+
+    return (
+        session.query(News.id)
+        .filter(News.url == url)
+        .first()
+        is not None
+    )
+
 
 def seed_sources(session: Session):
     default_sources = [
@@ -49,7 +66,7 @@ def seed_sources(session: Session):
             "name": "ИАПН",
             "url": "https://iapn.ru",
             "rss_url": "https://iapn.ru/feed/",
-            "source_type": "rss",
+            "source_type": "html",
             "is_active": True,
         },
         {

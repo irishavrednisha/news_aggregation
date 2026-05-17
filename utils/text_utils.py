@@ -69,6 +69,15 @@ def normalize_title(title: str, source: str) -> str:
     title = re.sub(r"^Заголовок:\s*", "", title, flags=re.IGNORECASE)
     title = re.sub(r"^\d{2}\.\d{2}\.\d{4}\s*[-–—]\s*", "", title)
 
+    # убираем служебные хвосты
+    title = re.sub(r"\b(Читать далее|Подробнее|Проновости)\b", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\s+", " ", title).strip(" —-")
+
+    # если в заголовок попал текст всей карточки — оставляем только начало
+    if len(title) > 180:
+        parts = re.split(r"(?<=[.!?])\s+", title)
+        title = parts[0].strip()
+
     important_sources = [
         "Военное.рф",
         "ФлотПром",
@@ -80,13 +89,14 @@ def normalize_title(title: str, source: str) -> str:
         title = title[len("Важное "):].strip()
 
     letters = [c for c in title if c.isalpha()]
+
     if letters:
         upper_ratio = sum(c.isupper() for c in letters) / len(letters)
+
         if upper_ratio > 0.8:
             title = title.capitalize()
 
     return title.strip()
-
 
 def remove_dateline(text: str) -> str:
     if not text:
@@ -274,12 +284,10 @@ def is_bad_paragraph(text: str) -> bool:
 
 def normalize_article_text(text: str, title: str | None = None) -> str:
     text = clean_text(text)
-    text = remove_urls(text)
     text = remove_repeated_title(text, title)
     text = remove_boilerplate(text)
     text = remove_dateline(text)
     text = remove_contacts_and_service_text(text)
-    text = cut_related_titles_tail(text)
     text = remove_duplicate_sentences(text)
 
     text = re.sub(r"\s+", " ", text)
@@ -307,64 +315,3 @@ def filter_paragraphs(paragraphs: list[str], title: str | None = None) -> list[s
         result.append(text)
 
     return result
-
-def cut_related_titles_tail(text: str) -> str:
-    if not text:
-        return ""
-
-    markers = [
-        "Другие новости",
-        "Еще новости",
-        "Ещё новости",
-        "Похожие новости",
-        "Читайте также",
-        "Читайте по теме",
-        "Новости по теме",
-        "Материалы по теме",
-        "Рекомендуем",
-    ]
-
-    lowered = text.lower()
-
-    for marker in markers:
-        pos = lowered.find(marker.lower())
-        if pos != -1:
-            return text[:pos].strip()
-
-    # Частый случай: после нормального текста подряд идут 3+ заголовка без точек.
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-
-    clean_sentences = []
-
-    for sentence in sentences:
-        words = sentence.split()
-
-        # Заголовки похожих статей обычно короткие, без точки внутри,
-        # начинаются с заглавной буквы и идут подряд.
-        if len(words) <= 10 and not sentence.endswith((".", "!", "?")):
-            continue
-
-        clean_sentences.append(sentence)
-
-    return " ".join(clean_sentences).strip()
-
-def remove_urls(text: str) -> str:
-    if not text:
-        return ""
-
-    # http:// https://
-    text = re.sub(r"https?://\S+", " ", text)
-
-    # www.
-    text = re.sub(r"www\.\S+", " ", text)
-
-    # ссылки без протокола
-    text = re.sub(
-        r"\b[a-zA-Z0-9.-]+\.(ru|com|net|org|рф|info|io|biz)\S*",
-        " ",
-        text
-    )
-
-    text = re.sub(r"\s+", " ", text)
-
-    return text.strip()

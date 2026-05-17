@@ -64,7 +64,8 @@ def main():
         print("Сбор новостей...")
         articles = collect_news(
             sources=sources,
-            limit_per_source=limit_per_source
+            limit_per_source=limit_per_source,
+            session=session
         )
 
         print(f"\nСобрано материалов: {len(articles)}")
@@ -99,7 +100,7 @@ def main():
         print("\nТегирование новых кластеров...")
         tag_new_clusters(
             session=session,
-            min_score=0.5
+            min_score=0.33
 
         )
 
