@@ -9,3 +9,5 @@ scikit-learn
 pgvector
 sentence-transformers
 apscheduler
+sentence-transformers
+torch

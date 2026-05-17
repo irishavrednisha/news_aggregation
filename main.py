@@ -99,7 +99,7 @@ def main():
         print("\nТегирование новых кластеров...")
         tag_new_clusters(
             session=session,
-            min_score=0.25
+            min_score=0.5
 
         )
 

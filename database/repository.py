@@ -182,6 +182,48 @@ def seed_sources(session: Session):
             "source_type": "rss",
             "is_active": False,
         },
+        {
+            "name": "MASHNEWS",
+            "url": "https://mashnews.ru/",
+            "rss_url": None,
+            "source_type": "html",
+            "is_active": True,
+        },
+        {
+            "name": "Коммерсантъ — Промышленность",
+            "url": "https://www.kommersant.ru/theme/3631",
+            "rss_url": None,
+            "source_type": "html",
+            "is_active": True,
+        },
+        {
+            "name": "DixiNews — Промышленность",
+            "url": "https://dixinews.ru/news/promyshlennost/",
+            "rss_url": None,
+            "source_type": "html",
+            "is_active": True,
+        },
+        {
+            "name": "НедраДВ",
+            "url": "https://nedradv.ru/nedradv/ru/news",
+            "rss_url": None,
+            "source_type": "html",
+            "is_active": True,
+        },
+        {
+            "name": "ТПП РФ",
+            "url": "https://news.tpprf.ru/ru/main/",
+            "rss_url": None,
+            "source_type": "html",
+            "is_active": True,
+        },
+        {
+            "name": "Добывающая промышленность",
+            "url": "https://dprom.online/mainthemes/news/",
+            "rss_url": None,
+            "source_type": "html",
+            "is_active": True,
+        },
     ]
 
     for source in default_sources:

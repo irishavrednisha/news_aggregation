@@ -255,6 +255,112 @@ def extract_text_generic(soup: BeautifulSoup, title: str | None = None) -> str:
 
     return extract_by_selectors(soup, selectors, min_len=250, title=title)
 
+def extract_text_nedradv(soup: BeautifulSoup, title: str | None = None) -> str:
+    """
+    Извлекает текст статьи с сайта НедраДВ.
+    """
+
+    candidates = []
+
+    if title:
+        candidates.append(clean_text(title))
+
+    for tag in soup.find_all(["p", "blockquote"]):
+        text = clean_text(tag.get_text(" ", strip=True))
+
+        if not text:
+            continue
+
+        if len(text) < 40:
+            continue
+
+        lower = text.lower()
+
+        bad_fragments = [
+            "поделиться",
+            "читайте также",
+            "последние публикации",
+            "последние аукционы",
+            "наши контакты",
+            "все права защищены",
+            "при полном или частичном использовании",
+            "настоящий ресурс содержит",
+            "подписаться",
+            "комментарии для сайта",
+        ]
+
+        if any(fragment in lower for fragment in bad_fragments):
+            continue
+
+        candidates.append(text)
+
+    return clean_text("\n".join(dict.fromkeys(candidates)))
+
+def extract_text_tpprf(soup: BeautifulSoup, title: str | None = None) -> str:
+    """
+    Извлекает текст новости с сайта ТПП РФ.
+    """
+
+    candidates = []
+
+    if title:
+        candidates.append(clean_text(title))
+
+    selectors = [
+        "article",
+        ".news-detail",
+        ".news-detail__text",
+        ".article",
+        ".article__text",
+        ".content",
+        ".main-content",
+        ".text",
+    ]
+
+    for selector in selectors:
+        block = soup.select_one(selector)
+
+        if not block:
+            continue
+
+        for tag in block.find_all(["p", "div"]):
+            text = clean_text(tag.get_text(" ", strip=True))
+
+            if len(text) >= 40:
+                candidates.append(text)
+
+        if candidates:
+            break
+
+    if not candidates:
+        for tag in soup.find_all("p"):
+            text = clean_text(tag.get_text(" ", strip=True))
+
+            if len(text) >= 40:
+                candidates.append(text)
+
+    bad_fragments = [
+        "поделиться",
+        "версия для печати",
+        "читайте также",
+        "торгово-промышленная палата",
+        "все права защищены",
+        "контактная информация",
+        "подписаться",
+    ]
+
+    cleaned = []
+
+    for text in candidates:
+        lower = text.lower()
+
+        if any(fragment in lower for fragment in bad_fragments):
+            continue
+
+        if text not in cleaned:
+            cleaned.append(text)
+
+    return clean_text("\n".join(cleaned))
 
 def extract_text_proizvodstva(soup: BeautifulSoup, title: str | None = None) -> str:
     selectors = [
@@ -453,6 +559,16 @@ def extract_article_text(url: str, title: str | None = None) -> str:
     ):
         return extract_text_military_media(soup, title=title)
 
+    if "nedradv.ru" in domain:
+        return extract_text_nedradv(soup, title=title)
+
+    if "tpprf.ru" in domain:
+
+        text = extract_text_tpprf(soup, title=title)
+
+        if text:
+            return text
+
     return extract_text_generic(soup, title=title)
 
 
@@ -547,8 +663,20 @@ def is_probably_article_url(url: str) -> bool:
         "/press-releases/",
         "/pressreleases/",
         "/news-and-media/",
-    ]
 
+        # новые источники
+        ".html",                         # MASHNEWS
+        "/doc/",                         # Коммерсантъ
+        "/news/promyshlennost/",         # DixiNews
+        "/nedradv/ru/news/",             # НедраДВ
+        "/ru/news/",                     # ТПП РФ
+        "/mining/",                      # Добывающая промышленность
+        "/geology/",
+        "/metallurgy/",
+        "/oilgas/",
+        "/nedradv/ru/page_news",
+        "/ru/news/",
+    ]
     return any(part in lowered for part in article_parts)
 
 
@@ -748,6 +876,212 @@ def collect_vestnikprom_previews(source, limit: int) -> list[ArticlePreview]:
 
     return previews
 
+def collect_mashnews_previews(source, limit: int) -> list[ArticlePreview]:
+    return collect_links_by_path(
+        source=source,
+        limit=limit,
+        required_prefix="/",
+        exclude_exact=None,
+    )
+
+
+def collect_kommersant_industry_previews(source, limit: int) -> list[ArticlePreview]:
+    previews = []
+
+    print("=" * 100)
+    print(f"HTML-источник: {source.name}")
+    print(f"URL: {source.url}")
+
+    html = fetch_html(source.url)
+
+    if not html:
+        return previews
+
+    soup = BeautifulSoup(html, "html.parser")
+    seen_urls = set()
+
+    for a in soup.select("a[href]"):
+        title = clean_text(a.get_text(" ", strip=True))
+        href = a.get("href")
+
+        if not title or not href or len(title) < 10:
+            continue
+
+        absolute_url = urljoin(source.url, href)
+
+        if not same_domain(absolute_url, source.url):
+            continue
+
+        if "/doc/" not in absolute_url:
+            continue
+
+        if absolute_url in seen_urls:
+            continue
+
+        seen_urls.add(absolute_url)
+
+        previews.append(
+            ArticlePreview(
+                source=source.name,
+                title=normalize_title(title, source.name),
+                url=absolute_url,
+                published_at=None,
+                preview_text="",
+            )
+        )
+
+        if len(previews) >= limit:
+            break
+
+    print(f"Найдено HTML-кандидатов: {len(previews)}")
+    return previews
+
+
+def collect_dixinews_industry_previews(source, limit: int) -> list[ArticlePreview]:
+    return collect_links_by_path(
+        source=source,
+        limit=limit,
+        required_prefix="/news/promyshlennost/",
+        exclude_exact="/news/promyshlennost",
+    )
+
+
+def collect_nedradv_previews(source, limit: int) -> list[ArticlePreview]:
+    """
+    Собирает новости с НедраДВ.
+
+    У этого сайта страница списка новостей находится по адресу:
+    https://nedradv.ru/nedradv/ru/news
+
+    Но сами статьи имеют вид:
+    https://nedradv.ru/nedradv/ru/page_news?obj=...
+    """
+
+    previews = []
+
+    print("=" * 100)
+    print(f"HTML-источник: {source.name}")
+    print(f"URL: {source.url}")
+
+    html = fetch_html(source.url)
+
+    if not html:
+        return previews
+
+    soup = BeautifulSoup(html, "html.parser")
+    seen_urls = set()
+
+    for a in soup.select("a[href]"):
+        title = clean_text(a.get_text(" ", strip=True))
+        href = a.get("href")
+
+        if not title or not href:
+            continue
+
+        if len(title) < 20:
+            continue
+
+        absolute_url = urljoin(source.url, href)
+
+        if not same_domain(absolute_url, source.url):
+            continue
+
+        if "/nedradv/ru/page_news" not in absolute_url:
+            continue
+
+        if "obj=" not in absolute_url:
+            continue
+
+        if absolute_url in seen_urls:
+            continue
+
+        seen_urls.add(absolute_url)
+
+        previews.append(
+            ArticlePreview(
+                source=source.name,
+                title=normalize_title(title, source.name),
+                url=absolute_url,
+                published_at=None,
+                preview_text="",
+            )
+        )
+
+        if len(previews) >= limit:
+            break
+
+    print(f"Найдено HTML-кандидатов: {len(previews)}")
+    return previews
+
+
+def collect_tpprf_previews(source, limit: int) -> list[ArticlePreview]:
+    return collect_links_by_path(
+        source=source,
+        limit=limit,
+        required_prefix="/ru/news/",
+        exclude_exact="/ru/news",
+    )
+
+
+def collect_dprom_previews(source, limit: int) -> list[ArticlePreview]:
+    previews = []
+
+    print("=" * 100)
+    print(f"HTML-источник: {source.name}")
+    print(f"URL: {source.url}")
+
+    html = fetch_html(source.url)
+
+    if not html:
+        return previews
+
+    soup = BeautifulSoup(html, "html.parser")
+    seen_urls = set()
+
+    allowed_parts = [
+        "/mining/",
+        "/geology/",
+        "/metallurgy/",
+        "/oilgas/",
+        "/technologies/",
+        "/events/",
+    ]
+
+    for a in soup.select("a[href]"):
+        title = clean_text(a.get_text(" ", strip=True))
+        href = a.get("href")
+
+        if not title or not href or len(title) < 15:
+            continue
+
+        absolute_url = urljoin(source.url, href)
+
+        if not same_domain(absolute_url, source.url):
+            continue
+
+        if not any(part in absolute_url for part in allowed_parts):
+            continue
+
+        if absolute_url in seen_urls:
+            continue
+
+        seen_urls.add(absolute_url)
+
+        previews.append(
+            ArticlePreview(
+                source=source.name,
+                title=normalize_title(title, source.name),
+                url=absolute_url,
+                published_at=None,
+                preview_text="",
+            )
+        )
+
+        if len(previews) >= limit:
+            break
+
+    print(f"Найдено HTML-кандидатов: {len(previews)}")
+    return previews
 
 def collect_html_previews(source, limit: int) -> list[ArticlePreview]:
     previews = []
@@ -841,15 +1175,50 @@ def collect_news(
             previews = collect_rss_previews(source, limit=limit_per_source)
 
         elif source.source_type == "html":
+
             if source.name == "Росатом":
+
                 previews = collect_rosatom_previews(source, limit=limit_per_source)
 
+
             elif source.name == "Вестник промышленности":
+
                 previews = collect_vestnikprom_previews(source, limit=limit_per_source)
 
-            else:
-                previews = collect_html_previews(source, limit=limit_per_source)
 
+            elif source.name == "MASHNEWS":
+
+                previews = collect_mashnews_previews(source, limit=limit_per_source)
+
+
+            elif source.name == "Коммерсантъ — Промышленность":
+
+                previews = collect_kommersant_industry_previews(source, limit=limit_per_source)
+
+
+            elif source.name == "DixiNews — Промышленность":
+
+                previews = collect_dixinews_industry_previews(source, limit=limit_per_source)
+
+
+            elif source.name == "НедраДВ":
+
+                previews = collect_nedradv_previews(source, limit=limit_per_source)
+
+
+            elif source.name == "ТПП РФ":
+
+                previews = collect_tpprf_previews(source, limit=limit_per_source)
+
+
+            elif source.name == "Добывающая промышленность":
+
+                previews = collect_dprom_previews(source, limit=limit_per_source)
+
+
+            else:
+
+                previews = collect_html_previews(source, limit=limit_per_source)
         else:
             continue
 
