@@ -84,7 +84,7 @@ def main():
         cluster_recent_news(
             session=session,
             hours=clustering_hours,
-            threshold=0.85
+            threshold=0.7
         )
 
         print_recent_clusters(
@@ -95,12 +95,14 @@ def main():
         summarize_new_clusters(
             session=session,
             sentence_count=4,
-            max_chars=700
+            max_chars=800
         )
         print("\nТегирование новых кластеров...")
         tag_new_clusters(
             session=session,
-            min_score=0.33
+            min_score=0.33,
+            # max_tags=2,
+            # debug=True
 
         )
 

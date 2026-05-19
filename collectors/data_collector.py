@@ -672,6 +672,10 @@ def extract_article_text(url: str, title: str | None = None) -> str:
         if text:
             return text
 
+    if "lukoil.ru" in domain:
+        lukoil_title = extract_lukoil_title(soup, fallback_title=title)
+        return extract_text_lukoil(soup, title=lukoil_title)
+
     return extract_text_generic(soup, title=title)
 
 
@@ -1000,6 +1004,270 @@ def collect_vestnikprom_previews(source, limit: int) -> list[ArticlePreview]:
     print(f"Найдено HTML-кандидатов: {len(previews)}")
     return previews
 
+def is_title_fragment(text: str, title: str | None) -> bool:
+    """
+    Проверяет, является ли абзац фрагментом заголовка.
+    Нужно для случаев, когда сайт обрезает начало заголовка
+    или вставляет его в первый абзац.
+    """
+
+    if not text or not title:
+        return False
+
+    text_norm = clean_text(text).lower()
+    title_norm = clean_text(title).lower()
+
+    if not text_norm or not title_norm:
+        return False
+
+    # Полное совпадение
+    if text_norm == title_norm:
+        return True
+
+    # Абзац входит в заголовок
+    if text_norm in title_norm and len(text_norm) > 20:
+        return True
+
+    # Заголовок входит в абзац
+    if title_norm in text_norm:
+        return True
+
+    # Сравнение без кавычек и лишней пунктуации
+    simple_text = re.sub(r"[«»\"'.,:;!?()\[\]—-]", " ", text_norm)
+    simple_title = re.sub(r"[«»\"'.,:;!?()\[\]—-]", " ", title_norm)
+
+    simple_text = clean_text(simple_text)
+    simple_title = clean_text(simple_title)
+
+    if simple_text in simple_title and len(simple_text) > 20:
+        return True
+
+    if simple_title in simple_text:
+        return True
+
+    return False
+
+
+def remove_title_prefix(text: str, title: str | None) -> str:
+    """
+    Удаляет из начала текста заголовок или его фрагмент.
+    Например:
+    'Карьер 26»: обзор обновлённой системы диспетчеризации Импортонезависимая...'
+    """
+
+    if not text or not title:
+        return text
+
+    text = clean_text(text)
+    title = clean_text(title)
+
+    # Пробуем удалить полный заголовок
+    if text.lower().startswith(title.lower()):
+        return clean_text(text[len(title):])
+
+    # Берём значимые хвосты заголовка и удаляем их из начала текста
+    title_parts = [
+        title,
+        title.replace("«", "").replace("»", ""),
+    ]
+
+    words = title.replace("«", "").replace("»", "").split()
+
+    # хвосты заголовка: последние 4, 5, 6... слов
+    for n in range(min(len(words), 10), 3, -1):
+        fragment = " ".join(words[-n:])
+
+        title_parts.append(fragment)
+
+    for fragment in title_parts:
+        fragment = clean_text(fragment)
+
+        if len(fragment) < 20:
+            continue
+
+        if text.lower().startswith(fragment.lower()):
+            return clean_text(text[len(fragment):])
+
+    return text
+
+def extract_lukoil_title(soup: BeautifulSoup, fallback_title: str | None = None) -> str:
+    """
+    Извлекает настоящий заголовок новости ЛУКОЙЛа.
+    В RSS у ЛУКОЙЛа заголовок иногда приходит как 'Пресс-релиз',
+    поэтому заголовок лучше брать со страницы статьи.
+    """
+
+    selectors = [
+        "h1",
+        ".press-release__title",
+        ".pressrelease-title",
+        ".news-detail__title",
+        ".article__title",
+        ".detail-title",
+        ".page-title",
+        "meta[property='og:title']",
+    ]
+
+    bad_titles = {
+        "пресс-релиз",
+        "пресс-релизы",
+        "новости",
+        "новость",
+    }
+
+    for selector in selectors:
+        tag = soup.select_one(selector)
+
+        if not tag:
+            continue
+
+        if tag.name == "meta":
+            title = tag.get("content", "")
+        else:
+            title = tag.get_text(" ", strip=True)
+
+        title = clean_text(title)
+
+        if not title:
+            continue
+
+        if title.lower() in bad_titles:
+            continue
+
+        return title
+
+    return clean_text(fallback_title or "")
+
+def extract_text_lukoil(soup: BeautifulSoup, title: str | None = None) -> str:
+    """
+    Извлекает текст пресс-релиза ЛУКОЙЛа.
+    """
+
+    selectors = [
+        "article p",
+        ".press-release p",
+        ".pressrelease p",
+        ".press-release__text p",
+        ".news-detail p",
+        ".news-detail__text p",
+        ".article p",
+        ".article__text p",
+        ".content p",
+        ".main-content p",
+        "main p",
+        "div[class*='press'] p",
+        "div[class*='article'] p",
+        "div[class*='content'] p",
+        "div[class*='text'] p",
+    ]
+
+    text = extract_by_selectors(
+        soup=soup,
+        selectors=selectors,
+        min_len=120,
+        title=title,
+    )
+
+    if text:
+        return text
+
+    paragraphs = [
+        p.get_text(" ", strip=True)
+        for p in soup.find_all("p")
+    ]
+
+    paragraphs = filter_paragraphs(paragraphs, title=title)
+    text = normalize_article_text(" ".join(paragraphs), title=title)
+    text = cut_related_news(text)
+
+    if len(text) >= 120:
+        return text
+
+    return ""
+
+def extract_text_dprom(soup: BeautifulSoup, title: str | None = None) -> str:
+    """
+    Извлекает текст статьи с dprom.online.
+    У этого источника в начало текста иногда попадает фрагмент заголовка,
+    поэтому дополнительно удаляем title и похожие на него фрагменты.
+    """
+
+    selectors = [
+        "article p",
+        ".entry-content p",
+        ".post-content p",
+        ".article-content p",
+        ".content p",
+        "main p",
+        "div[class*='content'] p",
+        "div[class*='article'] p",
+        "div[class*='text'] p",
+    ]
+
+    paragraphs = []
+
+    for selector in selectors:
+        blocks = soup.select(selector)
+
+        if not blocks:
+            continue
+
+        for block in blocks:
+            text = clean_text(block.get_text(" ", strip=True))
+
+            if not text:
+                continue
+
+            if len(text) < 40:
+                continue
+
+            lower = text.lower()
+
+            bad_fragments = [
+                "читайте также",
+                "поделиться",
+                "фотогалерея",
+                "реклама",
+                "подписывайтесь",
+                "другие материалы",
+                "материалы по теме",
+                "источник:",
+                "главное",
+            ]
+
+            if any(fragment in lower for fragment in bad_fragments):
+                continue
+
+            if is_title_fragment(text, title):
+                continue
+
+            text = remove_title_prefix(text, title)
+
+            if len(text) >= 40:
+                paragraphs.append(text)
+
+        if paragraphs:
+            break
+
+    # убираем дубли
+    cleaned = []
+    seen = set()
+
+    for paragraph in paragraphs:
+        key = paragraph.lower()
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        cleaned.append(paragraph)
+
+    article_text = " ".join(cleaned)
+    article_text = normalize_article_text(article_text, title=title)
+    article_text = cut_related_news(article_text)
+
+    return article_text
+
 def collect_mashnews_previews(source, limit: int) -> list[ArticlePreview]:
     return collect_links_by_path(
         source=source,
@@ -1325,14 +1593,25 @@ def build_full_article(preview: ArticlePreview) -> Article:
 
     if html:
         soup = BeautifulSoup(html, "html.parser")
-
-        full_title = extract_article_title(
-            url=preview.url,
-            soup=soup,
-            fallback_title=preview.title
-        )
-
         domain = get_domain(preview.url)
+
+        if "lukoil.ru" in domain:
+            page_title = extract_lukoil_title(
+                soup=soup,
+                fallback_title=preview.title
+            )
+
+            if page_title:
+                full_title = page_title
+
+        else:
+            h1 = soup.find("h1")
+
+            if h1:
+                page_title = clean_text(h1.get_text(" ", strip=True))
+
+                if page_title:
+                    full_title = page_title
 
         for tag in soup([
             "script",
@@ -1356,6 +1635,9 @@ def build_full_article(preview: ArticlePreview) -> Article:
         elif "rosatom.ru" in domain:
             full_text = extract_text_rosatom(soup, title=full_title)
 
+        elif "lukoil.ru" in domain:
+            full_text = extract_text_lukoil(soup, title=full_title)
+
         elif (
             "военное.рф" in domain
             or "xn--b1aga5aadd.xn--p1ai" in domain
@@ -1371,6 +1653,9 @@ def build_full_article(preview: ArticlePreview) -> Article:
 
         elif "tpprf.ru" in domain:
             full_text = extract_text_tpprf(soup, title=full_title)
+
+        elif "dprom.online" in domain:
+            full_text = extract_text_dprom(soup, title=full_title)
 
         else:
             full_text = extract_text_generic(soup, title=full_title)
@@ -1391,7 +1676,6 @@ def build_full_article(preview: ArticlePreview) -> Article:
         text=full_text,
         text_source=text_source,
     )
-
 
 def collect_news(
     sources: list,
