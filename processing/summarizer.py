@@ -318,6 +318,25 @@ def get_lead_sentence(sentences: list[str]) -> tuple[int, str] | None:
     return None
 
 
+def get_sentence_words(sentence: str) -> set[str]:
+    key = normalize_sentence_key(sentence)
+
+    words = set(key.split())
+
+    stop_words = {
+        "и", "в", "во", "на", "с", "со", "по", "для", "от", "до",
+        "из", "за", "к", "ко", "о", "об", "обо", "а", "но", "что",
+        "как", "это", "его", "ее", "её", "их", "у", "же", "ли",
+        "также", "при", "или", "были", "был", "была", "будет",
+        "будут", "является", "стал", "стала", "стали"
+    }
+
+    return {
+        word for word in words
+        if len(word) > 2 and word not in stop_words
+    }
+
+
 def are_sentences_too_similar(sentence_a: str, sentence_b: str) -> bool:
     key_a = normalize_sentence_key(sentence_a)
     key_b = normalize_sentence_key(sentence_b)
@@ -325,21 +344,43 @@ def are_sentences_too_similar(sentence_a: str, sentence_b: str) -> bool:
     if not key_a or not key_b:
         return False
 
+    if key_a == key_b:
+        return True
+
     if key_a in key_b or key_b in key_a:
         return True
 
-    words_a = set(key_a.split())
-    words_b = set(key_b.split())
+    words_a = get_sentence_words(sentence_a)
+    words_b = get_sentence_words(sentence_b)
 
     if not words_a or not words_b:
         return False
 
     intersection = words_a & words_b
-    union = words_a | words_b
 
-    similarity = len(intersection) / len(union)
+    jaccard_similarity = len(intersection) / len(words_a | words_b)
+    overlap_a = len(intersection) / len(words_a)
+    overlap_b = len(intersection) / len(words_b)
 
-    return similarity >= 0.72
+    # Почти одинаковый набор слов
+    if jaccard_similarity >= 0.55:
+        return True
+
+    # Одно предложение почти полностью повторяет другое
+    if max(overlap_a, overlap_b) >= 0.7:
+        return True
+
+    # Если совпадает много длинных содержательных слов,
+    # это обычно пересказ одного и того же факта.
+    long_common_words = [
+        word for word in intersection
+        if len(word) >= 6
+    ]
+
+    if len(long_common_words) >= 5 and max(overlap_a, overlap_b) >= 0.55:
+        return True
+
+    return False
 
 
 def build_textrank_summary(
@@ -422,6 +463,35 @@ def build_textrank_summary(
             continue
 
         selected.append((score, index, sentence))
+
+    # Если из-за фильтра похожести набралось мало предложений,
+    # добираем другими непохожими предложениями из исходного текста.
+    if len(selected) < sentence_count:
+        for index, sentence in enumerate(sentences):
+            if len(selected) >= sentence_count:
+                break
+
+            if is_bad_summary_sentence(sentence):
+                continue
+
+            already_selected = any(
+                index == selected_index
+                for _, selected_index, _ in selected
+            )
+
+            if already_selected:
+                continue
+
+            too_similar = any(
+                are_sentences_too_similar(sentence, selected_sentence)
+                for _, _, selected_sentence in selected
+            )
+
+            if too_similar:
+                continue
+
+            fallback_score = textrank_scores.get(index, 0.0)
+            selected.append((fallback_score, index, sentence))
 
     if not selected:
         selected = [ranked_sentences[0]]

@@ -139,7 +139,7 @@ def seed_sources(session: Session):
             "url": "https://военное.рф/2026/",
             "rss_url": None,
             "source_type": "html",
-            "is_active": True,
+            "is_active": False,
         },
         {
             "name": "ФлотПром",
