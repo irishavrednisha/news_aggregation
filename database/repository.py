@@ -146,21 +146,21 @@ def seed_sources(session: Session):
             "url": "https://flotprom.ru/2026/",
             "rss_url": None,
             "source_type": "html",
-            "is_active": True,
+            "is_active": False,
         },
         {
             "name": "Отраслевое.рф",
             "url": "https://отраслевое.рф",
             "rss_url": None,
             "source_type": "html",
-            "is_active": True,
+            "is_active": False,
         },
         {
             "name": "ФлотКом",
             "url": "https://flot.com",
             "rss_url": None,
             "source_type": "html",
-            "is_active": True,
+            "is_active": False,
         },
 
         {
