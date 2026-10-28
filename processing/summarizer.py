@@ -211,29 +211,6 @@ INDUSTRIAL_FACT_WORDS = [
 ]
 
 
-def sentence_fact_bonus(sentence: str) -> float:
-    lowered = sentence.lower()
-
-    bonus = 0.0
-
-    if any(word in lowered for word in FACT_WORDS):
-        bonus += 0.08
-
-    if any(word in lowered for word in INDUSTRIAL_FACT_WORDS):
-        bonus += 0.08
-
-    if re.search(r"\d", sentence):
-        bonus += 0.04
-
-    # Названия компаний, фондов, заводов
-    if re.search(r"[A-ZА-ЯЁ][a-zа-яё]+(?:\s+[A-ZА-ЯЁ][a-zа-яё]+)?", sentence):
-        bonus += 0.03
-
-    if is_bad_summary_sentence(sentence):
-        bonus -= 0.20
-
-    return bonus
-
 def remove_duplicate_sentences(sentences: list[str]) -> list[str]:
     seen = set()
     unique = []

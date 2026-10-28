@@ -5,7 +5,6 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
 from collectors.data_collector import collect_news
-from database.cleanup import delete_old_not_for_publication_clusters
 from database.db import create_tables, get_session
 from database.repository import (
     seed_sources,
@@ -23,7 +22,6 @@ from processing.topic_filter import (
 from processing.clustering import (
     cluster_recent_news,
     print_recent_clusters,
-    print_cluster_details,
 )
 
 from processing.summarizer import summarize_new_clusters
@@ -101,8 +99,6 @@ def main():
         tag_new_clusters(
             session=session,
             min_score=0.35,
-            # max_tags=2,
-            # debug=True
 
         )
 
