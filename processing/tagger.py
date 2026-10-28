@@ -2005,10 +2005,6 @@ def cluster_full_text_for_filter(session, cluster: Cluster) -> str:
     return " ".join(parts).lower()
 
 
-def contains_any_marker(text: str, markers: list[str]) -> bool:
-    return any(marker.lower() in text for marker in markers)
-
-
 def is_not_related_to_russia(
         session,
         cluster: Cluster,
