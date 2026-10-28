@@ -5,8 +5,6 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
 import time
-from pathlib import Path
-from html import escape
 
 from playwright.sync_api import sync_playwright
 
@@ -31,44 +29,6 @@ def get_primary_news(session, cluster_id: int) -> News | None:
         .first()
     )
 
-
-def format_cluster_post(session, cluster: Cluster) -> str:
-    primary_news = get_primary_news(session, cluster.id)
-
-    title = escape(cluster.title or "Новость промышленности")
-    summary = escape(cluster.summary_text or "")
-    tags = cluster.tags or ""
-
-    url = primary_news.url if primary_news else ""
-
-    hashtags = ""
-
-    if tags:
-        hashtags = " ".join(
-            "#" + tag.strip().replace(" ", "_").replace("-", "_")
-            for tag in tags.split(",")
-            if tag.strip()
-        )
-
-    parts = [
-        title,
-        "",
-        summary,
-    ]
-
-    if url:
-        parts.extend([
-            "",
-            f"Источник: {escape(url)}"
-        ])
-
-    if hashtags:
-        parts.extend([
-            "",
-            escape(hashtags)
-        ])
-
-    return "\n".join(parts).strip()
 
 def get_ready_clusters(session, limit: int = 100) -> list[Cluster]:
     return (
