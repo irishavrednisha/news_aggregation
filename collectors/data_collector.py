@@ -5,6 +5,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
 import time
+from datetime import datetime, timezone
 import feedparser
 import requests
 import re
@@ -24,7 +25,7 @@ from utils.text_utils import (
 )
 
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 
 
 @dataclass
@@ -114,7 +115,7 @@ def fetch_html_with_requests(url: str) -> str:
             url,
             headers=HEADERS,
             timeout=40,
-            verify=False
+            verify=True
         )
 
         if response.status_code == 403:
@@ -267,46 +268,51 @@ def extract_text_generic(soup: BeautifulSoup, title: str | None = None) -> str:
 
     return extract_by_selectors(soup, selectors, min_len=250, title=title)
 
+
 def extract_text_nedradv(soup: BeautifulSoup, title: str | None = None) -> str:
     """
-    Извлекает текст статьи с сайта НедраДВ.
+    NedraDV: абзацы только ПОСЛЕ H1 статьи и ДО секции «Читайте также».
+    Не читаем все p на странице: там находятся чужие новости и аукционы.
     """
+    h1 = soup.find("h1")
+    if h1 is None:
+        return ""
 
-    candidates = []
+    stop_headings = (
+        "читайте также", "последние аукционы", "последние публикации",
+        "комментарии", "страницы сайта", "наши контакты", "теги:",
+    )
+    paragraphs, seen = [], set()
 
-    if title:
-        candidates.append(clean_text(title))
-
-    for tag in soup.find_all(["p", "blockquote"]):
-        text = clean_text(tag.get_text(" ", strip=True))
-
-        if not text:
+    for node in h1.next_elements:
+        if not getattr(node, "name", None):
             continue
 
-        if len(text) < 40:
+        name = node.name.lower()
+        if name in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            heading = clean_text(node.get_text(" ", strip=True)).lower()
+            if any(heading.startswith(stop) for stop in stop_headings):
+                break
+
+        if name not in ("p", "blockquote"):
+            continue
+        # Вложенный блок цитаты не добавляем повторно.
+        if name == "p" and node.find_parent("blockquote"):
             continue
 
-        lower = text.lower()
-
-        bad_fragments = [
-            "поделиться",
-            "читайте также",
-            "последние публикации",
-            "последние аукционы",
-            "наши контакты",
-            "все права защищены",
-            "при полном или частичном использовании",
-            "настоящий ресурс содержит",
-            "подписаться",
-            "комментарии для сайта",
-        ]
-
-        if any(fragment in lower for fragment in bad_fragments):
+        value = clean_text(node.get_text(" ", strip=True))
+        lowered = value.lower()
+        if any(lowered.startswith(stop) for stop in stop_headings):
+            break
+        if len(value) < 30 or (title and value.lower() == title.lower()):
             continue
+        if any(x in lowered for x in ("подписаться", "поделиться", "реклама", "cackle")):
+            continue
+        if value not in seen:
+            seen.add(value)
+            paragraphs.append(value)
 
-        candidates.append(text)
-
-    return clean_text("\n".join(dict.fromkeys(candidates)))
+    return clean_text(" ".join(paragraphs))
 
 def extract_text_tpprf(soup: BeautifulSoup, title: str | None = None) -> str:
     """
@@ -1318,57 +1324,11 @@ def extract_link_title(a) -> str:
 
     return title
 
+
 def collect_kommersant_industry_previews(source, limit: int) -> list[ArticlePreview]:
-    previews = []
-
-    print("=" * 100)
-    print(f"HTML-источник: {source.name}")
-    print(f"URL: {source.url}")
-
-    html = fetch_html(source.url)
-
-    if not html:
-        return previews
-
-    soup = BeautifulSoup(html, "html.parser")
-    seen_urls = set()
-
-    for a in soup.select("a[href]"):
-        title = clean_text(a.get_text(" ", strip=True))
-        href = a.get("href")
-
-        if not title or not href or len(title) < 10:
-            continue
-
-        absolute_url = urljoin(source.url, href)
-
-        if not same_domain(absolute_url, source.url):
-            continue
-
-        if "/doc/" not in absolute_url:
-            continue
-
-        if absolute_url in seen_urls:
-            continue
-
-        seen_urls.add(absolute_url)
-
-        previews.append(
-            ArticlePreview(
-                source=source.name,
-                title=normalize_title(title, source.name),
-                url=absolute_url,
-                published_at=None,
-                preview_text="",
-            )
-        )
-
-        if len(previews) >= limit:
-            break
-
-    print(f"Найдено HTML-кандидатов: {len(previews)}")
-    return previews
-
+    # На странице /theme/3631 общая лента идёт ПЕРЕД разделом
+    # «Промышленность». Отбираем ссылки только из раздела.
+    return collect_html_previews(source, limit=limit)
 
 def collect_dixinews_industry_previews(source, limit: int) -> list[ArticlePreview]:
     return collect_links_by_path(
@@ -1524,156 +1484,376 @@ def collect_dprom_previews(source, limit: int) -> list[ArticlePreview]:
     print(f"Найдено HTML-кандидатов: {len(previews)}")
     return previews
 
+
+# Строгие шаблоны URL для сайтов, на которых общий сбор пропускал
+# новости или забирал ссылки на рубрики вместо статей.
+_SOURCE_ARTICLE_PATHS = {
+    "ИАПН": re.compile(r"^/[^/]{6,}/?$"),
+    "Промышленный вестник / ПВ.РФ": re.compile(
+        r"^/ru/(?:novosti-promyishlennosti|vazhno|novosti-kompaniy)/[^/]+/?$"
+    ),
+    "Производства.рф": re.compile(
+        r"^/(?:publication|publikacii|news|novosti|post|article|articles)/[^/]+/?$"
+    ),
+    "Коммерсантъ — Промышленность": re.compile(r"^/doc/\d+/?$"),
+}
+
+_BAD_ARTICLE_PATHS = (
+    "/contact", "/about", "/privacy", "/tag/", "/category/",
+    "/author/", "/feed", "/rss", "/search", "/page/", "/project",
+)
+
+
+def _is_real_article_link(source_name: str, url: str) -> bool:
+    from urllib.parse import urlsplit
+
+    path = urlsplit(url).path
+    if any(path.lower().startswith(s) for s in _BAD_ARTICLE_PATHS):
+        return False
+    pattern = _SOURCE_ARTICLE_PATHS.get(source_name)
+    if pattern:
+        if pattern.match(path):
+            return True
+        # На «Производства.рф» структура меняется. Только карточки
+        # с явно оформленным заголовком проходят запасной путь.
+        return source_name == "Производства.рф" and len(path.strip("/").split("/")) >= 2
+    return is_probably_article_url(url)
+
+
+def _article_link_heading(anchor) -> str:
+    for selector in (
+        "h2", "h3", "h4", "[class*='title']", "[class*='headline']",
+        "[class*='uho__name']", "[itemprop='headline']",
+    ):
+        h = anchor.select_one(selector)
+        if h:
+            value = clean_text(h.get_text(" ", strip=True))
+            if len(value) >= 14:
+                return value
+    if anchor.parent and anchor.parent.name in ("h2", "h3", "h4"):
+        return clean_text(anchor.get_text(" ", strip=True))
+    # Визуальная карточка может иметь имя в title.
+    return clean_text(anchor.get("title", ""))
+
+
 def collect_html_previews(source, limit: int) -> list[ArticlePreview]:
-    previews = []
-
-    print("=" * 100)
-    print(f"HTML-источник: {source.name}")
-    print(f"URL: {source.url}")
-
-    if not source.url:
-        return previews
-
     html = fetch_html(source.url)
-
     if not html:
-        return previews
+        print(f"Не удалось получить список: {source.name}")
+        return []
 
     soup = BeautifulSoup(html, "html.parser")
-    seen_urls = set()
+    for tag in soup(["script", "style", "nav", "footer", "aside"]):
+        tag.decompose()
 
-    for a in soup.select("a[href]"):
-        title = clean_text(a.get_text(" ", strip=True))
-        href = a.get("href")
-
-        if not title or not href or len(title) < 15:
-            continue
-
-        absolute_url = urljoin(source.url, href)
-
-        if not same_domain(absolute_url, source.url):
-            continue
-
-        if absolute_url in seen_urls:
-            continue
-
-        if not is_probably_article_url(absolute_url):
-            continue
-
-        seen_urls.add(absolute_url)
-
-        previews.append(
-            ArticlePreview(
-                source=source.name,
-                title=normalize_title(title, source.name),
-                url=absolute_url,
-                published_at=None,
-                preview_text="",
-            )
+    # Отдельно ограничиваем «Коммерсантъ» тематической лентой.
+    if source.name == "Коммерсантъ — Промышленность":
+        h = soup.find(
+            lambda t: t.name in ("h1", "h2")
+            and clean_text(t.get_text(" ", strip=True)).lower() == "промышленность"
         )
+        anchors = []
+        if h:
+            for node in h.next_elements:
+                if getattr(node, "name", "") in ("h1", "h2"):
+                    heading = clean_text(node.get_text(" ", strip=True)).lower()
+                    if "новости компаний" in heading:
+                        break
+                if getattr(node, "name", "") == "a":
+                    anchors.append(node)
+        else:
+            print("Не найден раздел «Промышленность» на kommersant.ru")
+            return []
+    else:
+        anchors = soup.select("main a[href], article a[href], h2 a[href], h3 a[href]")
+        if not anchors:
+            anchors = soup.select("a[href]")
 
+    previews, seen = [], set()
+    for anchor in anchors:
+        href = anchor.get("href")
+        if not href:
+            continue
+        absolute = urljoin(source.url, href).split("#")[0]
+        if not same_domain(absolute, source.url) or absolute in seen:
+            continue
+        if not _is_real_article_link(source.name, absolute):
+            continue
+
+        title = _article_link_heading(anchor)
+        # Общий fallback только в зоне контента, не из меню.
+        if not title and source.name == "Коммерсантъ — Промышленность":
+            title = clean_text(anchor.get_text(" ", strip=True))
+        if not title and source.name == "Производства.рф":
+            if anchor.find_parent(["h2", "h3", "h4"]):
+                title = clean_text(anchor.get_text(" ", strip=True))
+        if len(title) < 14 or len(title) > 210:
+            continue
+
+        seen.add(absolute)
+        previews.append(ArticlePreview(
+            source=source.name,
+            title=normalize_title(title, source.name),
+            url=absolute,
+            published_at=None,
+            preview_text="",
+        ))
         if len(previews) >= limit:
             break
 
-    print(f"Найдено HTML-кандидатов: {len(previews)}")
-
+    print(f"{source.name}: найдено {len(previews)} ссылок на статьи")
     return previews
-
 
 # =========================
 # Сбор полной новости
 # =========================
 
+
+# Селекторы в порядке от наиболее узких к общим.
+# Широкий поиск по всем <p> страницы ЗАПРЕЩЁН.
+_ARTICLE_SELECTORS = {
+    "Ростех": ("[itemprop='articleBody']", ".news-detail__content", ".news-detail__text", "article"),
+    "ОСК": (".news-detail__text", ".detail_text", ".news-detail", "article"),
+    "Роснефть": (".news-detail", ".news-body", ".news-text", "article"),
+    "Заводы.рф": (".publication-content", ".publication__body", ".article-content", "article"),
+    "ЛУКОЙЛ": (".press-release__text", ".pressrelease__text", ".press-release__body", ".news-detail__text", "article"),
+    "Норильский никель": (".news-detail__content", ".press-release__text", ".article__content", "article"),
+    "Энергетика и промышленность России": (".news-detail", ".article-body", ".article-text", "article"),
+    "Вестник промышленности": (".entry-content", ".post-content", ".wp-block-post-content", "article"),
+    "MASHNEWS": (".article__content", ".article-content", ".article__body", "article"),
+    "Коммерсантъ — Промышленность": (".article_text_wrapper", ".article_text", "[itemprop='articleBody']", "article"),
+    "DixiNews — Промышленность": (".article-content", ".news-detail", ".news-text", "article"),
+    "НедраДВ": (),
+    "ТПП РФ": (".news-detail__text", ".news-detail-text", ".article__text", "article"),
+    "Добывающая промышленность": (".entry-content", ".post-content", ".article-content", "article"),
+    "ИАПН": (".entry-content", ".post-content", ".td-post-content", "article"),
+    "Промышленный вестник / ПВ.РФ": (".article-content", ".news-detail", ".content-news", "article"),
+    "Производства.рф": (".post-content", ".entry-content", ".article-content", "article"),
+}
+
+_RU_MONTHS = {
+    "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
+    "мая": 5, "июня": 6, "июля": 7, "августа": 8,
+    "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+}
+
+
+def _parse_published(value):
+    if not value:
+        return None
+    from email.utils import parsedate_to_datetime
+    try:
+        if isinstance(value, (list, tuple)):
+            return _parse_published(value[0]) if value else None
+        raw = str(value).strip()
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        # Проект хранит даты без часового пояса; для aware UTC.
+        if dt.tzinfo:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        dt = parsedate_to_datetime(str(value))
+        if dt.tzinfo:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    except (TypeError, ValueError, IndexError):
+        pass
+
+    match = re.search(
+        r"\b(\d{1,2})[ .]+([а-яё]+)[ .]+(\d{4})(?:\s*года)?",
+        str(value).lower()
+    )
+    if match and match.group(2) in _RU_MONTHS:
+        try:
+            return datetime(int(match.group(3)), _RU_MONTHS[match.group(2)], int(match.group(1)))
+        except ValueError:
+            pass
+    match = re.search(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b", str(value))
+    if match:
+        try:
+            return datetime(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+        except ValueError:
+            pass
+    return None
+
+
+def _jsonld_article(soup):
+    import json
+    for script in soup.select('script[type="application/ld+json"]'):
+        try:
+            data = json.loads(script.string or script.get_text())
+        except (ValueError, TypeError):
+            continue
+        nodes = data if isinstance(data, list) else [data]
+        while nodes:
+            node = nodes.pop()
+            if not isinstance(node, dict):
+                continue
+            if isinstance(node.get("@graph"), list):
+                nodes.extend(node["@graph"])
+            kind = node.get("@type", "")
+            if isinstance(kind, list):
+                kinds = kind
+            else:
+                kinds = [kind]
+            if any(str(k).lower() in ("newsarticle", "article", "blogposting", "reportage") for k in kinds):
+                return node
+    return {}
+
+
+def _page_date(soup, jsonld):
+    for value in (
+        jsonld.get("datePublished"),
+        jsonld.get("dateCreated"),
+    ):
+        date = _parse_published(value)
+        if date:
+            return date
+
+    for selector, attr in (
+        ('meta[property="article:published_time"]', "content"),
+        ('meta[itemprop="datePublished"]', "content"),
+        ('meta[name="pubdate"]', "content"),
+        ('meta[name="date"]', "content"),
+        ('time[datetime]', "datetime"),
+        ('[itemprop="datePublished"][datetime]', "datetime"),
+    ):
+        node = soup.select_one(selector)
+        if node:
+            date = _parse_published(node.get(attr))
+            if date:
+                return date
+
+    # Локальная дата у заголовка, не случайная дата из соседней новости.
+    h1 = soup.find("h1")
+    if h1:
+        for parent in (h1.parent, getattr(h1.parent, "parent", None)):
+            if parent:
+                for node in parent.select("time, .date, [class*='date'], [class*='time']"):
+                    date = _parse_published(node.get_text(" ", strip=True))
+                    if date:
+                        return date
+    return None
+
+
+def _article_paragraphs(block, title):
+    from bs4 import BeautifulSoup
+
+    # Копия предотвращает порчу дерева исходной страницы.
+    block = BeautifulSoup(str(block), "html.parser")
+    exclude = (
+        "script,style,nav,footer,aside,form,button,"
+        ".related,.related-news,.read-also,.recommendations,"
+        "[class*='related'],[class*='recommend'],[class*='sidebar'],"
+        "[class*='share'],[class*='social'],[class*='advert'],"
+        "[class*='subscribe'],[class*='comments'],"
+        ".post-navigation,.article-tags"
+    )
+    for child in block.select(exclude):
+        child.decompose()
+
+    paras, seen = [], set()
+    for p in block.select("p, blockquote"):
+        if p.name == "p" and p.find_parent("blockquote"):
+            continue
+        value = clean_text(p.get_text(" ", strip=True))
+        if not value or len(value) < 28:
+            continue
+        lower = value.lower()
+        if title and lower == title.lower():
+            continue
+        if any(lower.startswith(s) for s in (
+            "читайте также", "последние новости", "последние публикации",
+            "последние аукционы", "обсудить новости промышленности",
+            "подписывайтесь", "поделиться", "департамент информации и рекламы",
+        )):
+            continue
+        value = re.split(
+            r"(?i)\b(?:обсудить новости промышленности|департамент информации и рекламы ПАО)\b",
+            value, maxsplit=1
+        )[0].strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        paras.append(value)
+    return clean_text(" ".join(paras))
+
+
+def _extract_main_text(soup, source_name, title, jsonld):
+    if source_name == "НедраДВ":
+        return extract_text_nedradv(soup, title=title)
+
+    body = jsonld.get("articleBody", "")
+    if isinstance(body, str) and len(body.strip()) >= 180:
+        return clean_text(body)
+
+    selectors = _ARTICLE_SELECTORS.get(source_name, ())
+    selectors += ("[itemprop='articleBody']", ".entry-content", ".post-content", "article")
+
+    for selector in dict.fromkeys(selectors):
+        for block in soup.select(selector)[:3]:
+            text = _article_paragraphs(block, title)
+            if len(text) >= 140:
+                return text
+
+    # Последняя попытка: узкий блок рядом с заголовком.
+    # Если нет достоверного контейнера, НЕ склеиваем все p сайта.
+    h1 = soup.find("h1")
+    if h1:
+        parent = h1.parent
+        for _ in range(3):
+            if parent is None:
+                break
+            text = _article_paragraphs(parent, title)
+            if len(text) >= 180:
+                # Не используем широкий контейнер с десятками ссылок на новости.
+                if len(parent.select("a[href]")) <= 5:
+                    return text
+            parent = parent.parent
+    return ""
+
+
 def build_full_article(preview: ArticlePreview) -> Article:
     html = fetch_html(preview.url)
-
-    full_title = preview.title
-    full_text = ""
-    text_source = "html"
+    title = preview.title
+    text, text_source = "", "none"
+    published_at = preview.published_at
 
     if html:
         soup = BeautifulSoup(html, "html.parser")
-        domain = get_domain(preview.url)
-
-        if "lukoil.ru" in domain:
-            page_title = extract_lukoil_title(
-                soup=soup,
-                fallback_title=preview.title
-            )
-
-            if page_title:
-                full_title = page_title
-
+        jsonld = _jsonld_article(soup)
+        if jsonld.get("headline"):
+            title = clean_text(str(jsonld["headline"]))
+        elif preview.source == "ЛУКОЙЛ":
+            title = extract_lukoil_title(soup, fallback_title=title)
         else:
             h1 = soup.find("h1")
-
             if h1:
-                page_title = clean_text(h1.get_text(" ", strip=True))
+                candidate = clean_text(h1.get_text(" ", strip=True))
+                if len(candidate) >= 10:
+                    title = candidate
 
-                if page_title:
-                    full_title = page_title
+        # Не удаляем scripts до чтения JSON-LD и метаданных даты.
+        published_at = published_at or _page_date(soup, jsonld)
+        text = _extract_main_text(soup, preview.source, title, jsonld)
+        if text:
+            text_source = "html"
 
-        for tag in soup([
-            "script",
-            "style",
-            "nav",
-            "header",
-            "footer",
-            "aside",
-            "form",
-            "button",
-            "noscript",
-        ]):
-            tag.decompose()
-
-        if "производства.рф" in domain or "xn--80adahnf5bdekrm.xn--p1ai" in domain:
-            full_text = extract_text_proizvodstva(soup, title=full_title)
-
-        elif "заводы.рф" in domain or "xn--80az8a.xn--p1ai" in domain:
-            full_text = extract_text_zavody(soup, title=full_title)
-
-        elif "rosatom.ru" in domain:
-            full_text = extract_text_rosatom(soup, title=full_title)
-
-        elif "lukoil.ru" in domain:
-            full_text = extract_text_lukoil(soup, title=full_title)
-
-        elif (
-            "военное.рф" in domain
-            or "xn--b1aga5aadd.xn--p1ai" in domain
-            or "flotprom.ru" in domain
-            or "отраслевое.рф" in domain
-            or "xn--80aegqufhcjg6b.xn--p1ai" in domain
-            or "flot.com" in domain
-        ):
-            full_text = extract_text_military_media(soup, title=full_title)
-
-        elif "nedradv.ru" in domain:
-            full_text = extract_text_nedradv(soup, title=full_title)
-
-        elif "tpprf.ru" in domain:
-            full_text = extract_text_tpprf(soup, title=full_title)
-
-        elif "dprom.online" in domain:
-            full_text = extract_text_dprom(soup, title=full_title)
-
-        else:
-            full_text = extract_text_generic(soup, title=full_title)
-
-    if not full_text and preview.preview_text:
-        full_text = normalize_article_text(preview.preview_text, title=full_title)
+    if not text and preview.preview_text:
+        text = clean_text(preview.preview_text)
         text_source = "rss"
-
-    elif not full_text:
-        text_source = "none"
-        print(f"Не удалось извлечь текст: {preview.url}")
+    if not text:
+        print(f"Нет достоверного текста, пропуск: {preview.url}")
 
     return Article(
         source=preview.source,
-        title=normalize_title(full_title, preview.source),
+        title=normalize_title(title, preview.source),
         url=preview.url,
-        published_at=preview.published_at,
-        text=full_text,
+        published_at=published_at,
+        text=text,
         text_source=text_source,
     )
 
