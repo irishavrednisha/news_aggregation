@@ -399,6 +399,100 @@ class CollectorTests(unittest.TestCase):
             article = build_full_article(preview)
         self.assertEqual(article.published_at, datetime(2026, 11, 5))
 
+    def test_rostec_article_path_is_not_category(self):
+        from collectors.data_collector import _is_real_article_link
+        self.assertTrue(_is_real_article_link(
+            "Ростех", "https://rostec.ru/media/news/odk-nagradila-luchshikh-inzhenerov/"
+        ))
+        self.assertFalse(_is_real_article_link(
+            "Ростех", "https://rostec.ru/media/news/section/armiya/"
+        ))
+
+    def test_rosneft_official_light_site_canonicalization(self):
+        from collectors.data_collector import _canonical_source_link, _rosneft_limited_url
+        source = type("Source", (), {
+            "name": "Роснефть", "url": "https://www.rosneft.ru/press/news/"
+        })()
+        self.assertEqual(
+            _rosneft_limited_url(
+                "https://www.rosneft.ru/press/news/item/224951/"
+            ),
+            "https://limited.rosneft.ru/press/news/item/224951/"
+        )
+        self.assertEqual(
+            _canonical_source_link(
+                source, "https://limited.rosneft.ru/press/news/item/224951/"
+            ),
+            "https://www.rosneft.ru/press/news/item/224951/"
+        )
+        self.assertIsNone(
+            _canonical_source_link(
+                source, "https://www.rosneft.ru.attacker.example/press/news/item/224951/"
+            )
+        )
+        self.assertIsNone(
+            _rosneft_limited_url("https://attacker.example/press/news/item/224951/")
+        )
+
+    def test_rosneft_fetch_tries_official_limited_mirror(self):
+        from collectors.data_collector import fetch_html
+        from unittest.mock import call
+        url = "https://www.rosneft.ru/press/news/item/224951/"
+        with patch("collectors.data_collector.fetch_html_with_requests",
+                   side_effect=["", "<article>Test official article</article>"]) as req:
+            with patch("collectors.data_collector.fetch_html_with_browser",
+                       return_value="") as browser:
+                html = fetch_html(url)
+        self.assertIn("official article", html)
+        self.assertEqual(req.call_args_list, [
+            call(url), call("https://limited.rosneft.ru/press/news/item/224951/")
+        ])
+        browser.assert_called_once_with(url)
+
+    def test_promvest_homepage_fallback_article_only(self):
+        from collectors.data_collector import collect_html_previews
+        source = type("Source", (), {
+            "name": "Промышленный вестник / ПВ.РФ",
+            "url": "https://promvest.info/ru/novosti-promyishlennosti/",
+        })()
+        homepage = """
+        <a href="/ru/novosti-promyishlennosti/sinara-tramvay-71-233a/">
+        «Синара» вывела на обкатку в Петербурге трехсекционный трамвай
+        </a>
+        <a href="/ru/reklama/">
+        Условия размещения рекламы на промышленном портале
+        </a>
+        """
+        def fake_html(url):
+            return homepage if url == "https://promvest.info/" else ""
+        with patch("collectors.data_collector.fetch_html", side_effect=fake_html):
+            previews = collect_html_previews(source, 5)
+        self.assertEqual(len(previews), 1)
+        self.assertIn("Синара", previews[0].title)
+        self.assertIn("/sinara-tramvay-71-233a/", previews[0].url)
+
+    def test_site_database_error_is_not_collected_as_news(self):
+        from collectors.data_collector import collect_html_previews
+        source = type("Source", (), {
+            "name": "Производства.рф",
+            "url": "https://производства.рф/articles/",
+        })()
+        with patch("collectors.data_collector.fetch_html",
+                   return_value="<html><body>Error establishing a database connection</body></html>"):
+            previews = collect_html_previews(source, 5)
+        self.assertEqual(previews, [])
+
+    def test_tls_errors_do_not_disable_verification(self):
+        import os
+        from requests.exceptions import SSLError
+        from collectors.data_collector import fetch_html_with_requests
+        with patch.dict(os.environ, {"NEWS_CA_BUNDLE": ""}):
+            with patch("collectors.data_collector.requests.get",
+                       side_effect=SSLError("untrusted CA")) as req:
+                html = fetch_html_with_requests("https://rostec.ru/media/news/")
+        self.assertEqual(html, "")
+        self.assertIs(req.call_args.kwargs["verify"], True)
+
     def test_unknown_container_rejected_instead_of_mixing_news(self):
         preview = ArticlePreview(
             source="НедраДВ", title="Первая новость",
