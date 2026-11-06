@@ -6,6 +6,7 @@ sys.path.append(str(ROOT_DIR))
 
 import time
 import os
+from contextvars import ContextVar
 from datetime import datetime, timezone
 import feedparser
 # На Windows Requests обычно использует certifi вместо доверенных
@@ -131,6 +132,24 @@ def _request_ca_bundle():
     return bundle
 
 
+# Каждый источник получает отдельный журнал загрузки. ContextVar безопасен
+# для параллельных задач планировщика и не меняет API парсеров.
+_FETCH_AUDIT = ContextVar("news_collector_fetch_audit", default=None)
+
+
+def _record_fetch_problem(url: str, kind: str, detail: str = "") -> None:
+    stat = _FETCH_AUDIT.get()
+    if stat is None:
+        return
+    failures = stat.setdefault("fetch_failures", [])
+    if len(failures) < 100:
+        failures.append({
+            "url": url,
+            "kind": kind,
+            "detail": str(detail)[:350],
+        })
+
+
 def fetch_html_with_requests(url: str) -> str:
     from requests.exceptions import (
         ConnectionError as RequestConnectionError, ReadTimeout, SSLError,
@@ -152,8 +171,13 @@ def fetch_html_with_requests(url: str) -> str:
             )
             if response.status_code in (403, 429):
                 print(f"HTTP {response.status_code} (запрет/лимит): {url}")
+                _record_fetch_problem(url, "http_denied", str(response.status_code))
                 return ""
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except RequestException as exc:
+                _record_fetch_problem(url, "http_error", str(exc))
+                raise
             if response.encoding is None or response.encoding.lower() in ("iso-8859-1", "latin-1"):
                 response.encoding = response.apparent_encoding
             return response.text
@@ -163,14 +187,17 @@ def fetch_html_with_requests(url: str) -> str:
                 "Не отключайте TLS: установите truststore "
                 "(python -m pip install truststore) или настройте NEWS_CA_BUNDLE."
             )
+            _record_fetch_problem(url, "ssl_certificate_error", str(exc))
             return ""
         except (ReadTimeout, RequestConnectionError) as exc:
             print(f"Сетевой сбой {url}, попытка {attempt}/{attempts}: {type(exc).__name__}: {exc}")
+            _record_fetch_problem(url, "connection_or_timeout", f"{type(exc).__name__}: {exc}")
             if attempt == attempts:
                 return ""
             time.sleep(1)
         except RequestException as exc:
             print(f"Ошибка HTTP {url}: {type(exc).__name__}: {exc}")
+            _record_fetch_problem(url, "http_request_exception", f"{type(exc).__name__}: {exc}")
             return ""
     return ""
 
@@ -191,6 +218,7 @@ def fetch_html_with_browser(url: str) -> str:
                 browser.close()
     except Exception as exc:
         print(f"Браузер не смог загрузить {url}: {type(exc).__name__}: {exc}")
+        _record_fetch_problem(url, "browser_error", f"{type(exc).__name__}: {exc}")
         return ""
 
 
@@ -223,6 +251,8 @@ def fetch_html(url: str) -> str:
             html = fetch_html_with_browser(url)
 
     if html:
+        if "Error establishing a database connection" in html:
+            _record_fetch_problem(url, "origin_database_error", "Сайт не может подключиться к собственной базе данных")
         return html
 
     # Официальная мобильная/облегчённая версия Роснефти. Сохраняем
@@ -2350,91 +2380,110 @@ def collect_news(
         stat = {
             "candidates": 0, "accepted": 0, "short_or_empty": 0,
             "errors": [], "rejected_urls": [],
+            "fetch_failures": [], "status": "not_started",
         }
         if diagnostics is not None:
             diagnostics[source.name] = stat
 
+        audit_token = _FETCH_AUDIT.set(stat)
         try:
-            if source.source_type == "rss":
-                previews = collect_rss_previews(source, limit=limit_per_source)
-            elif source.source_type == "html":
-                collectors = {
-                    "Росатом": collect_rosatom_previews,
-                    "Вестник промышленности": collect_vestnikprom_previews,
-                    "MASHNEWS": collect_mashnews_previews,
-                    "Коммерсантъ — Промышленность": collect_kommersant_industry_previews,
-                    "DixiNews — Промышленность": collect_dixinews_industry_previews,
-                    "НедраДВ": collect_nedradv_previews,
-                    "ТПП РФ": collect_tpprf_previews,
-                    "Добывающая промышленность": collect_dprom_previews,
-                    "Ростех": collect_rostec_previews,
-                    "Роснефть": collect_rosneft_previews,
-                }
-                fn = collectors.get(source.name)
-                if fn is None:
-                    fn = (
-                        collect_html_previews
-                        if source.name in _SOURCE_ARTICLE_PATHS
-                        else _legacy_collect_html_previews
-                    )
-                previews = fn(source, limit=min(limit_per_source * 3, 30))
-            else:
-                message = f"Неизвестный тип источника: {source.source_type}"
+            try:
+                if source.source_type == "rss":
+                    previews = collect_rss_previews(source, limit=limit_per_source)
+                elif source.source_type == "html":
+                    collectors = {
+                        "Росатом": collect_rosatom_previews,
+                        "Вестник промышленности": collect_vestnikprom_previews,
+                        "MASHNEWS": collect_mashnews_previews,
+                        "Коммерсантъ — Промышленность": collect_kommersant_industry_previews,
+                        "DixiNews — Промышленность": collect_dixinews_industry_previews,
+                        "НедраДВ": collect_nedradv_previews,
+                        "ТПП РФ": collect_tpprf_previews,
+                        "Добывающая промышленность": collect_dprom_previews,
+                        "Ростех": collect_rostec_previews,
+                        "Роснефть": collect_rosneft_previews,
+                    }
+                    fn = collectors.get(source.name)
+                    if fn is None:
+                        fn = (
+                            collect_html_previews
+                            if source.name in _SOURCE_ARTICLE_PATHS
+                            else _legacy_collect_html_previews
+                        )
+                    previews = fn(source, limit=min(limit_per_source * 3, 30))
+                else:
+                    message = f"Неизвестный тип источника: {source.source_type}"
+                    stat["errors"].append(message)
+                    print(f"{source.name}: {message}")
+                    continue
+            except Exception as error:
+                message = f"Ошибка списка: {type(error).__name__}: {error}"
                 stat["errors"].append(message)
                 print(f"{source.name}: {message}")
                 continue
-        except Exception as error:
-            message = f"Ошибка списка: {type(error).__name__}: {error}"
-            stat["errors"].append(message)
-            print(f"{source.name}: {message}")
-            continue
 
-        stat["candidates"] = len(previews)
-        print(f"Кандидатов из {source.name}: {len(previews)}")
-        if not previews:
-            print(f"ВНИМАНИЕ: {source.name} не дал ссылок на статьи.")
+            stat["candidates"] = len(previews)
+            print(f"Кандидатов из {source.name}: {len(previews)}")
+            if not previews:
+                print(f"ВНИМАНИЕ: {source.name} не дал ссылок на статьи.")
 
-        for preview in previews:
-            if not preview.url or preview.url in seen_urls:
-                continue
-            seen_urls.add(preview.url)
+            for preview in previews:
+                if not preview.url or preview.url in seen_urls:
+                    continue
+                seen_urls.add(preview.url)
 
-            if session is not None:
-                try:
-                    from database.repository import news_url_exists
-                    if news_url_exists(session, preview.url):
+                if session is not None:
+                    try:
+                        from database.repository import news_url_exists
+                        if news_url_exists(session, preview.url):
+                            continue
+                    except Exception as error:
+                        message = f"Ошибка проверки БД: {type(error).__name__}: {error}"
+                        stat["errors"].append(message)
+                        print(message)
                         continue
+
+                try:
+                    article = build_full_article(preview)
                 except Exception as error:
-                    message = f"Ошибка проверки БД: {type(error).__name__}: {error}"
+                    message = f"{preview.url}: {type(error).__name__}: {error}"
                     stat["errors"].append(message)
-                    print(message)
+                    print(f"Ошибка парсинга: {message}")
                     continue
 
-            try:
-                article = build_full_article(preview)
-            except Exception as error:
-                message = f"{preview.url}: {type(error).__name__}: {error}"
-                stat["errors"].append(message)
-                print(f"Ошибка парсинга: {message}")
-                continue
+                min_text_length = 350 if source.name == "Коммерсантъ — Промышленность" else 120
+                if article.text and len(article.text.strip()) >= min_text_length:
+                    all_articles.append(article)
+                    stat["accepted"] += 1
+                    if stat["accepted"] >= limit_per_source:
+                        break
+                else:
+                    stat["short_or_empty"] += 1
+                    stat["rejected_urls"].append(preview.url)
+                    print(f"Не извлечён основной текст: {preview.url}")
 
-            min_text_length = 350 if source.name == "Коммерсантъ — Промышленность" else 120
-            if article.text and len(article.text.strip()) >= min_text_length:
-                all_articles.append(article)
-                stat["accepted"] += 1
-                if stat["accepted"] >= limit_per_source:
-                    break
+                time.sleep(1)
+
+            print(
+                f"{source.name}: успешно {stat['accepted']}/"
+                f"{stat['candidates']}, не извлечено {stat['short_or_empty']}"
+            )
+        finally:
+            _FETCH_AUDIT.reset(audit_token)
+            if stat["accepted"]:
+                stat["status"] = "ok"
+            elif stat["fetch_failures"]:
+                stat["status"] = "fetch_failed"
+                # Сохраняем краткие причины в привычном поле errors,
+                # даже если fetch_html() возвратил пустую строку.
+                reasons = dict.fromkeys(
+                    f"{e['kind']}: {e['url']}" for e in stat["fetch_failures"]
+                )
+                stat["errors"].extend(list(reasons)[:15])
+            elif stat["candidates"]:
+                stat["status"] = "article_extraction_failed"
             else:
-                stat["short_or_empty"] += 1
-                stat["rejected_urls"].append(preview.url)
-                print(f"Не извлечён основной текст: {preview.url}")
-
-            time.sleep(1)
-
-        print(
-            f"{source.name}: успешно {stat['accepted']}/"
-            f"{stat['candidates']}, не извлечено {stat['short_or_empty']}"
-        )
+                stat["status"] = "no_article_links"
 
     return all_articles
 
