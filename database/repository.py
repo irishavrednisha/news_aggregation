@@ -78,7 +78,7 @@ def seed_sources(session: Session):
         },
         {
             "name": "Производства.рф",
-            "url": "https://производства.рф/articles/",
+            "url": "https://производства.рф/",
             "rss_url": None,
             "source_type": "html",
             "is_active": True,
