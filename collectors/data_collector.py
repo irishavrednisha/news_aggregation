@@ -1953,38 +1953,57 @@ def _article_paragraphs(block, title):
 
 def _lukoil_published_date(soup):
     """
-    ЛУКОЙЛ: дата на странице находится отдельным текстовым узлом после
-    второго H1 — заголовка самого пресс-релиза. Не ищем даты в абзацах,
-    где часто перечисляются даты других событий.
+    В реальном HTML ЛУКОЙЛ дата в span.pressrelise-article-date
+    (именно 'pressrelise' — так написан класс на сайте).
+    Предыдущий обход next_elements прерывался на script перед датой.
     """
-    headings = soup.find_all("h1")
-    if not headings:
-        return None
-    h = headings[-1]
-    checked = 0
-    for node in h.next_elements:
-        if not isinstance(node, str):
-            continue
-        value = clean_text(node)
-        if not value:
-            continue
-        checked += 1
-        if checked > 45:
-            break
-        if len(value) > 240:
-            break  # началось основное содержимое
-        if re.fullmatch(
-            r"\d{1,2}\s+[а-яё]+\s+\d{4}\s*г?\.?",
-            value.lower(),
-        ):
-            return _parse_published(value)
-        if re.fullmatch(
-            r"\{?\s*\d{1,2}\.\d{1,2}\.\d{4}(?:\s+\d{2}:\d{2}:\d{2})?\s*\}?",
-            value,
-        ):
-            return _parse_published(value.strip("{} "))
+    node = soup.select_one(
+        ".pressrelise-article-date, .pressrelease-article-date"
+    )
+    if node:
+        parsed = _parse_published(node.get_text(" ", strip=True))
+        if parsed:
+            return parsed
+
+    # Запасной вариант без чтения JS и дат в тексте соседних статей.
+    headline = soup.select_one("h1.press-release-page-title")
+    if headline:
+        for candidate in headline.find_all_next("span", limit=8):
+            value = clean_text(candidate.get_text(" ", strip=True))
+            if re.fullmatch(
+                r"\d{1,2}\s+[а-яё]+\s+\d{4}\s*г?\.?",
+                value.lower(),
+            ):
+                return _parse_published(value)
     return None
 
+
+def _source_specific_published_date(soup, source_name):
+    """Даты из подтверждённых HTML-контейнеров конкретных сайтов."""
+    selectors = {
+        "ЛУКОЙЛ": (
+            ".pressrelise-article-date",
+            ".pressrelease-article-date",
+        ),
+        "MASHNEWS": (
+            ".grarticle-header .grarticle-items .grarticle-item",
+            ".grarticle-header .grarticle-item",
+        ),
+        "ТПП РФ": (
+            ".news-detail__date .ribbon",
+            ".news-detail__date",
+        ),
+        "Заводы.рф": (
+            "main .article-head__top .date",
+            "main span.date",
+        ),
+    }
+    for selector in selectors.get(source_name, ()):
+        for node in soup.select(selector)[:5]:
+            result = _parse_published(node.get_text(" ", strip=True))
+            if result:
+                return result
+    return None
 
 def _lukoil_main_body(soup, title):
     """Тело пресс-релиза до блока «Вас может заинтересовать»."""
@@ -2153,13 +2172,11 @@ def build_full_article(preview: ArticlePreview) -> Article:
                     title = candidate
 
         # Не удаляем scripts до чтения JSON-LD и метаданных даты.
-        published_at = published_at or _page_date(soup, jsonld)
-        if preview.source == "Заводы.рф" and not published_at:
-            date_node = soup.select_one("main .article-head__top .date, main span.date")
-            if date_node:
-                published_at = _parse_published(date_node.get_text(" ", strip=True))
-        if preview.source == "ЛУКОЙЛ" and not published_at:
-            published_at = _lukoil_published_date(soup)
+        published_at = (
+            published_at
+            or _page_date(soup, jsonld)
+            or _source_specific_published_date(soup, preview.source)
+        )
         text = _extract_main_text(soup, preview.source, title, jsonld)
         if text:
             text_source = "html"
