@@ -309,6 +309,82 @@ class CollectorTests(unittest.TestCase):
         self.assertNotIn("Фото рекламного баннера", article.text)
         self.assertEqual(article.published_at, datetime(2026, 11, 3, 1, 36))
 
+    def test_real_lukoil_date_selector_ignores_script(self):
+        """Реальный HTML: дата после JS-скрипта в span.pressrelise-article-date."""
+        preview = ArticlePreview(
+            source="ЛУКОЙЛ",
+            title="На АЗС запущена новая акция",
+            url="https://lukoil.ru/PressCenter/Pressreleases/Pressrelease/example",
+            published_at=None, preview_text="",
+        )
+        html = """
+        <h1>Пресс-релиз</h1>
+        <div class="content">
+            <h1 class="press-release-page-title">На АЗС запущена новая акция</h1>
+            <script>var x = "js".repeat(500);</script>
+            <p><span class="pressrelise-article-date">28 октября 2026 г.</span></p>
+            <p>Компания запустила новую программу лояльности для
+            покупателей топлива на российских автозаправочных
+            станциях и опубликовала правила проведения акции.</p>
+            <p>Участники программы могут получить скидку на топливо
+            при приобретении дополнительных товаров в магазинах.</p>
+            <h4>Вас может заинтересовать</h4>
+            <p>Совершенно другая новость, которую включать нельзя.</p>
+        </div>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertEqual(article.published_at, datetime(2026, 10, 28))
+        self.assertNotIn("Совершенно другая", article.text)
+
+    def test_real_mashnews_date_selector(self):
+        preview = ArticlePreview(
+            source="MASHNEWS",
+            title="Испытания водородного двигателя",
+            url="https://mashnews.ru/test.html",
+            published_at=None, preview_text="",
+        )
+        html = """
+        <div class="grarticle-header"><div class="grarticle-items">
+            <div class="grarticle-item">05 ноября 2026 23:00</div>
+            <div class="grarticle-item">читать 2 минуты</div>
+        </div></div>
+        <h1>Испытания водородного двигателя</h1>
+        <article>
+            <p>В России начались испытания нового двигателя для
+            отечественного водородного поезда. Разработка
+            ориентирована на дальнейшее промышленное внедрение.</p>
+            <p>Опытный образец проходит стендовые испытания и
+            будет установлен на испытательном подвижном составе.</p>
+        </article>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertEqual(article.published_at, datetime(2026, 11, 5, 23, 0))
+
+    def test_real_tpprf_date_selector_without_h1(self):
+        preview = ArticlePreview(
+            source="ТПП РФ",
+            title="ТПП поддержала проект предприятия",
+            url="https://news.tpprf.ru/ru/news/9793720/",
+            published_at=None, preview_text="",
+        )
+        html = """
+        <div class="news-detail__date">
+            <div class="ribbon ribbon_fs-14">05.11.2026</div>
+        </div>
+        <div class="news-detail__text">
+            <p>Региональная торгово-промышленная палата организовала
+            мероприятие по развитию производственных предприятий
+            и поддержке новых инвестиций в промышленность.</p>
+            <p>Участники рассмотрели перспективы модернизации
+            производственной инфраструктуры в регионе.</p>
+        </div>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertEqual(article.published_at, datetime(2026, 11, 5))
+
     def test_unknown_container_rejected_instead_of_mixing_news(self):
         preview = ArticlePreview(
             source="НедраДВ", title="Первая новость",
