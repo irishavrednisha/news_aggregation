@@ -1551,6 +1551,8 @@ _SOURCE_ARTICLE_PATHS = {
         r"^/(?:publication|publikacii|news|novosti|post|article|articles)/[^/]+/?$"
     ),
     "Коммерсантъ — Промышленность": re.compile(r"^/doc/\d+/?$"),
+    "Ростех": re.compile(r"^/media/news/[^/]+/?$"),
+    "Роснефть": re.compile(r"^/press/news/item/\d+/?$"),
 }
 
 _BAD_ARTICLE_PATHS = (
@@ -1659,14 +1661,33 @@ _SOURCE_LISTING_ALTERNATIVES = {
     "Роснефть": (
         "https://www.rosneft.ru/press/news/2026/",
         "https://rosneft.ru/press/news/",
+        "https://limited.rosneft.ru/press/news/",
     ),
     "Производства.рф": (
         "https://производства.рф/articles/",
     ),
     "Промышленный вестник / ПВ.РФ": (
-        "https://promvest.info/ru/novosti-kompaniy/",
+        "https://promvest.info/",
     ),
 }
+
+
+def _canonical_source_link(source, absolute_url: str) -> str | None:
+    """
+    Ограничиваем сбор проверенными доменами одного источника.
+    Лёгкая версия Роснефти — официальный поддомен rosneft.ru:
+    сохраняем URL на основном домене во избежание дубликатов.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(absolute_url)
+    domain = (parts.hostname or "").lower()
+    if source.name == "Роснефть" and domain == "limited.rosneft.ru":
+        canonical_host = urlsplit(source.url).netloc
+        return urlunsplit(("https", canonical_host, parts.path, parts.query, ""))
+    if same_domain(absolute_url, source.url):
+        return absolute_url
+    return None
 
 
 def _listing_page_anchors(soup, source_name):
@@ -1724,6 +1745,9 @@ def collect_html_previews(source, limit: int) -> list[ArticlePreview]:
         if not html:
             print(f"Нет HTML списка: {source.name} — {listing_url}")
             continue
+        if "Error establishing a database connection" in html:
+            print(f"Сайт {source.name} возвращает ошибку собственной БД: {listing_url}")
+            continue
 
         soup = BeautifulSoup(html, "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "aside"]):
@@ -1736,7 +1760,8 @@ def collect_html_previews(source, limit: int) -> list[ArticlePreview]:
             if not href:
                 continue
             absolute = urljoin(listing_url, href).split("#")[0]
-            if not same_domain(absolute, source.url) or absolute in seen:
+            absolute = _canonical_source_link(source, absolute)
+            if not absolute or absolute in seen:
                 continue
             if not _is_real_article_link(source.name, absolute):
                 continue
