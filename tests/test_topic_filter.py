@@ -96,6 +96,22 @@ class TopicFilterTests(unittest.TestCase):
                 self.assertEqual(decision.reason, reason)
                 self.assertFalse(decision.accepted)
 
+    def test_agricultural_support_without_production_project_is_offtopic(self):
+        rejected = self.decision(
+            "Запорожская область включат в федеральную программу поддержки виноделия"
+        )
+        self.assertFalse(rejected.accepted)
+        self.assertEqual(rejected.reason, "offtopic_agriculture_policy_only")
+
+        for title in (
+            "Винодельческий завод модернизировал линию розлива",
+            "Российские инженеры разработали оборудование для виноделия",
+            "На предприятии запустили производство промышленных прессов "
+            "для переработки винограда",
+        ):
+            with self.subTest(title=title):
+                self.assertTrue(self.decision(title).accepted)
+
     def test_foreign_only_not_russian_technology_abroad(self):
         foreign = article(
             "В Бангладеш возобновились протесты рабочих швейных фабрик",
