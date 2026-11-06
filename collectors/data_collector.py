@@ -2588,7 +2588,9 @@ def _strip_source_boilerplate(text: str, source_name: str) -> str:
         # конце статьи Apple — не часть новости об акциях компаний.
         # Удаляем только конкретную оговорку ПОСЛЕ основного текста.
         notice = re.search(r"\s*\*\s*Деятельность\s+Meta\s*\*", text, re.I)
-        if notice and notice.start() > len(text) * 0.5:
+        if notice and notice.start() >= 100:
+            # Юридическая оговорка иногда длиннее половины
+            # короткой статьи, поэтому процент от длины ненадёжен.
             tail = text[notice.start():].lower()
             if "экстремист" in tail and "запрещен" in tail:
                 text = text[:notice.start()]
