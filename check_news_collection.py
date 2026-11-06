@@ -102,6 +102,14 @@ def main():
     print(f"Файл: {destination}")
 
     if args.dump_html:
+        # Сохраняем неудачные страницы, а также один образец статьи,
+        # если источник собирается без даты публикации.
+        from collections import defaultdict
+        samples_without_date = defaultdict(list)
+        for item in records:
+            if not item["published_at"]:
+                samples_without_date[item["source"]].append(item["url"])
+
         # Если источник вернул 0 статей, сохраняем HTML его ленты;
         # если есть ссылки без текста, также сохраняем первые две
         # страницы конкретных новостей. Это публичные страницы сайтов.
@@ -113,9 +121,10 @@ def main():
         with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as archive:
             for idx, src in enumerate(sources, start=1):
                 info = diagnostics.get(src.name, {})
-                if info.get("accepted", 0) >= args.limit:
+                missing_date_urls = samples_without_date.get(src.name, [])
+                if info.get("accepted", 0) >= args.limit and not missing_date_urls:
                     continue
-                addresses = [src.url]
+                addresses = [src.url] if info.get("accepted", 0) < args.limit else []
                 if src.name == "Производства.рф":
                     addresses.append("https://производства.рф/articles/")
                 if src.name == "Ростех":
@@ -123,6 +132,7 @@ def main():
                 if src.name == "Роснефть":
                     addresses.append("https://www.rosneft.ru/press/news/2026/")
                 addresses += info.get("rejected_urls", [])[:2]
+                addresses += missing_date_urls[:1]
                 for n, url in enumerate(dict.fromkeys(addresses)):
                     try:
                         html = fetch_html(url)
@@ -130,11 +140,30 @@ def main():
                             f"source_{idx:02}_page_{n:02}.html",
                             html or "<!-- FETCH FAILED: EMPTY HTML -->",
                         )
-                        snapshot_log.append({
+                        record = {
                             "source": src.name, "url": url,
                             "html_length": len(html or ""),
                             "snapshot": f"source_{idx:02}_page_{n:02}.html",
-                        })
+                        }
+                        if html and "Error establishing a database connection" in html:
+                            record["page_error"] = "origin_database_connection_error"
+                        if not html and n == 0:
+                            # Если браузер и requests вернули пустой результат,
+                            # сохранение отдельной ошибки requests полезнее
+                            # пустой HTML. Только один короткий HTTP-пробник.
+                            import requests
+                            from collectors.data_collector import HEADERS
+                            try:
+                                resp = requests.get(
+                                    url, headers=HEADERS, timeout=12,
+                                )
+                                record["http_status"] = resp.status_code
+                                record["http_final_url"] = resp.url
+                            except requests.RequestException as exc:
+                                record["http_exception"] = (
+                                    f"{type(exc).__name__}: {exc}"
+                                )[:500]
+                        snapshot_log.append(record)
                     except Exception as error:
                         snapshot_log.append({
                             "source": src.name, "url": url,
