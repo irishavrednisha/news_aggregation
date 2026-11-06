@@ -1594,80 +1594,136 @@ def _legacy_collect_html_previews(source, limit: int) -> list[ArticlePreview]:
 
 
 
-def collect_html_previews(source, limit: int) -> list[ArticlePreview]:
-    html = fetch_html(source.url)
-    if not html:
-        print(f"Не удалось получить список: {source.name}")
-        return []
+# Дополнительные страницы с подтверждёнными лентами новостей.
+# Основной URL источника всегда проверяем первым.
+_SOURCE_LISTING_ALTERNATIVES = {
+    "Ростех": (
+        "https://www.rostec.ru/media/news/",
+        "https://rostec.ru/media/",
+    ),
+    "Роснефть": (
+        "https://www.rosneft.ru/press/news/2026/",
+        "https://rosneft.ru/press/news/",
+    ),
+    "Производства.рф": (
+        "https://производства.рф/articles/",
+    ),
+    "Промышленный вестник / ПВ.РФ": (
+        "https://promvest.info/ru/novosti-kompaniy/",
+    ),
+}
 
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "nav", "footer", "aside"]):
-        tag.decompose()
 
-    # Отдельно ограничиваем «Коммерсантъ» тематической лентой.
-    if source.name == "Коммерсантъ — Промышленность":
-        h = soup.find(
+def _listing_page_anchors(soup, source_name):
+    """Для ИАПН берём текущую ленту, а не старые блоки архива."""
+    if source_name == "ИАПН":
+        heading = soup.find(
+            lambda t: t.name in ("h1", "h2")
+            and clean_text(t.get_text(" ", strip=True)).lower() == "новости"
+        )
+        if not heading:
+            return []
+        result = []
+        for node in heading.next_elements:
+            if getattr(node, "name", None) in ("h1", "h2"):
+                break
+            if getattr(node, "name", None) == "a":
+                if node.find_parent(("h3", "h4")):
+                    result.append(node)
+        return result
+
+    if source_name == "Коммерсантъ — Промышленность":
+        heading = soup.find(
             lambda t: t.name in ("h1", "h2")
             and clean_text(t.get_text(" ", strip=True)).lower().startswith("промышленность")
         )
-        anchors = []
-        if h:
-            for node in h.next_elements:
-                if getattr(node, "name", "") in ("h1", "h2"):
-                    heading = clean_text(node.get_text(" ", strip=True)).lower()
-                    if "новости компаний" in heading:
-                        break
-                if getattr(node, "name", "") == "a":
-                    anchors.append(node)
-        else:
-            print("Не найден раздел «Промышленность» на kommersant.ru")
+        if not heading:
+            print("Нет заголовка раздела «Промышленность»")
             return []
-    else:
-        # На ПВ.РФ карточки лежат за пределами main и часто
-        # представлены обычными ссылками без вложенного h2.
-        anchors = soup.select("a[href]")
+        links = []
+        for node in heading.next_elements:
+            if getattr(node, "name", "") in ("h1", "h2"):
+                marker = clean_text(node.get_text(" ", strip=True)).lower()
+                if "новости компаний" in marker:
+                    break
+            if getattr(node, "name", "") == "a":
+                links.append(node)
+        return links
 
+    return soup.select("a[href]")
+
+
+def collect_html_previews(source, limit: int) -> list[ArticlePreview]:
+    """Сбор по первичной ленте, затем по альтернативной ленте сайта."""
+    from types import SimpleNamespace
+
+    urls = list(dict.fromkeys(
+        [source.url] + list(_SOURCE_LISTING_ALTERNATIVES.get(source.name, ()))
+    ))
     previews, seen = [], set()
-    for anchor in anchors:
-        href = anchor.get("href")
-        if not href:
-            continue
-        absolute = urljoin(source.url, href).split("#")[0]
-        if not same_domain(absolute, source.url) or absolute in seen:
-            continue
-        if not _is_real_article_link(source.name, absolute):
-            continue
 
-        title = _article_link_heading(anchor)
-        # Общий fallback только в зоне контента, не из меню.
-        if not title and source.name == "Коммерсантъ — Промышленность":
-            title = clean_text(anchor.get_text(" ", strip=True))
-        if not title:
-            title = clean_text(anchor.get_text(" ", strip=True))
-        # Если ссылка включает всю карточку (заголовок + анонс),
-        # используем первую строку/текст прямого дочернего элемента.
-        if len(title) > 210:
-            direct = [
-                clean_text(child)
-                for child in anchor.find_all(string=True, recursive=False)
-            ]
-            title = next((part for part in direct if 14 <= len(part) <= 210), "")
-        if len(title) < 14 or len(title) > 210:
-            continue
-
-        seen.add(absolute)
-        previews.append(ArticlePreview(
-            source=source.name,
-            title=normalize_title(title, source.name),
-            url=absolute,
-            published_at=None,
-            preview_text="",
-        ))
+    for listing_url in urls:
         if len(previews) >= limit:
             break
+        html = fetch_html(listing_url)
+        if not html:
+            print(f"Нет HTML списка: {source.name} — {listing_url}")
+            continue
 
-    print(f"{source.name}: найдено {len(previews)} ссылок на статьи")
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "aside"]):
+            tag.decompose()
+
+        anchors = _listing_page_anchors(soup, source.name)
+        count_before = len(previews)
+        for anchor in anchors:
+            href = anchor.get("href")
+            if not href:
+                continue
+            absolute = urljoin(listing_url, href).split("#")[0]
+            if not same_domain(absolute, source.url) or absolute in seen:
+                continue
+            if not _is_real_article_link(source.name, absolute):
+                continue
+
+            title = _article_link_heading(anchor)
+            if not title:
+                title = clean_text(anchor.get_text(" ", strip=True))
+            if len(title) > 210:
+                title = next((
+                    clean_text(x) for x in anchor.stripped_strings
+                    if 14 <= len(clean_text(x)) <= 210
+                    and not re.fullmatch(r"[\d. /:]+", clean_text(x))
+                ), "")
+            if len(title) < 14 or len(title) > 210:
+                continue
+
+            seen.add(absolute)
+            previews.append(ArticlePreview(
+                source=source.name,
+                title=normalize_title(title, source.name),
+                url=absolute,
+                published_at=None,
+                preview_text="",
+            ))
+            if len(previews) >= limit:
+                break
+
+        found = len(previews) - count_before
+        print(
+            f"{source.name}: {found} новых ссылок из {listing_url}, "
+            f"в HTML {len(html)} символов, всего a[href]={len(anchors)}"
+        )
+
     return previews
+
+
+def collect_rostec_previews(source, limit: int):
+    return collect_html_previews(source, limit)
+
+
+def collect_rosneft_previews(source, limit: int):
+    return collect_html_previews(source, limit)
 
 # =========================
 # Сбор полной новости
@@ -2105,6 +2161,8 @@ def collect_news(
                     "НедраДВ": collect_nedradv_previews,
                     "ТПП РФ": collect_tpprf_previews,
                     "Добывающая промышленность": collect_dprom_previews,
+                    "Ростех": collect_rostec_previews,
+                    "Роснефть": collect_rosneft_previews,
                 }
                 fn = collectors.get(source.name)
                 if fn is None:
