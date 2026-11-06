@@ -35,6 +35,8 @@ def get_ready_clusters(session, limit: int = 100) -> list[Cluster]:
         session.query(Cluster)
         .filter(Cluster.status == "ready")
         .filter(Cluster.summary_text.isnot(None))
+        .filter(Cluster.tags.isnot(None))
+        .filter(Cluster.tags != "")
         .order_by(Cluster.created_at.asc())
         .limit(limit)
         .all()
@@ -95,6 +97,11 @@ def publish_ready_clusters(limit: int = 100):
             time.sleep(10)
 
             for cluster in clusters:
+                # Никакой публикации без хотя бы одного непустого тега,
+                # даже если статус ready остался от старой версии БД.
+                if not any(tag.strip() for tag in (cluster.tags or "").split(",")):
+                    print(f"Пропуск кластера #{cluster.id}: нет тегов.")
+                    continue
                 print("-" * 100)
                 print(f"Публикация кластера #{cluster.id}")
                 print(cluster.title)
