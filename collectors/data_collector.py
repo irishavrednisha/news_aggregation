@@ -2221,6 +2221,33 @@ def _source_article_headline_date(soup, source_name, title):
 
 def _source_specific_published_date(soup, source_name):
     """Даты из подтверждённых HTML-контейнеров конкретных сайтов."""
+    if source_name == "Ростех":
+        # Реальный HTML: <div class="media-news-single__date">
+        #   <span class="date">06.11.2026</span>
+        #   <span class="date">04:25</span>
+        # </div>, сразу перед h2.media-news-single__name.
+        # Обе части принадлежат одному заголовку, поэтому нельзя
+        # подставлять время из ленты других новостей.
+        for heading in soup.select(
+            "h1.media-news-single__name, h2.media-news-single__name"
+        ):
+            info = heading.find_parent(class_="media-news-single__info")
+            if info is None:
+                continue
+            date_block = info.select_one(".media-news-single__date")
+            if date_block is None:
+                continue
+            date_text = clean_text(date_block.get_text(" ", strip=True))
+            if not re.fullmatch(
+                r"\\d{1,2}\\.\\d{1,2}\\.\\d{4}"
+                r"(?:\\s+\\d{1,2}:\\d{2}(?::\\d{2})?)?",
+                date_text,
+            ):
+                continue
+            parsed = _parse_published(date_text)
+            if parsed:
+                return parsed
+
     selectors = {
         "ЛУКОЙЛ": (
             ".pressrelise-article-date",
@@ -2417,8 +2444,11 @@ def build_full_article(preview: ArticlePreview) -> Article:
         # Не удаляем scripts до чтения JSON-LD и метаданных даты.
         published_at = (
             published_at
-            or _page_date(soup, jsonld)
+            # Для Ростеха важно сначала объединить дату + время из
+            # одного контейнера. _page_date иначе берёт первое span.date
+            # и возвращает полночь вместо реального времени публикации.
             or _source_specific_published_date(soup, preview.source)
+            or _page_date(soup, jsonld)
             or _source_article_headline_date(soup, preview.source, title)
         )
         text = _extract_main_text(soup, preview.source, title, jsonld)
