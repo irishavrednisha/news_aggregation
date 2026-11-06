@@ -96,12 +96,14 @@ class TopicFilterTests(unittest.TestCase):
                 self.assertEqual(decision.reason, reason)
                 self.assertFalse(decision.accepted)
 
-    def test_agricultural_support_without_production_project_is_offtopic(self):
-        rejected = self.decision(
+    def test_agricultural_policy_deferred_to_semantic_tagger(self):
+        # На первом этапе оставляем пограничный сюжет. AI-теггер
+        # должен решить, относится ли содержание к промышленности.
+        candidate = self.decision(
             "Запорожская область включат в федеральную программу поддержки виноделия"
         )
-        self.assertFalse(rejected.accepted)
-        self.assertEqual(rejected.reason, "offtopic_agriculture_policy_only")
+        self.assertTrue(candidate.accepted)
+        self.assertEqual(candidate.reason, "accepted")
 
         for title in (
             "Винодельческий завод модернизировал линию розлива",
@@ -112,23 +114,16 @@ class TopicFilterTests(unittest.TestCase):
             with self.subTest(title=title):
                 self.assertTrue(self.decision(title).accepted)
 
-    def test_concrete_nonindustrial_mining_and_wine_policy_news(self):
-        # Заголовки из выгрузки 06.11.2026: эти два сюжета прежде
-        # попадали в предварительно принятые 21/45.
-        self.assertEqual(
-            self.decision(
-                "Запорожская область включат в федеральную программу "
-                "поддержки виноделия"
-            ).reason,
-            "offtopic_agricultural_policy",
-        )
-        self.assertEqual(
-            self.decision(
-                "Посольство КНР предупредило граждан об ответственности "
-                "за незаконную добычу золота в России"
-            ).reason,
-            "offtopic_consular_notice",
-        )
+    def test_ambiguous_industry_related_cases_left_for_ai(self):
+        # Не плодим запреты по двум спорным сюжетам: они должны
+        # пройти к суммаризации и AI-тегированию.
+        for title in (
+            "Запорожская область включат в федеральную программу поддержки виноделия",
+            "Посольство КНР предупредило граждан об ответственности за незаконную добычу золота в России",
+        ):
+            with self.subTest(title=title):
+                self.assertTrue(self.decision(title).accepted)
+
 
     def test_production_and_mine_safety_survive_narrow_exclusions(self):
         # Не баним ключевые слова «виноделие», «добыча», «золото»
