@@ -2478,14 +2478,31 @@ def _extract_main_text(soup, source_name, title, jsonld):
         return extract_text_kommersant(soup, title=title)
 
     body = jsonld.get("articleBody", "")
-    if isinstance(body, str) and len(body.strip()) >= 140:
-        return clean_text(body)
+    jsonld_text = (
+        clean_text(body)
+        if isinstance(body, str) and len(body.strip()) >= 140
+        else ""
+    )
 
     selectors = _ARTICLE_SELECTORS.get(source_name, ())
     selectors += (
         "[itemprop='articleBody']", ".entry-content",
         ".post-content", ".article-body", "article",
     )
+
+    # У части CMS JSON-LD articleBody содержит только абзацы,
+    # тогда как технические характеристики и перечисления находятся
+    # в HTML <li>. Предпочитаем полный структурированный DOM только
+    # когда его объём сопоставим с JSON-LD, чтобы не потерять текст.
+    if jsonld_text:
+        for selector in dict.fromkeys(selectors):
+            for block in soup.select(selector)[:4]:
+                if not block.select("ul li, ol li"):
+                    continue
+                structured = _article_paragraphs(block, title)
+                if len(structured) >= max(140, int(len(jsonld_text) * 0.8)):
+                    return structured
+        return jsonld_text
 
     for selector in dict.fromkeys(selectors):
         for block in soup.select(selector)[:4]:
