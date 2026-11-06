@@ -99,8 +99,11 @@ def main():
         print(
             f"  {name}: {count} статей, "
             f"{d.get('candidates', 0)} кандидатов, "
-            f"{d.get('short_or_empty', 0)} без текста"
+            f"{d.get('short_or_empty', 0)} без текста, "
+            f"статус={d.get('status', 'unknown')}"
         )
+        for err in d.get("errors", [])[:3]:
+            print(f"    причина: {err}")
     print(f"\nСохранено: {len(records)}")
     print(f"Файл: {destination}")
 
