@@ -372,19 +372,35 @@ def extract_by_selectors(
     min_len: int = 250,
     title: str | None = None
 ) -> str:
+    """
+    Универсальный fallback для старых селекторов «article p»:
+    если статьи содержат списки, извлекаем их вместе с абзацами
+    из того же контейнера, не теряя <li> между <p>.
+    """
     for selector in selectors:
         blocks = soup.select(selector)
+        if not blocks:
+            continue
+
+        # Большинство старых экстракторов выбирают лишь p.
+        # Поднимаемся ТОЛЬКО до явно выбранного селектором
+        # article/main/.entry-content, а не до всей страницы.
+        if selector.endswith(" p"):
+            container_selector = selector[:-2]
+            for container in soup.select(container_selector)[:5]:
+                if not container.select("ul li, ol li"):
+                    continue
+                structured = _article_paragraphs(container, title)
+                if len(structured) >= min_len:
+                    return structured
 
         paragraphs = [
             block.get_text(" ", strip=True)
             for block in blocks
         ]
-
         paragraphs = filter_paragraphs(paragraphs, title=title)
-
         result = normalize_article_text(" ".join(paragraphs), title=title)
         result = cut_related_news(result)
-
         if len(result) >= min_len:
             return result
 
