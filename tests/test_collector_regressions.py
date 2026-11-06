@@ -15,6 +15,20 @@ from collectors.data_collector import (
 
 
 class CollectorTests(unittest.TestCase):
+    def test_abbreviations_do_not_delete_short_street_names(self):
+        from utils.text_utils import normalize_article_text
+
+        original = (
+            '5 ноября 1975 года первый троллейбус проехал по маршруту '
+            '"площадь Калинина - ул. Мастеровая" (ныне ул. Маршала Борзова). '
+            'С этого дня троллейбус вошёл в транспортную систему города.'
+        )
+        cleaned = normalize_article_text(original)
+        self.assertIn("Мастеровая", cleaned)
+        self.assertIn("Маршала Борзова", cleaned)
+        self.assertIn("С этого дня", cleaned)
+
+
     def test_nedradv_does_not_capture_related_news_or_auctions(self):
         html = """
         <h1>На карьере запущена новая линия</h1>
