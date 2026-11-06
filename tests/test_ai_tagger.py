@@ -7,28 +7,35 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 from processing.ai_tagger import (
-    AITagResult, INDUSTRIAL_LABEL, NONINDUSTRIAL_LABEL, TAG_LABELS,
+    AITagResult, EVENT_LABELS, INDUSTRIAL_EVENTS, TAG_LABELS,
     make_ai_input, predict_tags,
 )
 from test_tagging_filter_contract import load_tagger_functions
 
 
 class FakeNLI:
-    def __init__(self, industrial_score=0.92, tag_scores=None):
-        self.industrial_score = industrial_score
+    def __init__(self, event="industrial_production", event_score=0.78,
+                 tag_scores=None):
+        self.event = event
+        self.event_score = event_score
         self.tag_scores = tag_scores or {}
         self.calls = []
 
     def __call__(self, text, candidate_labels, hypothesis_template, multi_label):
         self.calls.append((text, list(candidate_labels), multi_label))
-        if len(candidate_labels) == 2 and INDUSTRIAL_LABEL in candidate_labels:
+        if set(candidate_labels) == set(EVENT_LABELS.values()):
+            rem = (1 - self.event_score) / (len(EVENT_LABELS) - 1)
             scores = {
-                INDUSTRIAL_LABEL: self.industrial_score,
-                NONINDUSTRIAL_LABEL: 1 - self.industrial_score,
+                label: (self.event_score if key == self.event else rem)
+                for key, label in EVENT_LABELS.items()
             }
         else:
+            rem = (1 - sum(self.tag_scores.values()))
+            unprovided = len(candidate_labels) - len(self.tag_scores)
+            if unprovided:
+                rem /= unprovided
             scores = {
-                label: self.tag_scores.get(label, 0.12)
+                label: self.tag_scores.get(label, rem)
                 for label in candidate_labels
             }
         return {
@@ -64,24 +71,53 @@ class AITaggerTests(unittest.TestCase):
         self.assertEqual(text.count(SUMMARY), 1)
         self.assertIn("Начало статьи:", text)
 
-    def test_two_strong_tags_and_irrelevant_third_not_selected(self):
+    def test_two_competing_industrial_tags_selected(self):
         fake = FakeNLI(tag_scores={
-            TAG_LABELS["металлургия"]: 0.92,
-            TAG_LABELS["заводы"]: 0.83,
-            TAG_LABELS["инновации"]: 0.68,
+            TAG_LABELS["металлургия"]: 0.50,
+            TAG_LABELS["заводы"]: 0.32,
+            TAG_LABELS["инновации"]: 0.05,
         })
         result = predict_tags(
             TITLE, SUMMARY, classifier=fake,
-            max_tags=2, tag_threshold=0.65, relevance_threshold=0.60,
+            max_tags=2, tag_threshold=0.22, relevance_threshold=0.60,
         )
         self.assertEqual(result.tags, ["металлургия", "заводы"])
+        self.assertEqual(result.event_type, "industrial_production")
         self.assertEqual(result.reason, "tagged")
         self.assertEqual(len(fake.calls), 2)
+        # ВАЖНО: для главного события и для тегов
+        # используем сравнительное, а не независимое NLI.
         self.assertFalse(fake.calls[0][2])
-        self.assertTrue(fake.calls[1][2])
+        self.assertFalse(fake.calls[1][2])
+
+    def test_staff_training_not_tagged_as_engineering(self):
+        fake = FakeNLI(
+            event="staff_training", event_score=0.80,
+            tag_scores={TAG_LABELS["инжиниринг"]: 0.75},
+        )
+        result = predict_tags(
+            "Руководители судостроительных проектов прошли обучение",
+            "В РАНХиГС провели курс проектного управления.",
+            classifier=fake,
+        )
+        self.assertEqual(result.tags, [])
+        self.assertEqual(result.reason, "no_industrial_relevance")
+        self.assertEqual(result.event_type, "staff_training")
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_robotics_competition_not_automatically_machinery(self):
+        fake = FakeNLI(event="competitions", event_score=0.76)
+        result = predict_tags(
+            "В Казани стартует финал «Битвы роботов»",
+            "Участники инженерного соревнования покажут своих роботов.",
+            classifier=fake,
+        )
+        self.assertEqual(result.tags, [])
+        self.assertEqual(result.event_type, "competitions")
+        self.assertEqual(len(fake.calls), 1)
 
     def test_nonindustrial_article_skips_tag_scoring(self):
-        fake = FakeNLI(industrial_score=0.21)
+        fake = FakeNLI(event="consumer_promotion", event_score=0.92)
         result = predict_tags(
             "В магазине скидка на кофе", "Посетители воспользовались акцией.",
             classifier=fake
@@ -91,11 +127,12 @@ class AITaggerTests(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
 
     def test_no_tag_above_threshold_no_publication(self):
-        fake = FakeNLI(industrial_score=0.95)
+        fake = FakeNLI(event_score=0.96)
         result = predict_tags(TITLE, SUMMARY, classifier=fake)
         self.assertEqual(result.tags, [])
         self.assertEqual(result.reason, "no_confident_industrial_tag")
         self.assertEqual(len(result.ranked_tags), 18)
+        self.assertEqual(sum(x[1] for x in result.ranked_tags), 1.0)
 
     def test_missing_summary_does_not_load_model(self):
         fake = FakeNLI()
@@ -104,13 +141,22 @@ class AITaggerTests(unittest.TestCase):
         self.assertEqual(fake.calls, [])
 
     def test_invalid_scores_are_not_accepted(self):
-        fake = FakeNLI(industrial_score=float("nan"))
+        fake = FakeNLI(event_score=float("nan"))
         with self.assertRaises(ValueError):
             predict_tags(TITLE, SUMMARY, classifier=fake)
 
     def test_out_of_range_threshold_rejected(self):
         with self.assertRaises(ValueError):
             predict_tags(TITLE, SUMMARY, classifier=FakeNLI(), tag_threshold=1.4)
+
+    def test_ambiguous_event_without_clear_majority_is_not_published(self):
+        # Возможная неоднозначная новость: отраслевые термины есть,
+        # но ни один главный тип события не доминирует.
+        fake = FakeNLI(event_score=0.10)
+        result = predict_tags(TITLE, SUMMARY, classifier=fake)
+        self.assertEqual(result.tags, [])
+        self.assertEqual(result.reason, "no_industrial_relevance")
+        self.assertEqual(len(fake.calls), 1)
 
     def test_model_integration_writes_tags_and_ready(self):
         ns = load_tagger_functions()
