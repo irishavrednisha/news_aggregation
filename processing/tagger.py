@@ -1678,6 +1678,7 @@ def tag_cluster(
         cluster.tags = None
         cluster.status = "not_for_publication"
         session.commit()
+        return []
 
     if is_not_related_to_russia(session, cluster, debug=debug):
         cluster.tags = None
@@ -1709,7 +1710,10 @@ def tag_cluster(
 
         return []
 
-    if is_not_publication_by_keywords(text):
+    # Не ищем стоп-слова во всём тексте кластера. Техническая
+    # новость может упоминать выставку, музей, акционеров или вакансии.
+    # Явно непрофильные заголовки уже проверяет общий фильтр.
+    if is_not_publication_by_keywords(cluster.title or ""):
         cluster.tags = None
         cluster.status = "not_for_publication"
         session.commit()
@@ -1731,17 +1735,8 @@ def tag_cluster(
         max_tags=max_tags,
         max_gap_from_best=0.05
     )
-    if selected_tags:
-        if is_not_related_to_russia(session, cluster, debug=debug):
-            cluster.tags = None
-            cluster.status = "not_for_publication"
-        else:
-            cluster.tags = ", ".join(selected_tags)
-            cluster.status = "ready"
-    else:
-        cluster.tags = None
-        cluster.status = "not_for_publication"
-
+    # Проверка связи с РФ уже выполнена выше и завершает функцию.
+    # Не перезаписываем статус повторным блоком.
     if selected_tags:
         cluster.tags = ", ".join(selected_tags)
         cluster.status = "ready"
@@ -2153,15 +2148,13 @@ def keyword_penalty_for_tag(text: str, tag: str) -> float:
     return min(0.05 * matches, 0.15)
 
 def is_not_publication_by_keywords(text: str) -> bool:
-    normalized_text = lemmatize_text(text)
+    """Консервативная проверка заголовка, не всей статьи.
 
-    for keyword in NOT_PUBLICATION_KEYWORDS:
-        normalized_keyword = lemmatize_text(keyword)
-
-        if normalized_keyword in normalized_text:
-            return True
-
-    return False
+    Старый поиск любого NOT_PUBLICATION_KEYWORDS по полному тексту
+    отбрасывал модернизацию оборудования из-за слова «выставка».
+    """
+    from processing.topic_filter import has_bad_title
+    return has_bad_title(text)
 
 def cluster_has_content(session, cluster_id: int) -> bool:
     news_items = (
