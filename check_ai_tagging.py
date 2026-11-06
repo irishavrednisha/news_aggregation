@@ -22,7 +22,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=10, help="Сколько статей проверить")
     parser.add_argument("--source", type=str, default=None, help="Название источника")
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL)
-    parser.add_argument("--tag-threshold", type=float, default=0.65)
+    parser.add_argument("--tag-threshold", type=float, default=0.22)
     parser.add_argument("--relevance-threshold", type=float, default=0.60)
     parser.add_argument("--max-tags", type=int, default=2)
     parser.add_argument("--output", type=Path, default=None, help="Сохранить результаты в JSON")
@@ -61,7 +61,11 @@ def main() -> None:
         print(f"\n{i}. [{a.get('source')}] {title}")
         print(f"   AI: {', '.join(result.tags) if result.tags else 'НЕТ ТЕГОВ'}"
               f"; reason={result.reason}; industry_score={result.relevance_score:.3f}")
-        print("   Лучшие оценки: " + ", ".join(
+        print(f"   Главное событие: {result.event_type or 'не определено'}")
+        print("   Типы событий: " + ", ".join(
+            f"{event} {score:.2f}" for event, score in (result.ranked_events or [])[:4]
+        ))
+        print("   Отрасли: " + ", ".join(
             f"{tag} {score:.2f}" for tag, score in result.ranked_tags[:4]
         ))
         results.append({
@@ -69,6 +73,11 @@ def main() -> None:
             "title": title, "url": a.get("url"),
             "tags": result.tags, "reason": result.reason,
             "industry_score": result.relevance_score,
+            "event_type": result.event_type,
+            "ranked_events": [
+                {"event": event, "score": round(score, 4)}
+                for event, score in (result.ranked_events or [])
+            ],
             "ranked_tags": [
                 {"tag": tag, "score": round(score, 4)}
                 for tag, score in result.ranked_tags
@@ -83,9 +92,10 @@ def main() -> None:
         args.output.write_text(
             json.dumps({
                 "model": args.model,
+                "algorithm": "event_first_multiclass_v2",
                 "tag_threshold": args.tag_threshold,
                 "relevance_threshold": args.relevance_threshold,
-                "note": "preliminary: article lead instead of TextRank summary",
+                "note": "NLI v2 event-first, relative tag scores, article lead instead of TextRank summary",
                 "results": results,
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
