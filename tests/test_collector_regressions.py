@@ -585,6 +585,110 @@ class CollectorTests(unittest.TestCase):
             for row in info["fetch_failures"]
         ))
 
+    def test_unverified_tls_opt_in_is_exact_host_only(self):
+        from collectors.data_collector import (
+            _ALLOW_UNVERIFIED_TLS, _may_ignore_https_errors,
+        )
+        self.assertFalse(_may_ignore_https_errors("https://rostec.ru/media/news/"))
+        token = _ALLOW_UNVERIFIED_TLS.set(True)
+        try:
+            for host in (
+                "rostec.ru", "www.rostec.ru",
+                "www.rosneft.ru", "rosneft.ru", "limited.rosneft.ru",
+            ):
+                self.assertTrue(
+                    _may_ignore_https_errors(f"https://{host}/press/news/")
+                )
+            for url in (
+                "https://rostec.ru.attacker.com/media/news/",
+                "https://promvest.info/",
+                "https://other.rosneft.ru/",
+                "http://rostec.ru/media/news/",
+            ):
+                self.assertFalse(_may_ignore_https_errors(url))
+        finally:
+            _ALLOW_UNVERIFIED_TLS.reset(token)
+        self.assertFalse(_may_ignore_https_errors("https://rostec.ru/media/news/"))
+
+    def test_browser_proceed_anyway_only_with_explicit_opt_in(self):
+        from unittest.mock import MagicMock
+        from collectors.data_collector import (
+            _ALLOW_UNVERIFIED_TLS, fetch_html_with_browser,
+        )
+        browser = MagicMock()
+        browser.new_context.return_value.new_page.return_value.content.return_value = "<html>unverified</html>"
+        browser.new_page.return_value.content.return_value = "<html>verified</html>"
+        p = MagicMock()
+        p.chromium.launch.return_value = browser
+        cm = MagicMock()
+        cm.__enter__.return_value = p
+
+        with patch("collectors.data_collector.sync_playwright", return_value=cm):
+            # Выключено по умолчанию, даже если кто-то передал True в функцию.
+            self.assertIn(
+                "verified", fetch_html_with_browser(
+                    "https://rostec.ru/media/news/", ignore_https_errors=True
+                )
+            )
+            browser.new_context.assert_not_called()
+            token = _ALLOW_UNVERIFIED_TLS.set(True)
+            try:
+                self.assertIn(
+                    "unverified", fetch_html_with_browser(
+                        "https://rostec.ru/media/news/", ignore_https_errors=True
+                    )
+                )
+                self.assertTrue(
+                    browser.new_context.call_args.kwargs["ignore_https_errors"]
+                )
+                browser.new_context.reset_mock()
+                self.assertIn(
+                    "verified", fetch_html_with_browser(
+                        "https://example.net/", ignore_https_errors=True
+                    )
+                )
+                browser.new_context.assert_not_called()
+            finally:
+                _ALLOW_UNVERIFIED_TLS.reset(token)
+
+    def test_explicit_test_only_collect_news_uses_browser_bypass(self):
+        from collectors.data_collector import collect_news
+        source = type("Source", (), {
+            "name": "Ростех",
+            "url": "https://rostec.ru/media/news/",
+            "source_type": "html",
+        })()
+        listing = """
+        <h2><a href="/media/news/new-factory/">
+        Ростех открыл предприятие по производству оборудования</a></h2>
+        """
+        body = """
+        <h1>Ростех открыл предприятие по производству оборудования</h1>
+        <article>
+          <p>В России завершилось строительство нового предприятия.
+          Завод будет производить отечественное оборудование для
+          машиностроения и поддерживать промышленную кооперацию.</p>
+          <p>Новые производственные мощности позволят увеличить
+          выпуск продукции и обеспечить импортозамещение.
+          Предприятие создало рабочие места в регионе.</p>
+        </article>
+        """
+        diag = {}
+        with patch("collectors.data_collector.fetch_html_with_browser",
+                   side_effect=[listing, body]) as browser:
+            with patch("collectors.data_collector.fetch_html_with_requests",
+                       side_effect=AssertionError("requests must not be used")):
+                articles = collect_news([source], limit_per_source=1,
+                                        diagnostics=diag,
+                                        allow_unverified_tls=True)
+        self.assertEqual(len(articles), 1)
+        self.assertEqual(len(browser.call_args_list), 2)
+        self.assertTrue(all(
+            call.kwargs == {"ignore_https_errors": True}
+            for call in browser.call_args_list
+        ))
+        self.assertEqual(diag["Ростех"]["status"], "ok")
+
     def test_unknown_container_rejected_instead_of_mixing_news(self):
         preview = ArticlePreview(
             source="НедраДВ", title="Первая новость",
