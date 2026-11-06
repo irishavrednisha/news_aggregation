@@ -49,10 +49,12 @@ def main():
         return
 
     # Никакой сессии для collect_news: он не проверяет и не пишет URL в БД.
+    diagnostics = {}
     articles = collect_news(
         sources=sources,
         limit_per_source=args.limit,
         session=None,
+        diagnostics=diagnostics,
     )
 
     OUTPUT_DIR.mkdir(exist_ok=True)
@@ -81,13 +83,19 @@ def main():
             "source_limits": args.limit,
             "sources": [s.name for s in sources],
             "counts": counts,
+            "diagnostics": diagnostics,
             "total_articles": len(records),
             "articles": records,
         }, handle, ensure_ascii=False, indent=2)
 
     print("\nИТОГИ СБОРА:")
     for name, count in counts.items():
-        print(f"  {name}: {count}")
+        d = diagnostics.get(name, {})
+        print(
+            f"  {name}: {count} статей, "
+            f"{d.get('candidates', 0)} кандидатов, "
+            f"{d.get('short_or_empty', 0)} без текста"
+        )
     print(f"\nСохранено: {len(records)}")
     print(f"Файл: {destination}")
 
