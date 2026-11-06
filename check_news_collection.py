@@ -7,6 +7,7 @@
 """
 import argparse
 import json
+from zipfile import ZipFile, ZIP_DEFLATED
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ def main():
     parser = argparse.ArgumentParser(description="Проверка сбора промышленных новостей")
     parser.add_argument("--source", default=None, help="Имя источника из базы")
     parser.add_argument("--limit", type=int, default=5, help="Лимит на источник")
+    parser.add_argument("--dump-html", action="store_true", help="Сохранить HTML неудачных источников в ZIP")
     args = parser.parse_args()
 
     if args.limit < 1:
@@ -98,6 +100,52 @@ def main():
         )
     print(f"\nСохранено: {len(records)}")
     print(f"Файл: {destination}")
+
+    if args.dump_html:
+        # Если источник вернул 0 статей, сохраняем HTML его ленты;
+        # если есть ссылки без текста, также сохраняем первые две
+        # страницы конкретных новостей. Это публичные страницы сайтов.
+        from collectors.data_collector import fetch_html
+        archive_path = OUTPUT_DIR / (
+            datetime.now().strftime("collector_html_%Y%m%d_%H%M%S.zip")
+        )
+        snapshot_log = []
+        with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as archive:
+            for idx, src in enumerate(sources, start=1):
+                info = diagnostics.get(src.name, {})
+                if info.get("accepted", 0) >= args.limit:
+                    continue
+                addresses = [src.url]
+                if src.name == "Производства.рф":
+                    addresses.append("https://производства.рф/articles/")
+                if src.name == "Ростех":
+                    addresses.append("https://www.rostec.ru/media/news/")
+                if src.name == "Роснефть":
+                    addresses.append("https://www.rosneft.ru/press/news/2026/")
+                addresses += info.get("rejected_urls", [])[:2]
+                for n, url in enumerate(dict.fromkeys(addresses)):
+                    try:
+                        html = fetch_html(url)
+                        archive.writestr(
+                            f"source_{idx:02}_page_{n:02}.html",
+                            html or "<!-- FETCH FAILED: EMPTY HTML -->",
+                        )
+                        snapshot_log.append({
+                            "source": src.name, "url": url,
+                            "html_length": len(html or ""),
+                            "snapshot": f"source_{idx:02}_page_{n:02}.html",
+                        })
+                    except Exception as error:
+                        snapshot_log.append({
+                            "source": src.name, "url": url,
+                            "error": repr(error),
+                        })
+            archive.writestr(
+                "manifest.json",
+                json.dumps(snapshot_log, ensure_ascii=False, indent=2),
+            )
+        print(f"Снимки проблемных страниц: {archive_path}")
+
 
 
 if __name__ == "__main__":
