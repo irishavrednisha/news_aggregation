@@ -1736,7 +1736,7 @@ _ARTICLE_SELECTORS = {
     "Ростех": ("[itemprop='articleBody']", ".news-detail__content", ".news-detail__text", "article"),
     "ОСК": (".news-detail__text", ".detail_text", ".news-detail", "article"),
     "Роснефть": (".news-detail", ".news-body", ".news-text", "article"),
-    "Заводы.рф": (".publication-content", ".publication__body", ".article-content", "article"),
+    "Заводы.рф": (".article-txt-wrap .text-bl", ".article-txt-wrap", ".publication-content", ".publication__body", ".article-content"),
     "ЛУКОЙЛ": (".press-release__text", ".pressrelease__text", ".press-release__body", ".news-detail__text", "article"),
     "Норильский никель": (".news-detail__content", ".press-release__text", ".article__content", "article"),
     "Энергетика и промышленность России": (".news-detail", ".article-body", ".article-text", "article"),
@@ -1999,6 +1999,32 @@ def _lukoil_main_body(soup, title):
     return clean_text(" ".join(paragraphs))
 
 
+def extract_text_kommersant(soup, title: str | None = None) -> str:
+    """
+    У «Коммерсанта» содержимое статьи находится в блоках
+    .article_text_wrapper .doc-content__text-block, а не в <p>.
+    Фото, подписи к фото и статьи боковой ленты не включаем.
+    """
+    wrapper = soup.select_one(".article_text_wrapper")
+    if wrapper is None:
+        return ""
+
+    parts = []
+    seen = set()
+    for block in wrapper.select(".doc-content__text-block"):
+        text = clean_text(block.get_text(" ", strip=True))
+        if not text or len(text) < 30:
+            continue
+        if title and text.lower() == title.lower():
+            continue
+        if text in seen:
+            continue
+        seen.add(text)
+        parts.append(text)
+
+    return clean_text(" ".join(parts))
+
+
 def _extract_main_text(soup, source_name, title, jsonld):
     """
     1. JSON-LD, если автор сайта указал articleBody.
@@ -2012,6 +2038,8 @@ def _extract_main_text(soup, source_name, title, jsonld):
         return extract_text_nedradv(soup, title=title)
     if source_name == "ЛУКОЙЛ":
         return _lukoil_main_body(soup, title=title)
+    if source_name == "Коммерсантъ — Промышленность":
+        return extract_text_kommersant(soup, title=title)
 
     body = jsonld.get("articleBody", "")
     if isinstance(body, str) and len(body.strip()) >= 140:
@@ -2091,6 +2119,10 @@ def build_full_article(preview: ArticlePreview) -> Article:
 
         # Не удаляем scripts до чтения JSON-LD и метаданных даты.
         published_at = published_at or _page_date(soup, jsonld)
+        if preview.source == "Заводы.рф" and not published_at:
+            date_node = soup.select_one("main .article-head__top .date, main span.date")
+            if date_node:
+                published_at = _parse_published(date_node.get_text(" ", strip=True))
         text = _extract_main_text(soup, preview.source, title, jsonld)
         if text:
             text_source = "html"
