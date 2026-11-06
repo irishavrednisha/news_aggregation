@@ -493,6 +493,50 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(html, "")
         self.assertIs(req.call_args.kwargs["verify"], True)
 
+    def test_rosneft_uses_nominative_date_and_discards_press_footer(self):
+        from collectors.data_collector import _parse_published
+        self.assertEqual(_parse_published("05 Ноябрь 2026"), datetime(2026, 11, 5))
+        preview = ArticlePreview(
+            source="Роснефть", title="Роснефть разработала новое оборудование",
+            url="https://www.rosneft.ru/press/news/item/224951/",
+            published_at=None, preview_text="",
+        )
+        html = """
+        <h1>Роснефть разработала новое оборудование</h1>
+        <div class="news-detail">
+          <p>Специалисты компании создали новое устройство для
+          повышения надёжности работы нефтедобывающих насосов и
+          провели длительные испытания на нескольких скважинах.</p>
+          <p>Оборудование позволило увеличить срок эксплуатации
+          насосных агрегатов и повысить промышленную безопасность
+          при освоении нефтяных месторождений.</p>
+          <p>Департамент информации и рекламы ПАО НК Роснефть
+          5 ноября 2026 г.</p>
+        </div>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertIn("промышленную безопасность", article.text)
+        self.assertNotIn("Департамент информации", article.text)
+
+    def test_rostec_listing_accepts_article_not_tags(self):
+        from collectors.data_collector import collect_html_previews
+        source = type("Source", (), {
+            "name": "Ростех",
+            "url": "https://rostec.ru/media/news/",
+        })()
+        html = """
+        <h2><a href="/media/news/odk-nagradila-luchshikh-inzhenerov/">
+        ОДК наградила лучших молодых инженеров</a></h2>
+        <h2><a href="/media/news/section/armiya/">
+        Вся информация о направлении</a></h2>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            previews = collect_html_previews(source, 5)
+        self.assertEqual(len(previews), 1)
+        self.assertEqual(previews[0].url,
+                         "https://rostec.ru/media/news/odk-nagradila-luchshikh-inzhenerov/")
+
     def test_unknown_container_rejected_instead_of_mixing_news(self):
         preview = ArticlePreview(
             source="НедраДВ", title="Первая новость",
