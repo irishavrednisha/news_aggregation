@@ -2431,15 +2431,31 @@ def extract_text_kommersant(soup, title: str | None = None) -> str:
 
     parts = []
     seen = set()
-    for block in wrapper.select(".doc-content__text-block"):
-        text = clean_text(block.get_text(" ", strip=True))
-        if not text or len(text) < 30:
+    for block in wrapper.select(".doc-content__text-block, ul li, ol li"):
+        if block.name == "li":
+            # Если список уже находится внутри text-block, он включён
+            # в текст родителя; второй раз пункт не добавляем.
+            if block.find_parent(class_="doc-content__text-block"):
+                continue
+            if block.find_parent(["nav", "aside", "footer"]):
+                continue
+            list_copy = BeautifulSoup(str(block), "html.parser")
+            for nested in list_copy.select("ul, ol"):
+                nested.decompose()
+            text = clean_text(list_copy.get_text(" ", strip=True))
+            min_len = 4
+        else:
+            text = clean_text(block.get_text(" ", strip=True))
+            min_len = 30
+        if not text or len(text) < min_len:
             continue
         if title and text.lower() == title.lower():
             continue
         if text in seen:
             continue
         seen.add(text)
+        if block.name == "li" and text[-1] not in ".!?;:":
+            text += "."
         parts.append(text)
 
     return clean_text(" ".join(parts))
