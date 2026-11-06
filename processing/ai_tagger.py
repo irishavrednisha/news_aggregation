@@ -154,7 +154,7 @@ def predict_tags(
         return AITagResult([], "missing_title_or_summary", 0.0, [])
     if max_tags < 1:
         raise ValueError("max_tags должен быть >= 1")
-    tag_min = _threshold("NEWS_AI_TAG_MIN_SCORE", tag_threshold, 0.22)
+    tag_min = _threshold("NEWS_AI_TAG_MIN_SCORE", tag_threshold, 0.12)
     relevance_min = _threshold("NEWS_AI_RELEVANCE_MIN_SCORE", relevance_threshold, 0.60)
 
     if classifier is None:
@@ -174,11 +174,15 @@ def predict_tags(
         ((key, event_scores[label]) for key, label in EVENT_LABELS.items()),
         key=lambda item: item[1], reverse=True,
     )
-    event_key, best_event_score = events[0]
+    event_key, _best_event_score = events[0]
     industry_score = sum(event_scores[EVENT_LABELS[key]] for key in INDUSTRIAL_EVENTS)
+    # Не отбрасываем отраслевой сюжет из-за произвольного абсолютного
+    # порога 0.18 на *один* тип события: оценка распределяется между
+    # несколькими близкими промышленными событиями. Именно поэтому
+    # история про двигатели ОДК (лидер 0.1781, сумма 0.7432) не доходила
+    # до определения отрасли. Итоговая проверка порога тегов остаётся.
     if (event_key not in INDUSTRIAL_EVENTS
-            or industry_score < relevance_min
-            or best_event_score < 0.18):
+            or industry_score < relevance_min):
         return AITagResult(
             [], "no_industrial_relevance", industry_score,
             [], event_key, events,
