@@ -5,8 +5,19 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
 import time
+import os
 from datetime import datetime, timezone
 import feedparser
+# На Windows Requests обычно использует certifi вместо доверенных
+# сертификатов Windows. truststore (если установлен) позволяет безопасно
+# проверять HTTPS по системному хранилищу. Проверку TLS не отключаем.
+if os.name == "nt":
+    try:
+        import truststore
+        truststore.inject_into_ssl()
+    except ImportError:
+        pass
+
 import requests
 import re
 import urllib3
@@ -109,80 +120,124 @@ def extract_rss_text(entry) -> str:
 # Загрузка страниц
 # =========================
 
+def _request_ca_bundle():
+    """Явно доверенная цепочка CA или системные корни. Никаких verify=False."""
+    bundle = os.environ.get("NEWS_CA_BUNDLE", "").strip()
+    if not bundle:
+        return True
+    if not Path(bundle).is_file():
+        print(f"Не найден NEWS_CA_BUNDLE: {bundle}")
+        return True
+    return bundle
+
+
 def fetch_html_with_requests(url: str) -> str:
-    try:
-        response = requests.get(
-            url,
-            headers=HEADERS,
-            timeout=40,
-            verify=True
-        )
+    from requests.exceptions import (
+        ConnectionError as RequestConnectionError, ReadTimeout, SSLError,
+        RequestException,
+    )
+    from urllib.parse import urlsplit
 
-        if response.status_code == 403:
-            print(f"Доступ запрещён: {url}")
+    domain = urlsplit(url).hostname or ""
+    # Медленный промпортал: два ограниченных по времени запроса.
+    attempts = 2 if domain in ("promvest.info", "www.promvest.info") else 1
+    verify = _request_ca_bundle()
+
+    for attempt in range(1, attempts + 1):
+        try:
+            response = requests.get(
+                url, headers=HEADERS,
+                timeout=(10, 35 if domain.endswith("promvest.info") else 30),
+                verify=verify,
+            )
+            if response.status_code in (403, 429):
+                print(f"HTTP {response.status_code} (запрет/лимит): {url}")
+                return ""
+            response.raise_for_status()
+            if response.encoding is None or response.encoding.lower() in ("iso-8859-1", "latin-1"):
+                response.encoding = response.apparent_encoding
+            return response.text
+        except SSLError as exc:
+            print(f"Ошибка проверки HTTPS-сертификата {url}: {exc}")
+            print(
+                "Не отключайте TLS: установите truststore "
+                "(python -m pip install truststore) или настройте NEWS_CA_BUNDLE."
+            )
             return ""
-
-        response.raise_for_status()
-
-        if response.encoding is None or response.encoding.lower() in ["iso-8859-1", "latin-1"]:
-            response.encoding = response.apparent_encoding
-
-        return response.text
-
-    except Exception as error:
-        print(f"Ошибка загрузки страницы {url}: {error}")
-        return ""
+        except (ReadTimeout, RequestConnectionError) as exc:
+            print(f"Сетевой сбой {url}, попытка {attempt}/{attempts}: {type(exc).__name__}: {exc}")
+            if attempt == attempts:
+                return ""
+            time.sleep(1)
+        except RequestException as exc:
+            print(f"Ошибка HTTP {url}: {type(exc).__name__}: {exc}")
+            return ""
+    return ""
 
 
 def fetch_html_with_browser(url: str) -> str:
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-
-            page = browser.new_page(
-                user_agent=HEADERS["User-Agent"],
-                viewport={"width": 1280, "height": 900},
-            )
-
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3000)
-
-            html = page.content()
-            browser.close()
-
-            return html
-
-    except Exception as error:
-        print(f"Ошибка браузерной загрузки {url}: {error}")
+            try:
+                page = browser.new_page(
+                    user_agent=HEADERS["User-Agent"],
+                    viewport={"width": 1280, "height": 900},
+                )
+                page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                page.wait_for_timeout(1500)
+                return page.content()
+            finally:
+                browser.close()
+    except Exception as exc:
+        print(f"Браузер не смог загрузить {url}: {type(exc).__name__}: {exc}")
         return ""
+
+
+def _rosneft_limited_url(url: str) -> str | None:
+    """Запасной официальный облегчённый хост с теми же путями /press/news/."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    if (parts.hostname or "").lower() not in ("www.rosneft.ru", "rosneft.ru"):
+        return None
+    if not parts.path.startswith("/press/news/"):
+        return None
+    return urlunsplit(("https", "limited.rosneft.ru", parts.path, parts.query, ""))
 
 
 def fetch_html(url: str) -> str:
     domain = get_domain(url)
 
-    browser_domains = [
-        "nornickel.ru",
-        "заводы.рф",
-        "xn--80az8a.xn--p1ai",
-        "производства.рф",
-        "xn--80adahnf5bdekrm.xn--p1ai",
-
-        # ТПП РФ часто не отдаёт страницы новостей через обычный requests
-        "tpprf.ru",
-        "news.tpprf.ru",
-    ]
+    browser_domains = (
+        "nornickel.ru", "заводы.рф", "xn--80az8a.xn--p1ai",
+        "производства.рф", "xn--80adahnf5bdekrm.xn--p1ai",
+        "tpprf.ru", "news.tpprf.ru",
+    )
 
     if any(domain_name in domain for domain_name in browser_domains):
-        return fetch_html_with_browser(url)
+        html = fetch_html_with_browser(url)
+    else:
+        html = fetch_html_with_requests(url)
+        if not html:
+            html = fetch_html_with_browser(url)
 
-    html = fetch_html_with_requests(url)
+    if html:
+        return html
 
-    # запасной вариант: если requests ничего не вернул,
-    # пробуем открыть страницу через браузер
-    if not html:
-        return fetch_html_with_browser(url)
+    # Официальная мобильная/облегчённая версия Роснефти. Сохраняем
+    # исходный URL новости — меняется только адрес загрузки HTML.
+    mirror = _rosneft_limited_url(url)
+    if mirror:
+        print(f"Пробуем облегчённый официальный сайт Роснефти: {mirror}")
+        html = fetch_html_with_requests(mirror)
+        if not html:
+            html = fetch_html_with_browser(mirror)
+        if html:
+            return html
 
-    return html
+    return ""
+
 
 # =========================
 # Обрезка хвостов похожих новостей
