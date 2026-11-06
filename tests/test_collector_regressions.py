@@ -774,6 +774,36 @@ class CollectorTests(unittest.TestCase):
             result = build_full_article(preview)
         self.assertIsNone(result.published_at)
 
+    def test_rosneft_real_long_heading_does_not_hide_date(self):
+        """Регрессия HTML /press/news/item/224924/: h2 длиннее 85 символов."""
+        title = (
+            "При поддержке «Роснефти» в Москве прошла юбилейная "
+            "конференция «Морские исследования и образование»"
+        )
+        preview = ArticlePreview(
+            source="Роснефть",
+            title=title,
+            url="https://www.rosneft.ru/press/news/item/224924/",
+            published_at=None,
+            preview_text="",
+        )
+        html = (
+            '<div class="content-column">'
+            '<h2>' + title + '</h2>'
+            '<span class="dgrey-text">02 Ноябрь 2026</span>'
+            '<div class="common-text">'
+            '<p>В Москве состоялась юбилейная конференция, на которой '
+            'учёные представили результаты исследований Арктики '
+            'и проекты для морской нефтегазовой промышленности.</p>'
+            '<p>Участники конференции рассмотрели работу исследовательских '
+            'групп и способы применения новых технологий на промышленных '
+            'объектах в российских регионах.</p>'
+            '</div></div>'
+        )
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertEqual(article.published_at, datetime(2026, 11, 2))
+
     def test_unknown_container_rejected_instead_of_mixing_news(self):
         preview = ArticlePreview(
             source="НедраДВ", title="Первая новость",
