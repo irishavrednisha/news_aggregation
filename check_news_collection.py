@@ -128,9 +128,12 @@ def main():
         # если источник собирается без даты публикации.
         from collections import defaultdict
         samples_without_date = defaultdict(list)
+        first_article_per_source = {}
         for item in records:
             if not item["published_at"]:
                 samples_without_date[item["source"]].append(item["url"])
+            if item["source"] in ("Ростех", "Роснефть"):
+                first_article_per_source.setdefault(item["source"], item["url"])
 
         # Если источник вернул 0 статей, сохраняем HTML его ленты;
         # если есть ссылки без текста, также сохраняем первые две
@@ -144,7 +147,10 @@ def main():
             for idx, src in enumerate(sources, start=1):
                 info = diagnostics.get(src.name, {})
                 missing_date_urls = samples_without_date.get(src.name, [])
-                if info.get("accepted", 0) >= args.limit and not missing_date_urls:
+                # Образец успешной статьи Ростеха/Роснефти нужен даже
+                # при заполненной дате: сверяем точность времени публикации.
+                first_sample = first_article_per_source.get(src.name)
+                if info.get("accepted", 0) >= args.limit and not missing_date_urls and not first_sample:
                     continue
                 addresses = [src.url] if info.get("accepted", 0) < args.limit else []
                 if src.name == "Производства.рф":
@@ -155,6 +161,8 @@ def main():
                     addresses.append("https://www.rosneft.ru/press/news/2026/")
                 addresses += info.get("rejected_urls", [])[:2]
                 addresses += missing_date_urls[:1]
+                if first_sample:
+                    addresses.append(first_sample)
                 for n, url in enumerate(dict.fromkeys(addresses)):
                     try:
                         # Snapshot must use the same explicitly opted-in
