@@ -2239,8 +2239,8 @@ def _source_specific_published_date(soup, source_name):
                 continue
             date_text = clean_text(date_block.get_text(" ", strip=True))
             if not re.fullmatch(
-                r"\\d{1,2}\\.\\d{1,2}\\.\\d{4}"
-                r"(?:\\s+\\d{1,2}:\\d{2}(?::\\d{2})?)?",
+                r"\d{1,2}\.\d{1,2}\.\d{4}"
+                r"(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?",
                 date_text,
             ):
                 continue
