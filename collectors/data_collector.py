@@ -1728,12 +1728,18 @@ def _parse_published(value):
         pass
 
     match = re.search(
-        r"\b(\d{1,2})[ .]+([а-яё]+)[ .]+(\d{4})(?:\s*года)?",
+        r"\b(\d{1,2})[ .]+([а-яё]+)[ .]+(\d{4})(?:\s*г(?:ода|\.)?)?\s*,?\s*(\d{1,2}:\d{2})?",
         str(value).lower()
     )
     if match and match.group(2) in _RU_MONTHS:
         try:
-            return datetime(int(match.group(3)), _RU_MONTHS[match.group(2)], int(match.group(1)))
+            hour, minute = (0, 0)
+            if match.group(4):
+                hour, minute = (int(x) for x in match.group(4).split(":"))
+            return datetime(
+                int(match.group(3)), _RU_MONTHS[match.group(2)],
+                int(match.group(1)), hour, minute
+            )
         except ValueError:
             pass
     match = re.search(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b", str(value))
@@ -1821,6 +1827,27 @@ def _page_date(soup, jsonld):
             )
             if match:
                 return _parse_published(match.group(1))
+    # Корпоративные CMS: дата находится отдельной строкой сразу после
+    # основного заголовка. Не ищем даты по всему телу статьи.
+    title_nodes = soup.find_all("h1")
+    if title_nodes:
+        headline = title_nodes[-1]
+        seen_strings = 0
+        for node in headline.next_elements:
+            if isinstance(node, str):
+                value = clean_text(node)
+                if not value:
+                    continue
+                seen_strings += 1
+                if seen_strings > 12 or len(value) > 210:
+                    break
+                if re.fullmatch(
+                    r"\d{1,2}\s+[а-яё]+\s+\d{4}\s*г?\.?",
+                    value.lower(),
+                ) or re.fullmatch(r"\d{1,2}\.\d{1,2}\.\d{4}(?:\s+\d{2}:\d{2}(?::\d{2})?)?", value):
+                    date = _parse_published(value)
+                    if date:
+                        return date
     return None
 
 
@@ -1867,6 +1894,55 @@ def _article_paragraphs(block, title):
     return clean_text(" ".join(paras))
 
 
+
+def _lukoil_main_body(soup, title):
+    """Тело пресс-релиза до блока «Вас может заинтересовать»."""
+    headings = soup.find_all(["h1", "h2"])
+    heading = next(
+        (
+            h for h in headings
+            if title
+            and clean_text(h.get_text(" ", strip=True)).casefold() == clean_text(title).casefold()
+        ),
+        None,
+    )
+    if heading is None:
+        heading = next(
+            (h for h in headings if len(clean_text(h.get_text(" ", strip=True))) > 22),
+            None,
+        )
+    if heading is None:
+        return ""
+
+    stops = (
+        "вас может заинтересовать", "контактная информация",
+        "пресс-релиз в формате pdf", "все новости",
+        "другие материалы", "читайте также", "поделиться",
+    )
+    paragraphs, seen = [], set()
+    for tag in heading.next_elements:
+        if not getattr(tag, "name", None):
+            continue
+        if tag.name in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            heading_text = clean_text(tag.get_text(" ", strip=True)).casefold()
+            if any(stop in heading_text for stop in stops):
+                break
+        if tag.name not in ("p", "blockquote"):
+            continue
+        if tag.name == "p" and tag.find_parent("blockquote"):
+            continue
+        value = clean_text(tag.get_text(" ", strip=True))
+        lower = value.casefold()
+        if any(stop in lower for stop in stops):
+            break
+        if len(value) < 28 or value in seen:
+            continue
+        seen.add(value)
+        paragraphs.append(value)
+
+    return clean_text(" ".join(paragraphs))
+
+
 def _extract_main_text(soup, source_name, title, jsonld):
     """
     1. JSON-LD, если автор сайта указал articleBody.
@@ -1878,6 +1954,8 @@ def _extract_main_text(soup, source_name, title, jsonld):
     """
     if source_name == "НедраДВ":
         return extract_text_nedradv(soup, title=title)
+    if source_name == "ЛУКОЙЛ":
+        return _lukoil_main_body(soup, title=title)
 
     body = jsonld.get("articleBody", "")
     if isinstance(body, str) and len(body.strip()) >= 140:
@@ -1960,6 +2038,23 @@ def build_full_article(preview: ArticlePreview) -> Article:
         text = _extract_main_text(soup, preview.source, title, jsonld)
         if text:
             text_source = "html"
+
+        # EPRussia: дата в конце статьи часто записана обычным текстом.
+        if preview.source == "Энергетика и промышленность России" and text:
+            date_match = re.search(
+                r"(?i)\bОпубликовано:\s*(\d{1,2}\s+[а-яё]+\s+\d{4}\s*,?\s*\d{1,2}:\d{2})",
+                text,
+            )
+            if date_match:
+                published_at = published_at or _parse_published(date_match.group(1))
+                text = clean_text(
+                    text[:date_match.start()] + text[date_match.end():]
+                )
+            text = re.sub(
+                r"(?i)Все новости отрасли в канале.+?в МАХ",
+                " ",
+                text,
+            ).strip()
 
     if not text and preview.preview_text:
         text = clean_text(preview.preview_text)
@@ -2059,7 +2154,8 @@ def collect_news(
                 print(f"Ошибка парсинга: {message}")
                 continue
 
-            if article.text and len(article.text.strip()) >= 120:
+            min_text_length = 350 if source.name == "Коммерсантъ — Промышленность" else 120
+            if article.text and len(article.text.strip()) >= min_text_length:
                 all_articles.append(article)
                 stat["accepted"] += 1
                 if stat["accepted"] >= limit_per_source:
