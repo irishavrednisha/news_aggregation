@@ -2196,6 +2196,12 @@ def _source_article_headline_date(soup, source_name, title):
             value = clean_text(node)
             if not value:
                 continue
+            # next_elements начинается с собственного текста h1/h2/h3.
+            # Для длинных заголовков (например, Роснефть /224924/)
+            # прежде этот текст превышал 85 символов и поиск
+            # завершался ДО стоящего сразу после заголовка span с датой.
+            if value.casefold() == wanted:
+                continue
             inspected += 1
             if inspected > 16:
                 break
