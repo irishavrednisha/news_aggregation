@@ -2393,17 +2393,27 @@ def _lukoil_main_body(soup, title):
             heading_text = clean_text(tag.get_text(" ", strip=True)).casefold()
             if any(stop in heading_text for stop in stops):
                 break
-        if tag.name not in ("p", "blockquote"):
+        if tag.name not in ("p", "blockquote", "li"):
             continue
-        if tag.name == "p" and tag.find_parent("blockquote"):
+        if tag.name == "p" and tag.find_parent(["blockquote", "li"]):
             continue
-        value = clean_text(tag.get_text(" ", strip=True))
+        if tag.name == "li":
+            if tag.find_parent(["nav", "aside", "footer"]):
+                continue
+            item = BeautifulSoup(str(tag), "html.parser")
+            for nested in item.select("ul, ol"):
+                nested.decompose()
+            value = clean_text(item.get_text(" ", strip=True))
+        else:
+            value = clean_text(tag.get_text(" ", strip=True))
         lower = value.casefold()
         if any(stop in lower for stop in stops):
             break
-        if len(value) < 28 or value in seen:
+        if len(value) < (4 if tag.name == "li" else 28) or value in seen:
             continue
         seen.add(value)
+        if tag.name == "li" and value[-1] not in ".!?;:":
+            value += "."
         paragraphs.append(value)
 
     return clean_text(" ".join(paragraphs))
