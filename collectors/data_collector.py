@@ -132,6 +132,25 @@ def _request_ca_bundle():
     return bundle
 
 
+# Явная имитация «всё равно перейти» ТОЛЬКО для локального read-only
+# тестового сборщика и только двух известных официальных доменов.
+# По умолчанию TLS проверяется. В production флаг не передаётся.
+_ALLOW_UNVERIFIED_TLS = ContextVar("news_allow_unverified_tls", default=False)
+
+
+def _may_ignore_https_errors(url: str) -> bool:
+    from urllib.parse import urlsplit
+    host = (urlsplit(url).hostname or "").lower()
+    return (
+        _ALLOW_UNVERIFIED_TLS.get()
+        and host in {
+            "rostec.ru", "www.rostec.ru",
+            "rosneft.ru", "www.rosneft.ru", "limited.rosneft.ru",
+        }
+        and urlsplit(url).scheme == "https"
+    )
+
+
 # Каждый источник получает отдельный журнал загрузки. ContextVar безопасен
 # для параллельных задач планировщика и не меняет API парсеров.
 _FETCH_AUDIT = ContextVar("news_collector_fetch_audit", default=None)
@@ -202,18 +221,42 @@ def fetch_html_with_requests(url: str) -> str:
     return ""
 
 
-def fetch_html_with_browser(url: str) -> str:
+def fetch_html_with_browser(url: str, ignore_https_errors: bool = False) -> str:
+    # Даже если вызывающий код ошибочно передал True, разрешён
+    # строго явный opt-in для конкретных хостов, не для других сайтов.
+    bypass = ignore_https_errors and _may_ignore_https_errors(url)
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             try:
-                page = browser.new_page(
-                    user_agent=HEADERS["User-Agent"],
-                    viewport={"width": 1280, "height": 900},
-                )
-                page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                page.wait_for_timeout(1500)
-                return page.content()
+                if bypass:
+                    print(
+                        f"ВНИМАНИЕ: HTTPS-сертификат НЕ ПРОВЕРЯЕТСЯ "
+                        f"для {url} (только тестовый сбор)"
+                    )
+                    audit = _FETCH_AUDIT.get()
+                    if audit is not None:
+                        audit.setdefault("unverified_tls_urls", []).append(url)
+                    context = browser.new_context(
+                        user_agent=HEADERS["User-Agent"],
+                        viewport={"width": 1280, "height": 900},
+                        ignore_https_errors=True,
+                    )
+                    try:
+                        page = context.new_page()
+                        page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                        page.wait_for_timeout(1500)
+                        return page.content()
+                    finally:
+                        context.close()
+                else:
+                    page = browser.new_page(
+                        user_agent=HEADERS["User-Agent"],
+                        viewport={"width": 1280, "height": 900},
+                    )
+                    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                    page.wait_for_timeout(1500)
+                    return page.content()
             finally:
                 browser.close()
     except Exception as exc:
@@ -236,6 +279,18 @@ def _rosneft_limited_url(url: str) -> str | None:
 
 def fetch_html(url: str) -> str:
     domain = get_domain(url)
+
+    # Временная альтернатива нажатию «Всё равно перейти» в браузере.
+    # Не используем requests(verify=False), чтобы этот обход не
+    # наследовался переходами на чужие домены.
+    if _may_ignore_https_errors(url):
+        html = fetch_html_with_browser(url, ignore_https_errors=True)
+        if html:
+            return html
+        mirror = _rosneft_limited_url(url)
+        if mirror and mirror != url and _may_ignore_https_errors(mirror):
+            return fetch_html_with_browser(mirror, ignore_https_errors=True)
+        return ""
 
     browser_domains = (
         "nornickel.ru", "заводы.рф", "xn--80az8a.xn--p1ai",
@@ -2368,6 +2423,7 @@ def collect_news(
     limit_per_source: int = 10,
     session=None,
     diagnostics: dict | None = None,
+    allow_unverified_tls: bool = False,
 ) -> list[Article]:
     """
     Собирает статьи (БД не изменяет). Если передан diagnostics, сохраняет
@@ -2386,6 +2442,9 @@ def collect_news(
             diagnostics[source.name] = stat
 
         audit_token = _FETCH_AUDIT.set(stat)
+        unverified_token = _ALLOW_UNVERIFIED_TLS.set(
+            bool(allow_unverified_tls) and source.name in ("Ростех", "Роснефть")
+        )
         try:
             try:
                 if source.source_type == "rss":
@@ -2469,6 +2528,7 @@ def collect_news(
                 f"{stat['candidates']}, не извлечено {stat['short_or_empty']}"
             )
         finally:
+            _ALLOW_UNVERIFIED_TLS.reset(unverified_token)
             _FETCH_AUDIT.reset(audit_token)
             if stat["accepted"]:
                 stat["status"] = "ok"
