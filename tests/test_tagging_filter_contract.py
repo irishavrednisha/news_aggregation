@@ -4,6 +4,7 @@
 этот тест проверяет реальную реализацию с подменёнными зависимостями.
 """
 import ast
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -22,6 +23,7 @@ def load_tagger_functions():
     module = ast.Module(body=nodes, type_ignores=[])
     namespace = {
         "Cluster": type("Cluster", (), {"id": 1}),
+        "os": os,
     }
     exec(compile(ast.fix_missing_locations(module), str(TAGGER_PATH), "exec"),
          namespace)
