@@ -2550,6 +2550,68 @@ def _extract_main_text(soup, source_name, title, jsonld):
 
     return ""
 
+def _strip_source_boilerplate(text: str, source_name: str) -> str:
+    """Убирает подтверждённые служебные вставки ПО КРАЯМ статьи.
+
+    Не ищем универсальные стоп-слова по всему тексту: «выставка»,
+    «источник», «проект» могут быть частью значимых фактов.
+    """
+    if not text:
+        return ""
+
+    if source_name == "Вестник промышленности":
+        # В реальном JSON 06.11.2026 три статьи начинаются «Новости.».
+        text = re.sub(r"^\s*Новости\.\s+", "", text, count=1, flags=re.I)
+
+    elif source_name == "НедраДВ":
+        # Страница уже передаёт published_at, а сам текст начинается
+        # дополнительным "06 ноября 2026." и содержит датлайн NEDRADV.
+        text = re.sub(
+            r"^\s*\d{1,2}\s+[а-яё]+\s+\d{4}\.\s+",
+            "", text, count=1, flags=re.I,
+        )
+        text = re.sub(
+            r"\b\d{1,2}\s+[а-яё]+\s+\d{4}\s+года,\s*NEDRADV\.\s*",
+            "", text, count=1, flags=re.I,
+        )
+
+    elif source_name == "ИАПН":
+        # Последняя строка «Источник новости: пресс-служба...» —
+        # указание первоисточника, а не абзац самой статьи.
+        text = re.sub(
+            r"\s+Источник новости:\s*[^.!?]{1,130}$",
+            "", text, count=1, flags=re.I,
+        )
+
+    elif source_name == "DixiNews — Промышленность":
+        # Длинная обязательная юридическая оговорка про Meta* на
+        # конце статьи Apple — не часть новости об акциях компаний.
+        # Удаляем только конкретную оговорку ПОСЛЕ основного текста.
+        notice = re.search(r"\s*\*\s*Деятельность\s+Meta\s*\*", text, re.I)
+        if notice and notice.start() > len(text) * 0.5:
+            tail = text[notice.start():].lower()
+            if "экстремист" in tail and "запрещен" in tail:
+                text = text[:notice.start()]
+
+    elif source_name == "Добывающая промышленность":
+        # Рекламная ссылка на чужой проект в конце статьи о калориферах:
+        # «Пермский край, м.о. Добрянский, ... Перейти на страницу
+        # проекта "Рудник. Урал 2026"».
+        promo = re.search(
+            r"\s+Перейти на страницу проекта\b.{0,140}$",
+            text, re.I,
+        )
+        if promo and promo.start() > len(text) * 0.6:
+            text = text[:promo.start()]
+            text = re.sub(
+                r"\s+[А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)*\s+край,"
+                r"\s*м\.о\..{0,120}$",
+                "", text, flags=re.I,
+            )
+
+    return text.strip()
+
+
 def build_full_article(preview: ArticlePreview) -> Article:
     html = fetch_html(preview.url)
     title = preview.title
@@ -2582,6 +2644,7 @@ def build_full_article(preview: ArticlePreview) -> Article:
         )
         text = _extract_main_text(soup, preview.source, title, jsonld)
         if text:
+            text = _strip_source_boilerplate(text, preview.source)
             text_source = "html"
 
         # Роснефть: служебная подпись пресс-службы и дата рядом с ней
