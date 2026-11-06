@@ -112,6 +112,38 @@ class TopicFilterTests(unittest.TestCase):
             with self.subTest(title=title):
                 self.assertTrue(self.decision(title).accepted)
 
+    def test_concrete_nonindustrial_mining_and_wine_policy_news(self):
+        # Заголовки из выгрузки 06.11.2026: эти два сюжета прежде
+        # попадали в предварительно принятые 21/45.
+        self.assertEqual(
+            self.decision(
+                "Запорожская область включат в федеральную программу "
+                "поддержки виноделия"
+            ).reason,
+            "offtopic_agricultural_policy",
+        )
+        self.assertEqual(
+            self.decision(
+                "Посольство КНР предупредило граждан об ответственности "
+                "за незаконную добычу золота в России"
+            ).reason,
+            "offtopic_consular_notice",
+        )
+
+    def test_production_and_mine_safety_survive_narrow_exclusions(self):
+        # Не баним ключевые слова «виноделие», «добыча», «золото»
+        # без анализа того, о каком событии сообщает заголовок.
+        for title in (
+            "Винодельческий завод открыл новую автоматизированную линию розлива",
+            "Предприятие разработало оборудование для переработки винограда",
+            "Ростехнадзор остановил рудник «Дальполиметалла»",
+            "Золотодобывающая компания запустила новую технологию извлечения золота",
+            "«Яковлев» продолжает работу над гражданскими самолётами",
+            "В Москву поставили 27 новых автобусов и электробусов для обучения водителей",
+        ):
+            with self.subTest(title=title):
+                self.assertTrue(self.decision(title).accepted)
+
     def test_foreign_only_not_russian_technology_abroad(self):
         foreign = article(
             "В Бангладеш возобновились протесты рабочих швейных фабрик",
