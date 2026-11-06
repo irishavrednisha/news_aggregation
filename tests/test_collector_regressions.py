@@ -696,6 +696,84 @@ class CollectorTests(unittest.TestCase):
         ))
         self.assertEqual(diag["Ростех"]["status"], "ok")
 
+    def test_rostec_datetime_before_headline_and_ignore_unrelated_dates(self):
+        from collectors.data_collector import _parse_published
+        self.assertEqual(
+            _parse_published("06.11.2026 01:07"),
+            datetime(2026, 11, 6, 1, 7),
+        )
+        self.assertEqual(
+            _parse_published("06.11.2026"),
+            datetime(2026, 11, 6),
+        )
+        preview = ArticlePreview(
+            source="Ростех",
+            title="Специалисты ЦАТ воссоздали разрушенную деталь станка",
+            url="https://rostec.ru/media/news/test-article/",
+            published_at=None, preview_text="",
+        )
+        html = """
+        <div class="breadcrumbs">Главная / Новости</div>
+        <div class="article-publication-date">06.11.2026 01:07</div>
+        <h1>Специалисты ЦАТ воссоздали разрушенную деталь станка</h1>
+        <article>
+          <p>Специалисты центра аддитивных технологий разработали
+          новую промышленную деталь и провели испытания цифровой
+          модели на производственных стендах и испытательных установках.</p>
+          <p>Оборудование используется для ремонта промышленных станков,
+          с применением 3D-печати и реверс-инжиниринга на российских заводах.</p>
+        </article>
+        <aside><h2>Смотрите также</h2><span>04.11.2026 15:30</span></aside>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            result = build_full_article(preview)
+        self.assertEqual(result.published_at, datetime(2026, 11, 6, 1, 7))
+        self.assertIn("ремонта промышленных станков", result.text)
+
+    def test_rosneft_date_after_article_headline_not_body(self):
+        preview = ArticlePreview(
+            source="Роснефть",
+            title="Роснефть совершенствует технологии добычи нефти",
+            url="https://www.rosneft.ru/press/news/item/224951/",
+            published_at=None, preview_text="",
+        )
+        html = """
+        <h1>Роснефть совершенствует технологии добычи нефти</h1>
+        <div class="publication-header">05 Ноябрь 2026</div>
+        <div class="news-detail">
+          <p>Специалисты предприятия разработали газопескосепаратор,
+          благодаря которому существенно увеличивается добыча нефти
+          на производственных скважинах одного из месторождений.</p>
+          <p>В июне 2025 года сотрудники проводили испытания оборудования.
+          Новая технология прошла необходимые испытания и была
+          внедрена на объектах отечественной нефтегазовой отрасли.</p>
+        </div>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            result = build_full_article(preview)
+        self.assertEqual(result.published_at, datetime(2026, 11, 5))
+        self.assertIn("газопескосепаратор", result.text)
+
+    def test_no_unrelated_article_date_guessed_from_body(self):
+        preview = ArticlePreview(
+            source="Ростех",
+            title="Разработка оборудования без указанной даты",
+            url="https://rostec.ru/media/news/undated-example/",
+            published_at=None, preview_text="",
+        )
+        html = """
+        <h1>Разработка оборудования без указанной даты</h1>
+        <article>
+          <p>На заводе началось изготовление оборудования для промышленного
+          производства. Первая очередь предприятия была открыта в 2025 году.</p>
+          <p>05.11.2025 12:00 внутри текста — дата другого события, а не
+          дата публикации этой статьи.</p>
+        </article>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            result = build_full_article(preview)
+        self.assertIsNone(result.published_at)
+
     def test_unknown_container_rejected_instead_of_mixing_news(self):
         preview = ArticlePreview(
             source="НедраДВ", title="Первая новость",
