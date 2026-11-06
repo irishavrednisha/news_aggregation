@@ -2095,6 +2095,15 @@ def build_full_article(preview: ArticlePreview) -> Article:
         if text:
             text_source = "html"
 
+        # Норникель добавляет в конец пресс-релизов постоянную справку,
+        # которая не относится к конкретной новости.
+        if preview.source == "Норильский никель" and text:
+            text = re.split(
+                r"(?i)\bИНФОРМАЦИЯ О КОМПАНИИ\b",
+                text,
+                maxsplit=1,
+            )[0].strip()
+
         # EPRussia: дата в конце статьи часто записана обычным текстом.
         if preview.source == "Энергетика и промышленность России" and text:
             date_match = re.search(
@@ -2117,6 +2126,14 @@ def build_full_article(preview: ArticlePreview) -> Article:
         text_source = "rss"
     if not text:
         print(f"Нет достоверного текста, пропуск: {preview.url}")
+
+    if preview.source == "Добывающая промышленность":
+        title = re.sub(
+            r"\s*\|\s*Добывающая промышленность\s*$",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        )
 
     return Article(
         source=preview.source,
