@@ -114,6 +114,65 @@ class CollectorTests(unittest.TestCase):
             "https://www.kommersant.ru/doc/200"
         ])
 
+    def test_legacy_generic_fallback_restores_main_paragraphs(self):
+        # В ряде корпоративных CMS нет article / itemprop=articleBody:
+        # предыдущий сборщик использовал main p.
+        preview = ArticlePreview(
+            source="Ростех", title="Завод запустил выпуск продукции",
+            url="https://rostec.ru/media/news/new-plant/",
+            published_at=None, preview_text=""
+        )
+        html = """
+        <h1>Завод запустил выпуск продукции</h1>
+        <main><div class="cms-content"><p>
+        Российское предприятие завершило монтаж новой технологической
+        линии и начало выпуск продукции для отечественных заказчиков.
+        Завод получил необходимое оборудование и провёл испытания.
+        Производство будет постепенно увеличивать объёмы поставок
+        на внутренний рынок и повышать долю местных комплектующих.
+        </p></div></main>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertGreater(len(article.text), 200)
+        self.assertIn("Российское предприятие", article.text)
+
+    def test_lukoil_legacy_extractor_restored(self):
+        preview = ArticlePreview(
+            source="ЛУКОЙЛ", title="Пресс-релиз",
+            url="https://lukoil.ru/PressCenter/Pressreleases/pressrelease-1",
+            published_at=None, preview_text=""
+        )
+        html = """
+        <h1>Новая скважина введена в эксплуатацию</h1>
+        <div class="main-content">
+        <p>Предприятие ЛУКОЙЛ ввело в эксплуатацию новую скважину
+        на нефтяном месторождении в Российской Федерации. Работы
+        включали модернизацию оборудования и подготовку инфраструктуры.</p>
+        <p>В результате производительность добычи увеличилась,
+        а технологические процессы стали более автоматизированными.
+        Компания продолжит внедрение отечественных разработок.</p>
+        </div>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertIn("скважину", article.text)
+
+    def test_promvest_plain_anchor_without_nested_heading(self):
+        html = """
+        <div><a href="/ru/vazhno/rukovoditeli-proekta-osk/">
+        Руководители судостроительных проектов ОСК прошли обучение
+        </a></div>
+        """
+        source = type("Source", (), {
+            "name": "Промышленный вестник / ПВ.РФ",
+            "url": "https://promvest.info/ru/novosti-promyishlennosti/"
+        })()
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            previews = collect_html_previews(source, 5)
+        self.assertEqual(len(previews), 1)
+        self.assertIn("ОСК", previews[0].title)
+
     def test_unknown_container_rejected_instead_of_mixing_news(self):
         preview = ArticlePreview(
             source="НедраДВ", title="Первая новость",
