@@ -21,7 +21,10 @@ OUTPUT_DIR = Path(__file__).resolve().parent / "collector_test_results"
 
 def main():
     parser = argparse.ArgumentParser(description="Проверка сбора промышленных новостей")
-    parser.add_argument("--source", default=None, help="Имя источника из базы")
+    parser.add_argument(
+        "--source", action="append", default=None,
+        help="Имя источника из базы (можно указать несколько раз)"
+    )
     parser.add_argument("--limit", type=int, default=5, help="Лимит на источник")
     parser.add_argument("--dump-html", action="store_true", help="Сохранить HTML неудачных источников в ZIP")
     args = parser.parse_args()
@@ -33,7 +36,7 @@ def main():
     try:
         query = session.query(Source).filter(Source.is_active.is_(True))
         if args.source:
-            query = query.filter(Source.name == args.source)
+            query = query.filter(Source.name.in_(args.source))
         sources = [
             SimpleNamespace(
                 name=s.name,
