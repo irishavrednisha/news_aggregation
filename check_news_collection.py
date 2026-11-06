@@ -27,10 +27,21 @@ def main():
     )
     parser.add_argument("--limit", type=int, default=5, help="Лимит на источник")
     parser.add_argument("--dump-html", action="store_true", help="Сохранить HTML неудачных источников в ZIP")
+    parser.add_argument(
+        "--allow-unverified-tls", action="store_true",
+        help=("Только для теста: аналог 'всё равно перейти' в Chromium "
+              "для Ростеха и Роснефти. НЕ использовать для автопубликации.")
+    )
     args = parser.parse_args()
 
     if args.limit < 1:
         parser.error("--limit должен быть >= 1")
+    if args.allow_unverified_tls:
+        print(
+            "ПРЕДУПРЕЖДЕНИЕ: HTTPS-сертификаты Ростеха и Роснефти "
+            "в тестовом Chromium не проверяются. Не публикуйте "
+            "полученные статьи автоматически без проверки!"
+        )
 
     session = get_session()
     try:
@@ -60,6 +71,7 @@ def main():
         limit_per_source=args.limit,
         session=None,
         diagnostics=diagnostics,
+        allow_unverified_tls=args.allow_unverified_tls,
     )
 
     OUTPUT_DIR.mkdir(exist_ok=True)
@@ -78,6 +90,10 @@ def main():
                 article.published_at.isoformat() if article.published_at else None
             ),
             "text_source": article.text_source,
+            "unverified_tls": bool(
+                args.allow_unverified_tls and
+                article.source in ("Ростех", "Роснефть")
+            ),
             "text_length": len(article.text or ""),
             "text": article.text,
         })
