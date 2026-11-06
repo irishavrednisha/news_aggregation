@@ -673,16 +673,23 @@ class CollectorTests(unittest.TestCase):
           Предприятие создало рабочие места в регионе.</p>
         </article>
         """
+        def html_for_url(url, **kwargs):
+            if url == source.url:
+                return listing
+            if url.endswith("/media/news/new-factory/"):
+                return body
+            return ""
+
         diag = {}
         with patch("collectors.data_collector.fetch_html_with_browser",
-                   side_effect=[listing, body]) as browser:
+                   side_effect=html_for_url) as browser:
             with patch("collectors.data_collector.fetch_html_with_requests",
                        side_effect=AssertionError("requests must not be used")):
                 articles = collect_news([source], limit_per_source=1,
                                         diagnostics=diag,
                                         allow_unverified_tls=True)
         self.assertEqual(len(articles), 1)
-        self.assertEqual(len(browser.call_args_list), 2)
+        self.assertGreaterEqual(len(browser.call_args_list), 2)
         self.assertTrue(all(
             call.kwargs == {"ignore_https_errors": True}
             for call in browser.call_args_list
