@@ -132,7 +132,7 @@ class AITaggerTests(unittest.TestCase):
         self.assertEqual(result.tags, [])
         self.assertEqual(result.reason, "no_confident_industrial_tag")
         self.assertEqual(len(result.ranked_tags), 18)
-        self.assertEqual(sum(x[1] for x in result.ranked_tags), 1.0)
+        self.assertAlmostEqual(sum(x[1] for x in result.ranked_tags), 1.0)
 
     def test_missing_summary_does_not_load_model(self):
         fake = FakeNLI()
