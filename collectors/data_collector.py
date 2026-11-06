@@ -1951,6 +1951,41 @@ def _article_paragraphs(block, title):
 
 
 
+def _lukoil_published_date(soup):
+    """
+    ЛУКОЙЛ: дата на странице находится отдельным текстовым узлом после
+    второго H1 — заголовка самого пресс-релиза. Не ищем даты в абзацах,
+    где часто перечисляются даты других событий.
+    """
+    headings = soup.find_all("h1")
+    if not headings:
+        return None
+    h = headings[-1]
+    checked = 0
+    for node in h.next_elements:
+        if not isinstance(node, str):
+            continue
+        value = clean_text(node)
+        if not value:
+            continue
+        checked += 1
+        if checked > 45:
+            break
+        if len(value) > 240:
+            break  # началось основное содержимое
+        if re.fullmatch(
+            r"\d{1,2}\s+[а-яё]+\s+\d{4}\s*г?\.?",
+            value.lower(),
+        ):
+            return _parse_published(value)
+        if re.fullmatch(
+            r"\{?\s*\d{1,2}\.\d{1,2}\.\d{4}(?:\s+\d{2}:\d{2}:\d{2})?\s*\}?",
+            value,
+        ):
+            return _parse_published(value.strip("{} "))
+    return None
+
+
 def _lukoil_main_body(soup, title):
     """Тело пресс-релиза до блока «Вас может заинтересовать»."""
     headings = soup.find_all(["h1", "h2"])
@@ -2123,6 +2158,8 @@ def build_full_article(preview: ArticlePreview) -> Article:
             date_node = soup.select_one("main .article-head__top .date, main span.date")
             if date_node:
                 published_at = _parse_published(date_node.get_text(" ", strip=True))
+        if preview.source == "ЛУКОЙЛ" and not published_at:
+            published_at = _lukoil_published_date(soup)
         text = _extract_main_text(soup, preview.source, title, jsonld)
         if text:
             text_source = "html"
