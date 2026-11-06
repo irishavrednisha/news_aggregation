@@ -135,7 +135,7 @@ def main():
         # Если источник вернул 0 статей, сохраняем HTML его ленты;
         # если есть ссылки без текста, также сохраняем первые две
         # страницы конкретных новостей. Это публичные страницы сайтов.
-        from collectors.data_collector import fetch_html
+        from collectors.data_collector import fetch_html, _ALLOW_UNVERIFIED_TLS
         archive_path = OUTPUT_DIR / (
             datetime.now().strftime("collector_html_%Y%m%d_%H%M%S.zip")
         )
@@ -157,7 +157,18 @@ def main():
                 addresses += missing_date_urls[:1]
                 for n, url in enumerate(dict.fromkeys(addresses)):
                     try:
-                        html = fetch_html(url)
+                        # Snapshot must use the same explicitly opted-in
+                        # browser mode as the read-only collection run.
+                        # Otherwise the certificate error produces a blank
+                        # HTML snapshot even though the article loaded.
+                        token = _ALLOW_UNVERIFIED_TLS.set(
+                            args.allow_unverified_tls
+                            and src.name in ("Ростех", "Роснефть")
+                        )
+                        try:
+                            html = fetch_html(url)
+                        finally:
+                            _ALLOW_UNVERIFIED_TLS.reset(token)
                         archive.writestr(
                             f"source_{idx:02}_page_{n:02}.html",
                             html or "<!-- FETCH FAILED: EMPTY HTML -->",
