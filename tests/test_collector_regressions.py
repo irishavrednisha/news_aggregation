@@ -537,6 +537,54 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(previews[0].url,
                          "https://rostec.ru/media/news/odk-nagradila-luchshikh-inzhenerov/")
 
+    def test_ssl_failure_is_reported_in_source_diagnostics(self):
+        from collectors.data_collector import collect_news
+        from requests.exceptions import SSLError
+
+        source = type("Source", (), {
+            "name": "Ростех",
+            "url": "https://rostec.ru/media/news/",
+            "source_type": "html",
+        })()
+        diagnostics = {}
+        with patch("collectors.data_collector.requests.get",
+                   side_effect=SSLError("untrusted root CA")):
+            with patch("collectors.data_collector.fetch_html_with_browser",
+                       return_value=""):
+                articles = collect_news([source], limit_per_source=2,
+                                        diagnostics=diagnostics)
+        self.assertEqual(articles, [])
+        info = diagnostics["Ростех"]
+        self.assertEqual(info["status"], "fetch_failed")
+        self.assertTrue(info["fetch_failures"])
+        self.assertTrue(info["errors"])
+        self.assertTrue(any(
+            row["kind"] == "ssl_certificate_error"
+            for row in info["fetch_failures"]
+        ))
+
+    def test_upstream_database_error_is_reported_in_source_diagnostics(self):
+        from collectors.data_collector import collect_news
+
+        source = type("Source", (), {
+            "name": "Производства.рф",
+            "url": "https://производства.рф/",
+            "source_type": "html",
+        })()
+        diagnostics = {}
+        with patch("collectors.data_collector.fetch_html_with_browser",
+                   return_value="<html><title>Database Error</title>"
+                                "Error establishing a database connection</html>"):
+            articles = collect_news([source], limit_per_source=2,
+                                    diagnostics=diagnostics)
+        self.assertEqual(articles, [])
+        info = diagnostics["Производства.рф"]
+        self.assertEqual(info["status"], "fetch_failed")
+        self.assertTrue(any(
+            row["kind"] == "origin_database_error"
+            for row in info["fetch_failures"]
+        ))
+
     def test_unknown_container_rejected_instead_of_mixing_news(self):
         preview = ArticlePreview(
             source="НедраДВ", title="Первая новость",
