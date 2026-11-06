@@ -2105,7 +2105,9 @@ def _article_paragraphs(block, title):
         "[class*='share'],[class*='social'],[class*='advert'],"
         "[class*='subscribe'],[class*='comments'],"
         "[class*='navigation'],[class*='breadcrumbs'],"
-        ".post-navigation,.article-tags,.news-list,.menu,.toc"
+        ".post-navigation,.article-tags,.news-list,.menu,.toc,"
+        ".article-list-wrap,.table-of-contents,.contents-list,"
+        "[class^='toc-'],[class*=' toc-']"
     )
     for child in block.select(exclude):
         child.decompose()
@@ -2114,7 +2116,9 @@ def _article_paragraphs(block, title):
     saw_paragraph = False
     for node in block.select("p, blockquote, li, h2, h3, h4"):
         if node.name == "p" and node.find_parent(["blockquote", "li"]):
-            # В списке текст <p> уже учитывается при извлечении <li>.
+            # Вложенный текст <p> будет учтён один раз в li/blockquote.
+            continue
+        if node.name in ("h2", "h3", "h4") and node.find_parent("li"):
             continue
         if node.name == "blockquote" and node.find_parent("blockquote"):
             continue
@@ -2124,12 +2128,9 @@ def _article_paragraphs(block, title):
             item = BeautifulSoup(str(node), "html.parser")
             for nested in item.select("ul, ol"):
                 nested.decompose()
-            # Список исключительно из ссылок чаще относится к навигации.
-            links = item.select("a[href]")
-            if links and clean_text(item.get_text(" ", strip=True)) == clean_text(
-                " ".join(link.get_text(" ", strip=True) for link in links)
-            ):
-                continue
+            # Ссылки внутри самого материала допустимы: например,
+            # названия моделей оборудования в техническом списке.
+            # Оглавления/меню удалены выше на уровне контейнера.
             value = clean_text(item.get_text(" ", strip=True))
         else:
             value = clean_text(node.get_text(" ", strip=True))
@@ -2159,7 +2160,8 @@ def _article_paragraphs(block, title):
             if not saw_paragraph or len(value) < 12:
                 continue
         elif node.name == "p":
-            if len(value) < 12:
+            # Не теряем короткие измерения вроде «500 МВт».
+            if len(value) < 12 and not re.search(r"\d", value):
                 continue
             saw_paragraph = True
         elif node.name == "blockquote":
