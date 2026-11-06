@@ -243,6 +243,72 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(len(previews), 1)
         self.assertIn("промышленную технологию", previews[0].title)
 
+    def test_zavody_article_container_and_local_date(self):
+        # Реальная структура из collector_html_20261106_035534.zip:
+        # main > .article-txt-wrap > .text-bl и span.date.
+        preview = ArticlePreview(
+            source="Заводы.рф", title="Завод передан государству",
+            url="https://заводы.рф/publication/test-plant",
+            published_at=None, preview_text="",
+        )
+        html = """
+        <main>
+          <div class="article-head__top"><span class="date">03 сентября 2026 г.</span></div>
+          <h1>Завод передан государству</h1>
+          <div class="article-txt-wrap">
+            <div class="text-bl">
+              <div class="article-head"><p>Одно из крупных предприятий
+              области перешло в собственность государства по решению суда.
+              На заводе трудится более пятисот сотрудников.</p></div>
+              <p>Предприятие работает в обычном режиме и выполняет
+              обязательства перед поставщиками и заказчиками.
+              Производственные планы не изменились после решения суда.</p>
+              <p>Обсудить новости промышленности можно в нашем чате в Telegram.</p>
+            </div>
+          </div>
+          <div class="author">Последние статьи автора:
+          <p>Совершенно чужая статья про банкротство другой компании.</p></div>
+        </main>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertIn("выполняет обязательства", article.text)
+        self.assertNotIn("другой компании", article.text)
+        self.assertNotIn("Обсудить новости", article.text)
+        self.assertEqual(article.published_at, datetime(2026, 9, 3))
+
+    def test_kommersant_text_blocks_not_image_captions(self):
+        # Актуальная структура Kommersant: текст в div, а не p.
+        preview = ArticlePreview(
+            source="Коммерсантъ — Промышленность",
+            title="Цены на арматуру снизились",
+            url="https://www.kommersant.ru/doc/9079360",
+            published_at=None, preview_text="",
+        )
+        html = """
+        <meta property="article:published_time" content="2026-11-03T01:36:00Z">
+        <h1>У проката остыл спрос</h1>
+        <div class="article_text_wrapper">
+          <div class="doc-content__text-block">
+            <div>К концу октября стоимость арматуры на российском рынке
+            опустилась до минимального уровня за полгода.
+            Причина — избыток предложения на рынке металлопроката.</div>
+          </div>
+          <div class="doc-content__image-block"><p>Фото рекламного баннера.</p></div>
+          <div class="doc-content__text-block">
+            <div>Представители металлургических предприятий отмечают
+            сезонное снижение спроса и ожидают восстановления закупок
+            с началом нового строительного сезона в следующем году.</div>
+          </div>
+        </div>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertIn("избыток предложения", article.text)
+        self.assertIn("восстановления закупок", article.text)
+        self.assertNotIn("Фото рекламного баннера", article.text)
+        self.assertEqual(article.published_at, datetime(2026, 11, 3, 1, 36))
+
     def test_unknown_container_rejected_instead_of_mixing_news(self):
         preview = ArticlePreview(
             source="НедраДВ", title="Первая новость",
