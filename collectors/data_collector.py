@@ -1686,7 +1686,12 @@ def _canonical_source_link(source, absolute_url: str) -> str | None:
         canonical_host = urlsplit(source.url).netloc
         return urlunsplit(("https", canonical_host, parts.path, parts.query, ""))
     if same_domain(absolute_url, source.url):
-        return absolute_url
+        # rostec.ru и www.rostec.ru — один источник, а не две новости.
+        # Нормализуем домен и схему к URL источника из БД.
+        origin = urlsplit(source.url)
+        return urlunsplit((
+            origin.scheme, origin.netloc, parts.path, parts.query, ""
+        ))
     return None
 
 
