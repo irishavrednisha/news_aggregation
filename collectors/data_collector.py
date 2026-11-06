@@ -1972,10 +1972,17 @@ def _parse_published(value):
             )
         except ValueError:
             pass
-    match = re.search(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b", str(value))
+    match = re.search(
+        r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?\b",
+        str(value),
+    )
     if match:
         try:
-            return datetime(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+            return datetime(
+                int(match.group(3)), int(match.group(2)), int(match.group(1)),
+                int(match.group(4) or 0), int(match.group(5) or 0),
+                int(match.group(6) or 0),
+            )
         except ValueError:
             pass
     return None
@@ -2153,6 +2160,57 @@ def _lukoil_published_date(soup):
             ):
                 return _parse_published(value)
     return None
+
+
+def _source_article_headline_date(soup, source_name, title):
+    """
+    Ростех публикует дату непосредственно ПЕРЕД заголовком
+    (06.11.2026 01:07); Роснефть — ПОСЛЕ него
+    (03 Ноябрь 2026). Ищем только рядом с заголовком этой статьи,
+    не сканируем основной текст, блоки рекомендаций и боковую ленту.
+    """
+    if source_name not in ("Ростех", "Роснефть") or not title:
+        return None
+
+    wanted = clean_text(title).casefold()
+    heading = next((
+        node for node in soup.select("h1, h2, h3")
+        if clean_text(node.get_text(" ", strip=True)).casefold() == wanted
+    ), None)
+    if heading is None:
+        return None
+
+    date_pattern = re.compile(
+        r"(?:\d{1,2}\.\d{1,2}\.\d{4}"
+        r"(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?"
+        r"|\d{1,2}\s+[а-яё]+\s+\d{4}"
+        r"(?:\s*г\.?)?(?:\s*,?\s*\d{1,2}:\d{2})?)",
+        flags=re.IGNORECASE,
+    )
+
+    def near_date(nodes):
+        inspected = 0
+        for node in nodes:
+            if not isinstance(node, str):
+                continue
+            value = clean_text(node)
+            if not value:
+                continue
+            inspected += 1
+            if inspected > 16:
+                break
+            if len(value) > 85:
+                # Длинное предложение — уже другая часть страницы.
+                break
+            if date_pattern.fullmatch(value):
+                result = _parse_published(value)
+                if result:
+                    return result
+        return None
+
+    if source_name == "Ростех":
+        return near_date(heading.previous_elements) or near_date(heading.next_elements)
+    return near_date(heading.next_elements) or near_date(heading.previous_elements)
 
 
 def _source_specific_published_date(soup, source_name):
@@ -2355,6 +2413,7 @@ def build_full_article(preview: ArticlePreview) -> Article:
             published_at
             or _page_date(soup, jsonld)
             or _source_specific_published_date(soup, preview.source)
+            or _source_article_headline_date(soup, preview.source, title)
         )
         text = _extract_main_text(soup, preview.source, title, jsonld)
         if text:
