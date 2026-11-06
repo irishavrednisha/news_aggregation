@@ -1608,7 +1608,7 @@ def collect_html_previews(source, limit: int) -> list[ArticlePreview]:
     if source.name == "Коммерсантъ — Промышленность":
         h = soup.find(
             lambda t: t.name in ("h1", "h2")
-            and clean_text(t.get_text(" ", strip=True)).lower() == "промышленность"
+            and clean_text(t.get_text(" ", strip=True)).lower().startswith("промышленность")
         )
         anchors = []
         if h:
@@ -1623,9 +1623,9 @@ def collect_html_previews(source, limit: int) -> list[ArticlePreview]:
             print("Не найден раздел «Промышленность» на kommersant.ru")
             return []
     else:
-        anchors = soup.select("main a[href], article a[href], h2 a[href], h3 a[href]")
-        if not anchors:
-            anchors = soup.select("a[href]")
+        # На ПВ.РФ карточки лежат за пределами main и часто
+        # представлены обычными ссылками без вложенного h2.
+        anchors = soup.select("a[href]")
 
     previews, seen = [], set()
     for anchor in anchors:
@@ -1642,9 +1642,16 @@ def collect_html_previews(source, limit: int) -> list[ArticlePreview]:
         # Общий fallback только в зоне контента, не из меню.
         if not title and source.name == "Коммерсантъ — Промышленность":
             title = clean_text(anchor.get_text(" ", strip=True))
-        if not title and source.name == "Производства.рф":
-            if anchor.find_parent(["h2", "h3", "h4"]):
-                title = clean_text(anchor.get_text(" ", strip=True))
+        if not title:
+            title = clean_text(anchor.get_text(" ", strip=True))
+        # Если ссылка включает всю карточку (заголовок + анонс),
+        # используем первую строку/текст прямого дочернего элемента.
+        if len(title) > 210:
+            direct = [
+                clean_text(child)
+                for child in anchor.find_all(string=True, recursive=False)
+            ]
+            title = next((part for part in direct if 14 <= len(part) <= 210), "")
         if len(title) < 14 or len(title) > 210:
             continue
 
@@ -1861,38 +1868,72 @@ def _article_paragraphs(block, title):
 
 
 def _extract_main_text(soup, source_name, title, jsonld):
+    """
+    1. JSON-LD, если автор сайта указал articleBody.
+    2. Основной блок по селекторам сайта.
+    3. Ранее работавшие экстракторы, если структура сайта другая.
+
+    Для НедраДВ НЕ используем запасной широкий поиск: там он
+    гарантированно смешивает несколько соседних публикаций.
+    """
     if source_name == "НедраДВ":
         return extract_text_nedradv(soup, title=title)
 
     body = jsonld.get("articleBody", "")
-    if isinstance(body, str) and len(body.strip()) >= 180:
+    if isinstance(body, str) and len(body.strip()) >= 140:
         return clean_text(body)
 
     selectors = _ARTICLE_SELECTORS.get(source_name, ())
-    selectors += ("[itemprop='articleBody']", ".entry-content", ".post-content", "article")
+    selectors += (
+        "[itemprop='articleBody']", ".entry-content",
+        ".post-content", ".article-body", "article",
+    )
 
     for selector in dict.fromkeys(selectors):
-        for block in soup.select(selector)[:3]:
+        for block in soup.select(selector)[:4]:
             text = _article_paragraphs(block, title)
             if len(text) >= 140:
                 return text
 
-    # Последняя попытка: узкий блок рядом с заголовком.
-    # Если нет достоверного контейнера, НЕ склеиваем все p сайта.
+    # Обязательный fallback: предыдущая версия из этих HTML извлекала
+    # полноценные тексты. Без него 8 работавших источников стали пустыми.
+    # Вызовы делаются на отдельной копии: некоторые функции удаляют узлы.
+    legacy_extractors = {
+        "ЛУКОЙЛ": extract_text_lukoil,
+        "Заводы.рф": extract_text_zavody,
+        "Производства.рф": extract_text_proizvodstva,
+        "ТПП РФ": extract_text_tpprf,
+        "Добывающая промышленность": extract_text_dprom,
+    }
+    legacy_extractor = legacy_extractors.get(source_name, extract_text_generic)
+    legacy_soup = BeautifulSoup(str(soup), "html.parser")
+
+    # Убираем боковые блоки и рекомендации до запуска широкого fallback.
+    for node in legacy_soup.select(
+        "nav, aside, footer, [class*='related'], [class*='sidebar'], "
+        "[class*='recommend'], [class*='share'], [class*='social'], "
+        "[class*='advert'], [class*='subscribe'], [class*='comments']"
+    ):
+        node.decompose()
+
+    text = legacy_extractor(legacy_soup, title=title)
+    if text and len(text) >= 120:
+        return text
+
+    # Последняя попытка: контейнер непосредственно рядом с заголовком.
     h1 = soup.find("h1")
     if h1:
         parent = h1.parent
         for _ in range(3):
             if parent is None:
                 break
-            text = _article_paragraphs(parent, title)
-            if len(text) >= 180:
-                # Не используем широкий контейнер с десятками ссылок на новости.
-                if len(parent.select("a[href]")) <= 5:
+            if len(parent.select("a[href]")) <= 5:
+                text = _article_paragraphs(parent, title)
+                if len(text) >= 140:
                     return text
             parent = parent.parent
-    return ""
 
+    return ""
 
 def build_full_article(preview: ArticlePreview) -> Article:
     html = fetch_html(preview.url)
@@ -1968,7 +2009,7 @@ def collect_news(
                         fn = collect_html_previews
                     else:
                         fn = _legacy_collect_html_previews
-                previews = fn(source, limit=limit_per_source)
+                previews = fn(source, limit=min(limit_per_source * 3, 30))
             else:
                 print(f"Неизвестный тип источника {source.name}: {source.source_type}")
                 continue
@@ -1999,9 +2040,11 @@ def collect_news(
                 print(f"Ошибка разбора статьи [{preview.url}]: {error}")
                 continue
 
-            if article.text and len(article.text.strip()) >= 140:
+            if article.text and len(article.text.strip()) >= 120:
                 all_articles.append(article)
                 collected += 1
+                if collected >= limit_per_source:
+                    break
             else:
                 print(f"Пустой/короткий материал: {preview.url}")
 
