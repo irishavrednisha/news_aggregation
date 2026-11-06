@@ -22,7 +22,7 @@ jobs:
           python -m pip install beautifulsoup4 requests feedparser playwright sqlalchemy psycopg2-binary python-dotenv
       - name: Compile source files
         run: |
-          python -m py_compile collectors/data_collector.py processing/topic_filter.py processing/tagger.py tests/test_topic_filter.py tests/test_tagging_filter_contract.py tests/test_collector_regressions.py tests/test_text_extraction_all_sources.py check_news_collection.py check_news_filter.py
+          python -m py_compile collectors/data_collector.py processing/topic_filter.py processing/tagger.py processing/ai_tagger.py publishing/publisher.py tests/test_ai_tagger.py check_ai_tagging.py tests/test_topic_filter.py tests/test_tagging_filter_contract.py tests/test_collector_regressions.py tests/test_text_extraction_all_sources.py check_news_collection.py check_news_filter.py
       - name: Run collector regression tests
         run: python -m unittest discover -s tests -p 'test_collector_regressions.py' -v
       - name: Run all-source text extraction tests
@@ -31,3 +31,5 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_topic_filter.py' -v
       - name: Run tagger filtering contract tests without ML dependencies
         run: python -m unittest discover -s tests -p 'test_tagging_filter_contract.py' -v
+      - name: Run AI zero-shot tagging contract tests without model download
+        run: python -m unittest discover -s tests -p 'test_ai_tagger.py' -v
