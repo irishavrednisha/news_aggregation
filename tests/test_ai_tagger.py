@@ -90,6 +90,96 @@ class AITaggerTests(unittest.TestCase):
         self.assertFalse(fake.calls[0][2])
         self.assertFalse(fake.calls[1][2])
 
+    def test_real_nuclear_project_scores_pass_recalibrated_threshold(self):
+        # Реальные NLI v2 scores из ai_tag_results_v2.json:
+        # атомная отрасль = 0.2057, ТЭК = 0.1362.
+        fake = FakeNLI(
+            event="industrial_energy", event_score=0.86,
+            tag_scores={
+                TAG_LABELS["атомная отрасль"]: 0.2057,
+                TAG_LABELS["ТЭК"]: 0.1362,
+                TAG_LABELS["оборонная промышленность"]: 0.0719,
+            },
+        )
+        result = predict_tags(
+            "Россия и Мьянма подписали соглашение о строительстве атомной станции",
+            "Российская атомная отрасль участвует в строительстве АЭС.",
+            classifier=fake,
+        )
+        self.assertEqual(result.tags, ["атомная отрасль", "ТЭК"])
+
+    def test_real_sveza_production_scores_keep_correct_specific_tags(self):
+        # Реальные NLI v2 scores: производство 0.1447, заводы 0.1422,
+        # инжиниринг 0.1138 — последний теперь не проходит порог.
+        fake = FakeNLI(tag_scores={
+            TAG_LABELS["технологическое производство"]: 0.1447,
+            TAG_LABELS["заводы"]: 0.1422,
+            TAG_LABELS["инжиниринг"]: 0.1138,
+        })
+        result = predict_tags(
+            "«Свеза» вложила 30 млн рублей в модернизацию производства ДСП",
+            "Предприятие модернизировало технологический процесс выпуска ДСП.",
+            classifier=fake,
+        )
+        self.assertEqual(result.tags, ["технологическое производство", "заводы"])
+
+    def test_weak_unrelated_rankings_still_get_no_tags(self):
+        # Из реального v2 отчёта: дроны 0.0968, банкротство 0.1003,
+        # перестройка отгрузки без рубрики «логистика» 0.1091.
+        for case, top in (
+            ("Дроны следят за пожарами", 0.0968),
+            ("Компании «Яковлев» банкротство не грозит", 0.1003),
+            ("«Свеза» изменила схему отгрузки фанеры", 0.1091),
+        ):
+            with self.subTest(case=case):
+                fake = FakeNLI(tag_scores={
+                    TAG_LABELS["машиностроение"]: top,
+                })
+                result = predict_tags(case, SUMMARY, classifier=fake)
+                self.assertEqual(result.tags, [])
+                self.assertEqual(result.reason, "no_confident_industrial_tag")
+
+    def test_ambiguous_engine_event_reaches_sector_decision(self):
+        # Нельзя остановить полезную техническую новость из-за того,
+        # что главный промышленный тип события = 0.1781 (< старых 0.18).
+        class DiffuseEventNLI(FakeNLI):
+            def __call__(self, text, candidate_labels, hypothesis_template, multi_label):
+                if set(candidate_labels) == set(EVENT_LABELS.values()):
+                    scores = {
+                        "industrial_transport": 0.1781,
+                        "industrial_operations": 0.1350,
+                        "industrial_production": 0.1238,
+                        "industrial_equipment": 0.1119,
+                        "industrial_energy": 0.0980,
+                        "industrial_mining": 0.0822,
+                        "industrial_research": 0.0142,
+                        "competitions": 0.1379,
+                        "corporate_pr": 0.0375,
+                        "staff_training": 0.0331,
+                        "financial_markets": 0.0157,
+                        "consular_law": 0.0137,
+                        "consumer_promotion": 0.0117,
+                        "nonindustrial_policy": 0.0073,
+                    }
+                    self.calls.append((text, list(candidate_labels), multi_label))
+                    return {
+                        "labels": list(candidate_labels),
+                        "scores": [scores[k] for k, v in EVENT_LABELS.items()
+                                   if v in candidate_labels],
+                    }
+                return super().__call__(
+                    text, candidate_labels, hypothesis_template, multi_label
+                )
+
+        fake = DiffuseEventNLI(tag_scores={TAG_LABELS["авиация"]: 0.32})
+        result = predict_tags(
+            "Двигатели ОДК обеспечили успешный старт ракеты «Союз»",
+            "Российские двигатели обеспечили запуск ракеты с космодрома.",
+            classifier=fake,
+        )
+        self.assertEqual(result.tags, ["авиация"])
+        self.assertEqual(len(fake.calls), 2)
+
     def test_staff_training_not_tagged_as_engineering(self):
         fake = FakeNLI(
             event="staff_training", event_score=0.80,
