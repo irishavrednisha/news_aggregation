@@ -70,10 +70,11 @@ class CollectorTests(unittest.TestCase):
 
     def test_iapn_article_urls(self):
         html = """
-        <main><h3><a href="/dvigateli-odk-obespechili-zapusk-rakety/">
+        <h2>НОВОСТИ</h2><main><h3><a href="/dvigateli-odk-obespechili-zapusk-rakety/">
         Двигатели ОДК обеспечили запуск ракеты</a></h3>
         <h3><a href="/contact/">Связаться с редакцией сайта</a></h3>
-        </main>
+        </main><h2>СЕВЕРО-ЗАПАДНЫЙ ФЕДЕРАЛЬНЫЙ ОКРУГ</h2>
+        <h3><a href="/old-archive-article/">Очень старая статья из архива</a></h3>
         """
         source = type("Source", (), {
             "name": "ИАПН", "url": "https://iapn.ru"
@@ -172,6 +173,75 @@ class CollectorTests(unittest.TestCase):
             previews = collect_html_previews(source, 5)
         self.assertEqual(len(previews), 1)
         self.assertIn("ОСК", previews[0].title)
+
+    def test_lukoil_excludes_recommendations_and_extracts_date(self):
+        preview = ArticlePreview(
+            source="ЛУКОЙЛ",
+            title="Пресс-релиз",
+            url="https://lukoil.ru/PressCenter/Pressreleases/Pressrelease/example",
+            published_at=None,
+            preview_text="",
+        )
+        html = """
+        <h1>Пресс-релиз</h1>
+        <h1>Лаявожское месторождение ввели в эксплуатацию</h1>
+        <span>9 октября 2026 г.</span>
+        <div>
+          <p>ПАО ЛУКОЙЛ приступило к эксплуатации нового нефтяного
+          месторождения в Ненецком округе и запустило необходимую
+          производственную инфраструктуру.</p>
+          <p>Компания построила нефтепромысловую инфраструктуру,
+          включая технологические площадки и энергетический центр.</p>
+        </div>
+        <h4>Вас может заинтересовать</h4>
+        <p>Другая новость о запуске совершенно другого месторождения,
+        которая должна быть исключена из текста первой новости.</p>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertIn("технологические площадки", article.text)
+        self.assertNotIn("совершенно другого", article.text)
+        self.assertEqual(article.published_at, datetime(2026, 10, 9))
+
+    def test_eprussia_publication_date_from_footer(self):
+        preview = ArticlePreview(
+            source="Энергетика и промышленность России",
+            title="ГОСТ для подземных хранилищ газа",
+            url="https://www.eprussia.ru/news/base/2026/100.html",
+            published_at=None, preview_text="",
+        )
+        html = """
+        <h1>ГОСТ для подземных хранилищ газа</h1>
+        <main>
+          <p>В России впервые утверждён новый отраслевой стандарт для
+          разработки проектной документации подземных газовых хранилищ.
+          Он определяет требования к эксплуатации энергетических объектов.</p>
+          <p>Специалисты отмечают существенное повышение надёжности
+          системы и безопасность проектирования газовых хранилищ.</p>
+          <p>Опубликовано: 05 ноября 2026, 09:05</p>
+        </main>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertEqual(article.published_at, datetime(2026, 11, 5, 9, 5))
+        self.assertNotIn("Опубликовано:", article.text)
+
+    def test_iapn_ignores_archival_sections(self):
+        source = type("Source", (), {
+            "name": "ИАПН", "url": "https://iapn.ru/"
+        })()
+        html = """
+        <h2>НОВОСТИ</h2>
+        <h3><a href="/novaya-tekhnologiya-rossii/">
+        В России представили новую промышленную технологию</a></h3>
+        <h2>ПРОЕКТЫ ИАПН</h2>
+        <h3><a href="/staryj-proekt-proizvodstva/">
+        Японские проекты по промышленному развитию</a></h3>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            previews = collect_html_previews(source, 5)
+        self.assertEqual(len(previews), 1)
+        self.assertIn("промышленную технологию", previews[0].title)
 
     def test_unknown_container_rejected_instead_of_mixing_news(self):
         preview = ArticlePreview(
