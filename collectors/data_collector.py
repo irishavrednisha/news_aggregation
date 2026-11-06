@@ -450,22 +450,32 @@ def extract_text_nedradv(soup: BeautifulSoup, title: str | None = None) -> str:
             if any(heading.startswith(stop) for stop in stop_headings):
                 break
 
-        if name not in ("p", "blockquote"):
+        if name not in ("p", "blockquote", "li"):
             continue
-        # Вложенный блок цитаты не добавляем повторно.
-        if name == "p" and node.find_parent("blockquote"):
+        # Списки технических характеристик NedraDV также часть статьи.
+        # Вложенные p не дублируем.
+        if name == "p" and node.find_parent(["blockquote", "li"]):
             continue
-
-        value = clean_text(node.get_text(" ", strip=True))
+        if name == "li" and node.find_parent(["nav", "aside", "footer"]):
+            continue
+        if name == "li":
+            item = BeautifulSoup(str(node), "html.parser")
+            for nested in item.select("ul, ol"):
+                nested.decompose()
+            value = clean_text(item.get_text(" ", strip=True))
+        else:
+            value = clean_text(node.get_text(" ", strip=True))
         lowered = value.lower()
         if any(lowered.startswith(stop) for stop in stop_headings):
             break
-        if len(value) < 30 or (title and value.lower() == title.lower()):
+        if len(value) < (4 if name == "li" else 30) or (title and value.lower() == title.lower()):
             continue
         if any(x in lowered for x in ("подписаться", "поделиться", "реклама", "cackle")):
             continue
         if value not in seen:
             seen.add(value)
+            if name == "li" and value[-1] not in ".!?;:":
+                value += "."
             paragraphs.append(value)
 
     return clean_text(" ".join(paragraphs))
