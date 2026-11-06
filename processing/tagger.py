@@ -6,6 +6,7 @@ sys.path.append(str(ROOT_DIR))
 
 import numpy as np
 import re
+import os
 from sklearn.metrics.pairwise import cosine_similarity
 
 from database.models import Cluster, News
@@ -1678,6 +1679,7 @@ def tag_cluster(
         cluster.tags = None
         cluster.status = "not_for_publication"
         session.commit()
+        return []
 
     if is_not_related_to_russia(session, cluster, debug=debug):
         cluster.tags = None
@@ -1693,8 +1695,6 @@ def tag_cluster(
 
         return []
 
-    text = get_cluster_text_for_tagging(session, cluster)
-
     if not cluster_has_content(session, cluster.id):
         cluster.tags = None
         cluster.status = "not_for_publication"
@@ -1709,7 +1709,63 @@ def tag_cluster(
 
         return []
 
-    if is_not_publication_by_keywords(text):
+    # Экспериментальная NLI-классификация: AI оценивает смысл
+    # заголовка + summary и затем независимо 18 тематик.
+    # Без подтверждённых тегов публикации нет.
+    backend = os.getenv("NEWS_TAGGER_BACKEND", "legacy").strip().lower()
+    if backend == "nli":
+        from processing.ai_tagger import predict_tags
+        try:
+            primary = (
+                session.query(News)
+                .filter(News.cluster_id == cluster.id)
+                .order_by(
+                    News.is_primary.desc(),
+                    News.published_at.asc().nullslast(),
+                    News.collected_at.asc(),
+                )
+                .first()
+            )
+            lead = (primary.text or "")[:330] if primary else ""
+            prediction = predict_tags(
+                title=cluster.title or "",
+                summary=cluster.summary_text or "",
+                lead=lead,
+                max_tags=max_tags,
+            )
+        except Exception as exc:
+            # Сбой загрузки модели / inference НЕ является признаком
+            # нерелевантности. Оставляем кластер новым для повтора
+            # и ни в коем случае не переводим его в ready.
+            cluster.tags = None
+            cluster.status = "new"
+            session.commit()
+            print(f"AI-тегирование кластера #{cluster.id} не выполнено: "
+                  f"{type(exc).__name__}: {exc}")
+            return []
+
+        cluster.tags = ", ".join(prediction.tags) if prediction.tags else None
+        cluster.status = "ready" if prediction.tags else "not_for_publication"
+        session.commit()
+        if debug:
+            print("-" * 100)
+            print(f"AI-тегирование кластера #{cluster.id}: {cluster.status}")
+            print(f"Причина: {prediction.reason}")
+            print(f"Оценка промышленной тематики: {prediction.relevance_score:.3f}")
+            print(f"Теги: {cluster.tags or 'нет'}")
+            for tag, score in prediction.ranked_tags[:5]:
+                print(f"  {tag}: {score:.3f}")
+        return prediction.tags
+
+    if backend != "legacy":
+        raise ValueError("NEWS_TAGGER_BACKEND должен быть legacy или nli")
+
+    text = get_cluster_text_for_tagging(session, cluster)
+
+    # Не ищем стоп-слова во всём тексте кластера. Техническая
+    # новость может упоминать выставку, музей, акционеров или вакансии.
+    # Явно непрофильные заголовки уже проверяет общий фильтр.
+    if is_not_publication_by_keywords(cluster.title or ""):
         cluster.tags = None
         cluster.status = "not_for_publication"
         session.commit()
@@ -1731,17 +1787,8 @@ def tag_cluster(
         max_tags=max_tags,
         max_gap_from_best=0.05
     )
-    if selected_tags:
-        if is_not_related_to_russia(session, cluster, debug=debug):
-            cluster.tags = None
-            cluster.status = "not_for_publication"
-        else:
-            cluster.tags = ", ".join(selected_tags)
-            cluster.status = "ready"
-    else:
-        cluster.tags = None
-        cluster.status = "not_for_publication"
-
+    # Проверка связи с РФ уже выполнена выше и завершает функцию.
+    # Не перезаписываем статус повторным блоком.
     if selected_tags:
         cluster.tags = ", ".join(selected_tags)
         cluster.status = "ready"
@@ -1779,16 +1826,15 @@ def tag_new_clusters(
     debug: bool = True
 ):
     """
-    Тегирует кластеры, у которых уже есть summary.
-    Если кластер уже был not_for_publication, можно перетегировать.
+    Тегирует новые кластеры с готовым summary.
+    Уже отклонённые и опубликованные кластеры не прогоняем на
+    каждой итерации; явная ручная перепроверка доступна отдельно.
     """
     clusters = (
         session.query(Cluster)
         .filter(Cluster.summary_text.isnot(None))
-        .filter(
-            (Cluster.tags.is_(None)) |
-            (Cluster.status == "not_for_publication")
-        )
+        .filter(Cluster.tags.is_(None))
+        .filter(Cluster.status == "new")
         .all()
     )
 
@@ -2153,15 +2199,13 @@ def keyword_penalty_for_tag(text: str, tag: str) -> float:
     return min(0.05 * matches, 0.15)
 
 def is_not_publication_by_keywords(text: str) -> bool:
-    normalized_text = lemmatize_text(text)
+    """Консервативная проверка заголовка, не всей статьи.
 
-    for keyword in NOT_PUBLICATION_KEYWORDS:
-        normalized_keyword = lemmatize_text(keyword)
-
-        if normalized_keyword in normalized_text:
-            return True
-
-    return False
+    Старый поиск любого NOT_PUBLICATION_KEYWORDS по полному тексту
+    отбрасывал модернизацию оборудования из-за слова «выставка».
+    """
+    from processing.topic_filter import has_bad_title
+    return has_bad_title(text)
 
 def cluster_has_content(session, cluster_id: int) -> bool:
     news_items = (

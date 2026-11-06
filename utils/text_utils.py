@@ -218,12 +218,12 @@ def remove_duplicate_sentences(text: str) -> str:
     for sentence in sentences:
         sentence = sentence.strip()
 
-        if len(sentence) < 20:
-            continue
-
+        # Короткие части предложения нельзя выкидывать:
+        # простой split_sentences режет фразы после сокращений
+        # «ул.», «им.» и «г.», поэтому иначе теряются имена
+        # улиц, людей и другие важные факты статьи.
         key = re.sub(r"[^а-яёa-z0-9]+", " ", sentence.lower()).strip()
-
-        if key in seen:
+        if not key or key in seen:
             continue
 
         seen.add(key)
