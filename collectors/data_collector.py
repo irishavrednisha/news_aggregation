@@ -1980,15 +1980,23 @@ def collect_news(
     sources: list,
     limit_per_source: int = 10,
     session=None,
+    diagnostics: dict | None = None,
 ) -> list[Article]:
     """
-    Собирает новости, не пишет в БД. При session != None заранее
-    пропускает уже известные URL. Один сбой сайта не прерывает весь сбор.
+    Собирает статьи (БД не изменяет). Если передан diagnostics, сохраняет
+    статистику по каждому источнику для анализа ошибок.
     """
     all_articles = []
     seen_urls = set()
 
     for source in sources:
+        stat = {
+            "candidates": 0, "accepted": 0, "short_or_empty": 0,
+            "errors": [], "rejected_urls": [],
+        }
+        if diagnostics is not None:
+            diagnostics[source.name] = stat
+
         try:
             if source.source_type == "rss":
                 previews = collect_rss_previews(source, limit=limit_per_source)
@@ -2005,20 +2013,27 @@ def collect_news(
                 }
                 fn = collectors.get(source.name)
                 if fn is None:
-                    if source.name in _SOURCE_ARTICLE_PATHS:
-                        fn = collect_html_previews
-                    else:
-                        fn = _legacy_collect_html_previews
+                    fn = (
+                        collect_html_previews
+                        if source.name in _SOURCE_ARTICLE_PATHS
+                        else _legacy_collect_html_previews
+                    )
                 previews = fn(source, limit=min(limit_per_source * 3, 30))
             else:
-                print(f"Неизвестный тип источника {source.name}: {source.source_type}")
+                message = f"Неизвестный тип источника: {source.source_type}"
+                stat["errors"].append(message)
+                print(f"{source.name}: {message}")
                 continue
         except Exception as error:
-            print(f"Ошибка списка новостей [{source.name}]: {error}")
+            message = f"Ошибка списка: {type(error).__name__}: {error}"
+            stat["errors"].append(message)
+            print(f"{source.name}: {message}")
             continue
 
-        print(f"Кандидатов из источника {source.name}: {len(previews)}")
-        collected = 0
+        stat["candidates"] = len(previews)
+        print(f"Кандидатов из {source.name}: {len(previews)}")
+        if not previews:
+            print(f"ВНИМАНИЕ: {source.name} не дал ссылок на статьи.")
 
         for preview in previews:
             if not preview.url or preview.url in seen_urls:
@@ -2031,29 +2046,37 @@ def collect_news(
                     if news_url_exists(session, preview.url):
                         continue
                 except Exception as error:
-                    print(f"Ошибка проверки URL в БД: {error}")
+                    message = f"Ошибка проверки БД: {type(error).__name__}: {error}"
+                    stat["errors"].append(message)
+                    print(message)
                     continue
 
             try:
                 article = build_full_article(preview)
             except Exception as error:
-                print(f"Ошибка разбора статьи [{preview.url}]: {error}")
+                message = f"{preview.url}: {type(error).__name__}: {error}"
+                stat["errors"].append(message)
+                print(f"Ошибка парсинга: {message}")
                 continue
 
             if article.text and len(article.text.strip()) >= 120:
                 all_articles.append(article)
-                collected += 1
-                if collected >= limit_per_source:
+                stat["accepted"] += 1
+                if stat["accepted"] >= limit_per_source:
                     break
             else:
-                print(f"Пустой/короткий материал: {preview.url}")
+                stat["short_or_empty"] += 1
+                stat["rejected_urls"].append(preview.url)
+                print(f"Не извлечён основной текст: {preview.url}")
 
             time.sleep(1)
 
-        print(f"Полных материалов из {source.name}: {collected}")
+        print(
+            f"{source.name}: успешно {stat['accepted']}/"
+            f"{stat['candidates']}, не извлечено {stat['short_or_empty']}"
+        )
 
     return all_articles
-
 
 def debug_collect_news(
     sources: list,
