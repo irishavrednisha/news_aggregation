@@ -12,6 +12,7 @@ from collectors.data_collector import (
     _article_paragraphs,
     _extract_main_text,
     extract_by_selectors,
+    _strip_source_boilerplate,
 )
 
 
@@ -175,6 +176,97 @@ class ExtractionForAllSourcesTests(unittest.TestCase):
         result = _article_paragraphs(block, "Модернизация")
         self.assertEqual(result.count("Комплект оборудования модели А"), 1)
         self.assertEqual(result.count("Подсистема измерения 500 МВт"), 1)
+
+
+class RealAuditBoilerplateTests(unittest.TestCase):
+    """Аномалии из news_fixed_20261106_221607.json, без живых запросов."""
+
+    def test_vestnik_category_label_removed_only_at_start(self):
+        src = "Вестник промышленности"
+        original = (
+            "Новости. В Екатеринбурге пройдет новое мероприятие "
+            "для предприятий химической промышленности. "
+            "Завод представит оборудование и технологии."
+        )
+        cleaned = _strip_source_boilerplate(original, src)
+        self.assertTrue(cleaned.startswith("В Екатеринбурге"))
+        self.assertIn("Завод представит оборудование", cleaned)
+        self.assertEqual(
+            _strip_source_boilerplate(
+                "Завод сообщил новости. Началось производство.", src
+            ),
+            "Завод сообщил новости. Началось производство.",
+        )
+
+    def test_nedradv_page_date_and_dateline_not_article_body(self):
+        original = (
+            "06 ноября 2026. На руднике нашли нарушения. "
+            "6 ноября 2026 года, NEDRADV. "
+            "Ростехнадзор остановил рудник после проверки. "
+            "Производство в 2024 году составило 32 тыс. тонн."
+        )
+        cleaned = _strip_source_boilerplate(original, "НедраДВ")
+        self.assertTrue(cleaned.startswith("На руднике нашли нарушения"))
+        self.assertNotIn("NEDRADV", cleaned)
+        self.assertIn("2024 году составило 32 тыс. тонн", cleaned)
+
+    def test_iapn_source_signature_at_end_only(self):
+        original = (
+            "Разработчики испытали промышленные датчики. "
+            "Они снизили потребление электричества на 20%. "
+            "Источник новости: пресс-служба ГК «Геоскан»"
+        )
+        cleaned = _strip_source_boilerplate(original, "ИАПН")
+        self.assertTrue(cleaned.endswith("20%."))
+        self.assertIn("Разработчики испытали", cleaned)
+        preserved = (
+            "Предприятие назвало источником новости новую технологию. "
+            "Она улучшила безопасность и работу датчиков."
+        )
+        self.assertEqual(_strip_source_boilerplate(preserved, "ИАПН"), preserved)
+
+    def test_dixinews_removes_only_end_legal_footnote(self):
+        original = (
+            "Apple увеличила капитализацию, обойдя Nvidia. "
+            "Meta (признана экстремистской и запрещена в России) "
+            "упоминалась в основном тексте. "
+            "Котировки Apple выросли на 2%. "
+            "* Деятельность Meta* запрещена в России как экстремистская. "
+            "*Американская компания Meta Platforms Inc. относится "
+            "к организациям, запрещенным Федеральным законом."
+        )
+        cleaned = _strip_source_boilerplate(
+            original, "DixiNews — Промышленность"
+        )
+        self.assertIn("Meta (признана экстремистской", cleaned)
+        self.assertTrue(cleaned.endswith("Котировки Apple выросли на 2%."))
+        self.assertNotIn("Американская компания", cleaned)
+
+    def test_dprom_cuts_only_final_project_ad_with_address(self):
+        original = (
+            "Завод разработал новый калорифер. "
+            "Мощность достигла 500 МВт, а экономия 20%. "
+            "Опыт НПФ «ТЭП» подтвердил качество оборудования. "
+            "Пермский край, м.о. Добрянский, тер. Усть-Полазна, зд. 5/2 "
+            'Перейти на страницу проекта "Рудник. Урал 2026"'
+        )
+        cleaned = _strip_source_boilerplate(original, "Добывающая промышленность")
+        self.assertIn("Мощность достигла 500 МВт", cleaned)
+        self.assertTrue(cleaned.endswith("качество оборудования."))
+        self.assertNotIn("Перейти на страницу проекта", cleaned)
+        self.assertNotIn("Усть-Полазна", cleaned)
+
+    def test_technical_project_mentions_not_deleted(self):
+        original = (
+            "Проект Рудник. Урал 2026 позволяет повысить мощность "
+            "оборудования до 500 МВт. Эксперты представили его на выставке."
+        )
+        for source in ("Добывающая промышленность",
+                       "Вестник промышленности", "НедраДВ", "ИАПН"):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    _strip_source_boilerplate(original, source), original
+                )
 
 
 if __name__ == "__main__":
