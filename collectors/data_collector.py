@@ -1903,9 +1903,9 @@ def collect_rosneft_previews(source, limit: int):
 # Селекторы в порядке от наиболее узких к общим.
 # Широкий поиск по всем <p> страницы ЗАПРЕЩЁН.
 _ARTICLE_SELECTORS = {
-    "Ростех": ("[itemprop='articleBody']", ".news-detail__content", ".news-detail__text", "article"),
+    "Ростех": (".media-news-detailed__content", "[itemprop='articleBody']", ".news-detail__content", ".news-detail__text", "article"),
     "ОСК": (".news-detail__text", ".detail_text", ".news-detail", "article"),
-    "Роснефть": (".news-detail", ".news-body", ".news-text", "article"),
+    "Роснефть": (".content-column .common-text", ".common-text", ".news-detail", ".news-body", ".news-text", "article"),
     "Заводы.рф": (".article-txt-wrap .text-bl", ".article-txt-wrap", ".publication-content", ".publication__body", ".article-content"),
     "ЛУКОЙЛ": (".press-release__text", ".pressrelease__text", ".press-release__body", ".news-detail__text", "article"),
     "Норильский никель": (".news-detail__content", ".press-release__text", ".article__content", "article"),
@@ -2089,47 +2089,105 @@ def _page_date(soup, jsonld):
 
 
 def _article_paragraphs(block, title):
+    """
+    Извлекает содержимое только уже найденного контейнера статьи.
+    В отличие от прежней реализации, сохраняет пункты ul/ol и
+    подзаголовки внутри статьи без меню и рекомендательных ссылок.
+    """
     from bs4 import BeautifulSoup
 
-    # Копия предотвращает порчу дерева исходной страницы.
+    # Работаем с копией, не изменяем HTML для поиска даты и заголовка.
     block = BeautifulSoup(str(block), "html.parser")
     exclude = (
         "script,style,nav,footer,aside,form,button,"
-        ".related,.related-news,.read-also,.recommendations,"
+        ".related,.related-news,.read-also,.recommendations,.other-news,"
         "[class*='related'],[class*='recommend'],[class*='sidebar'],"
         "[class*='share'],[class*='social'],[class*='advert'],"
         "[class*='subscribe'],[class*='comments'],"
-        ".post-navigation,.article-tags"
+        "[class*='navigation'],[class*='breadcrumbs'],"
+        ".post-navigation,.article-tags,.news-list,.menu,.toc"
     )
     for child in block.select(exclude):
         child.decompose()
 
-    paras, seen = [], set()
-    for p in block.select("p, blockquote"):
-        if p.name == "p" and p.find_parent("blockquote"):
+    parts, seen = [], set()
+    saw_paragraph = False
+    for node in block.select("p, blockquote, li, h2, h3, h4"):
+        if node.name == "p" and node.find_parent(["blockquote", "li"]):
+            # В списке текст <p> уже учитывается при извлечении <li>.
             continue
-        value = clean_text(p.get_text(" ", strip=True))
-        if not value or len(value) < 28:
+        if node.name == "blockquote" and node.find_parent("blockquote"):
             continue
-        lower = value.lower()
-        if title and lower == title.lower():
+
+        if node.name == "li":
+            # Не дублируем вложенные списки: каждый li отдельно.
+            item = BeautifulSoup(str(node), "html.parser")
+            for nested in item.select("ul, ol"):
+                nested.decompose()
+            # Список исключительно из ссылок чаще относится к навигации.
+            links = item.select("a[href]")
+            if links and clean_text(item.get_text(" ", strip=True)) == clean_text(
+                " ".join(link.get_text(" ", strip=True) for link in links)
+            ):
+                continue
+            value = clean_text(item.get_text(" ", strip=True))
+        else:
+            value = clean_text(node.get_text(" ", strip=True))
+
+        if not value:
             continue
-        if any(lower.startswith(s) for s in (
+        lower = value.casefold()
+        if title and lower == clean_text(title).casefold():
+            continue
+        if any(lower.startswith(stop) for stop in (
             "читайте также", "последние новости", "последние публикации",
             "последние аукционы", "обсудить новости промышленности",
             "подписывайтесь", "поделиться", "департамент информации и рекламы",
+            "фото:", "источник:", "на правах рекламы",
         )):
             continue
         value = re.split(
             r"(?i)\b(?:обсудить новости промышленности|департамент информации и рекламы ПАО)\b",
             value, maxsplit=1
         )[0].strip()
-        if not value or value in seen:
+        if not value:
             continue
-        seen.add(value)
-        paras.append(value)
-    return clean_text(" ".join(paras))
 
+        if node.name in ("h2", "h3", "h4"):
+            # Начальный h3 в корпоративных пресс-релизах часто дублирует
+            # лид; сохраняем только внутренние подзаголовки статьи.
+            if not saw_paragraph or len(value) < 12:
+                continue
+        elif node.name == "p":
+            if len(value) < 12:
+                continue
+            saw_paragraph = True
+        elif node.name == "blockquote":
+            if len(value) < 12:
+                continue
+            saw_paragraph = True
+        elif node.name == "li":
+            if len(value) < 4:
+                continue
+
+        # Длина и цифры важных пунктов («Ту-95А», «500 МВт»)
+        # не должны приводить к их удалению.
+        key = re.sub(r"[^а-яёa-z0-9]+", " ", lower).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+
+        if node.name == "li":
+            # Граница пункта должна сохраниться и после нормализации
+            # пробелов, иначе два элемента списка сливаются.
+            if value[-1] not in ".!?;:":
+                value += "."
+        elif node.name in ("h2", "h3", "h4") and value[-1] not in ".!?;:":
+            value += "."
+
+        parts.append(value)
+
+    return clean_text(" ".join(parts))
 
 
 def _lukoil_published_date(soup):
