@@ -804,6 +804,60 @@ class CollectorTests(unittest.TestCase):
             article = build_full_article(preview)
         self.assertEqual(article.published_at, datetime(2026, 11, 2))
 
+    def test_rostec_real_split_date_and_time_from_article(self):
+        """Реальный DOM Ростеха: дата и время в двух соседних span.date."""
+        title = (
+            "«Швабе» поставил в Тверскую область оборудование для "
+            "раннего выявления онкологических заболеваний"
+        )
+        preview = ArticlePreview(
+            source="Ростех",
+            title=title,
+            url="https://rostec.ru/media/news/shvabe-postavil-example/",
+            published_at=None,
+            preview_text="",
+        )
+        html = """
+        <div class="media-news-single__info">
+          <div class="media-news-single__date">
+            <span class="date">06.11.2026</span>
+            <span class="date">04:25</span>
+          </div>
+          <h2 class="media-news-single__name">""" + title + """</h2>
+        </div>
+        <article>
+          <p>Холдинг поставил отечественное оборудование в регион,
+          завершив программу расширения производства медицинских
+          оптических приборов и улучшения диагностики заболеваний.</p>
+          <p>Новая техника создана на российских заводах. Поставка
+          позволит медицинским учреждениям расширить возможности
+          обследования пациентов с помощью высокоточных технологий.</p>
+        </article>
+        <div class="other-news__date">30 октября 2026</div>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertEqual(article.published_at, datetime(2026, 11, 6, 4, 25))
+        self.assertIn("отечественное оборудование", article.text)
+
+    def test_rostec_does_not_inherit_time_from_related_cards(self):
+        from bs4 import BeautifulSoup
+        from collectors.data_collector import _source_specific_published_date
+        soup = BeautifulSoup("""
+          <div class="media-news-single__info">
+            <div class="media-news-single__date">
+              <span class="date">06.11.2026</span>
+            </div>
+            <h2 class="media-news-single__name">Завод начал производство</h2>
+          </div>
+          <div class="other-news__date">
+            <span class="date">06.11.2026</span>
+            <span class="date">20:35</span>
+          </div>
+        """, "html.parser")
+        result = _source_specific_published_date(soup, "Ростех")
+        self.assertEqual(result, datetime(2026, 11, 6))
+
     def test_unknown_container_rejected_instead_of_mixing_news(self):
         preview = ArticlePreview(
             source="НедраДВ", title="Первая новость",
