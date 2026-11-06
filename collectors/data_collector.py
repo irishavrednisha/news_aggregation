@@ -1727,7 +1727,7 @@ def _page_date(soup, jsonld):
             if date:
                 return date
 
-    # Локальная дата у заголовка, не случайная дата из соседней новости.
+    # Локальная дата у заголовка, не дата случайной боковой карточки.
     h1 = soup.find("h1")
     if h1:
         for parent in (h1.parent, getattr(h1.parent, "parent", None)):
@@ -1736,6 +1736,26 @@ def _page_date(soup, jsonld):
                     date = _parse_published(node.get_text(" ", strip=True))
                     if date:
                         return date
+        # NEDRADV: основной абзац содержит «5 ноября 2026 года, NEDRADV».
+        # Ищем только до первого заголовка «Читайте также».
+        first_text = []
+        for node in h1.next_elements:
+            if getattr(node, "name", "") in ("h2", "h3"):
+                marker = clean_text(node.get_text(" ", strip=True)).lower()
+                if "читайте также" in marker:
+                    break
+            if getattr(node, "name", "") == "p":
+                first_text.append(clean_text(node.get_text(" ", strip=True)))
+                if len(first_text) >= 3:
+                    break
+        if first_text:
+            combined = " ".join(first_text)
+            match = re.search(
+                r"(?i)(\d{1,2}\s+[а-яё]+\s+\d{4}\s+года),?\s*NEDRADV",
+                combined,
+            )
+            if match:
+                return _parse_published(match.group(1))
     return None
 
 
@@ -1862,60 +1882,69 @@ def collect_news(
     limit_per_source: int = 10,
     session=None,
 ) -> list[Article]:
+    """
+    Собирает новости, не пишет в БД. При session != None заранее
+    пропускает уже известные URL. Один сбой сайта не прерывает весь сбор.
+    """
     all_articles = []
+    seen_urls = set()
 
     for source in sources:
-        if source.source_type == "rss":
-            previews = collect_rss_previews(source, limit=limit_per_source)
-
-        elif source.source_type == "html":
-
-            if source.name == "Росатом":
-                previews = collect_rosatom_previews(source, limit=limit_per_source)
-
-            elif source.name == "Вестник промышленности":
-                previews = collect_vestnikprom_previews(source, limit=limit_per_source)
-
-            elif source.name == "MASHNEWS":
-                previews = collect_mashnews_previews(source, limit=limit_per_source)
-
-            elif source.name == "Коммерсантъ — Промышленность":
-                previews = collect_kommersant_industry_previews(source, limit=limit_per_source)
-
-            elif source.name == "DixiNews — Промышленность":
-                previews = collect_dixinews_industry_previews(source, limit=limit_per_source)
-
-            elif source.name == "НедраДВ":
-                previews = collect_nedradv_previews(source, limit=limit_per_source)
-
-            elif source.name == "ТПП РФ":
-                previews = collect_tpprf_previews(source, limit=limit_per_source)
-
-            elif source.name == "Добывающая промышленность":
-                previews = collect_dprom_previews(source, limit=limit_per_source)
-
+        try:
+            if source.source_type == "rss":
+                previews = collect_rss_previews(source, limit=limit_per_source)
+            elif source.source_type == "html":
+                collectors = {
+                    "Росатом": collect_rosatom_previews,
+                    "Вестник промышленности": collect_vestnikprom_previews,
+                    "MASHNEWS": collect_mashnews_previews,
+                    "Коммерсантъ — Промышленность": collect_kommersant_industry_previews,
+                    "DixiNews — Промышленность": collect_dixinews_industry_previews,
+                    "НедраДВ": collect_nedradv_previews,
+                    "ТПП РФ": collect_tpprf_previews,
+                    "Добывающая промышленность": collect_dprom_previews,
+                }
+                fn = collectors.get(source.name, collect_html_previews)
+                previews = fn(source, limit=limit_per_source)
             else:
-                previews = collect_html_previews(source, limit=limit_per_source)
-
-        else:
+                print(f"Неизвестный тип источника {source.name}: {source.source_type}")
+                continue
+        except Exception as error:
+            print(f"Ошибка списка новостей [{source.name}]: {error}")
             continue
 
         print(f"Кандидатов из источника {source.name}: {len(previews)}")
+        collected = 0
 
         for preview in previews:
-            if session is not None:
-                from database.repository import news_url_exists
+            if not preview.url or preview.url in seen_urls:
+                continue
+            seen_urls.add(preview.url)
 
-                if news_url_exists(session, preview.url):
-                    print(f"Уже есть в БД, пропускаем парсинг: {preview.url}")
+            if session is not None:
+                try:
+                    from database.repository import news_url_exists
+                    if news_url_exists(session, preview.url):
+                        continue
+                except Exception as error:
+                    print(f"Ошибка проверки URL в БД: {error}")
                     continue
 
-            article = build_full_article(preview)
+            try:
+                article = build_full_article(preview)
+            except Exception as error:
+                print(f"Ошибка разбора статьи [{preview.url}]: {error}")
+                continue
 
-            if article.text:
+            if article.text and len(article.text.strip()) >= 140:
                 all_articles.append(article)
+                collected += 1
+            else:
+                print(f"Пустой/короткий материал: {preview.url}")
 
             time.sleep(1)
+
+        print(f"Полных материалов из {source.name}: {collected}")
 
     return all_articles
 
