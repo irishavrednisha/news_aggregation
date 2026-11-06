@@ -1967,6 +1967,9 @@ def _lukoil_published_date(soup):
 
     # Запасной вариант без чтения JS и дат в тексте соседних статей.
     headline = soup.select_one("h1.press-release-page-title")
+    if headline is None:
+        all_headlines = soup.find_all("h1")
+        headline = all_headlines[-1] if all_headlines else None
     if headline:
         for candidate in headline.find_all_next("span", limit=8):
             value = clean_text(candidate.get_text(" ", strip=True))
@@ -2003,6 +2006,8 @@ def _source_specific_published_date(soup, source_name):
             result = _parse_published(node.get_text(" ", strip=True))
             if result:
                 return result
+    if source_name == "ЛУКОЙЛ":
+        return _lukoil_published_date(soup)
     return None
 
 def _lukoil_main_body(soup, title):
