@@ -1536,6 +1536,64 @@ def _article_link_heading(anchor) -> str:
     return clean_text(anchor.get("title", ""))
 
 
+def _legacy_collect_html_previews(source, limit: int) -> list[ArticlePreview]:
+    previews = []
+
+    print("=" * 100)
+    print(f"HTML-источник: {source.name}")
+    print(f"URL: {source.url}")
+
+    if not source.url:
+        return previews
+
+    html = fetch_html(source.url)
+
+    if not html:
+        return previews
+
+    soup = BeautifulSoup(html, "html.parser")
+    seen_urls = set()
+
+    for a in soup.select("a[href]"):
+        title = clean_text(a.get_text(" ", strip=True))
+        href = a.get("href")
+
+        if not title or not href or len(title) < 15:
+            continue
+
+        absolute_url = urljoin(source.url, href)
+
+        if not same_domain(absolute_url, source.url):
+            continue
+
+        if absolute_url in seen_urls:
+            continue
+
+        if not is_probably_article_url(absolute_url):
+            continue
+
+        seen_urls.add(absolute_url)
+
+        previews.append(
+            ArticlePreview(
+                source=source.name,
+                title=normalize_title(title, source.name),
+                url=absolute_url,
+                published_at=None,
+                preview_text="",
+            )
+        )
+
+        if len(previews) >= limit:
+            break
+
+    print(f"Найдено HTML-кандидатов: {len(previews)}")
+
+    return previews
+
+
+
+
 def collect_html_previews(source, limit: int) -> list[ArticlePreview]:
     html = fetch_html(source.url)
     if not html:
@@ -1904,7 +1962,12 @@ def collect_news(
                     "ТПП РФ": collect_tpprf_previews,
                     "Добывающая промышленность": collect_dprom_previews,
                 }
-                fn = collectors.get(source.name, collect_html_previews)
+                fn = collectors.get(source.name)
+                if fn is None:
+                    if source.name in _SOURCE_ARTICLE_PATHS:
+                        fn = collect_html_previews
+                    else:
+                        fn = _legacy_collect_html_previews
                 previews = fn(source, limit=limit_per_source)
             else:
                 print(f"Неизвестный тип источника {source.name}: {source.source_type}")
