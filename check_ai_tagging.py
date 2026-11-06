@@ -22,7 +22,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=10, help="Сколько статей проверить")
     parser.add_argument("--source", type=str, default=None, help="Название источника")
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL)
-    parser.add_argument("--tag-threshold", type=float, default=0.22)
+    parser.add_argument("--tag-threshold", type=float, default=0.12)
     parser.add_argument("--relevance-threshold", type=float, default=0.60)
     parser.add_argument("--max-tags", type=int, default=2)
     parser.add_argument("--output", type=Path, default=None, help="Сохранить результаты в JSON")
