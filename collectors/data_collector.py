@@ -963,9 +963,28 @@ def is_probably_article_url(url: str) -> bool:
 # Сбор превью из RSS
 # =========================
 
-def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
-    previews = []
+INDUSTRY_RSS_MARKERS = (
+    "промышлен", "производств", "завод", "предприяти", "машиностро",
+    "металлург", "станк", "судостро", "верф", "судоремонт", "судн",
+    "авиацион", "авиастро", "самолетостро", "самолётостро",
+    "нефт", "газпром", "газопровод", "газодобы", "газоперераб",
+    "газификац", "газохранил", "горнодобы", "добыч", "месторожд",
+    "рудник", "шахт", "атомн", "реактор", "электроэнерг", "энергетик",
+    "электростанц", "оборудован", "двигател", "инженер", "робот",
+    "автоматизац", "микросхем", "полупроводник", "электроник",
+    "технолог", "инновац", "железнодорож", "нефтехим", "химическ",
+    "логист", "грузоперевоз", "оборонн", "вооружени", "портов",
+)
 
+
+def matches_industrial_rss(title: str, summary: str) -> bool:
+    text = (title + " " + summary).lower().replace("ё", "е")
+    return any(marker in text for marker in INDUSTRY_RSS_MARKERS)
+
+
+def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
+    """Читаем RSS с таймаутом и просматриваем больше записей общих СМИ."""
+    previews = []
     if not source.rss_url:
         return previews
 
@@ -973,36 +992,62 @@ def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
     print(f"RSS-источник: {source.name}")
     print(f"RSS: {source.rss_url}")
 
-    feed = feedparser.parse(source.rss_url)
+    try:
+        response = requests.get(
+            source.rss_url,
+            headers=HEADERS,
+            timeout=(10, 30),
+            verify=_request_ca_bundle(),
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"Ошибка RSS {source.name}: {type(exc).__name__}: {exc}")
+        _record_fetch_problem(
+            source.rss_url, "rss_fetch_error", f"{type(exc).__name__}: {exc}"
+        )
+        return previews
 
+    feed = feedparser.parse(response.content)
     if feed.bozo:
-        print("RSS прочитан с ошибкой или предупреждением:")
-        print(feed.bozo_exception)
+        print(f"Ошибка/предупреждение RSS {source.name}: {feed.bozo_exception}")
+        if not feed.entries:
+            _record_fetch_problem(
+                source.rss_url, "rss_parse_error", str(feed.bozo_exception)
+            )
 
     print(f"Найдено записей: {len(feed.entries)}")
+    general_feed = source.name in {"РИА Новости", "ТАСС", "Интерфакс"}
+    scan_limit = max(300, limit * 30) if general_feed else limit
+    seen_urls = set()
 
-    for entry in feed.entries[:limit]:
+    for entry in feed.entries[:scan_limit]:
         title = clean_text(entry.get("title", ""))
-        url = entry.get("link", "").strip()
-        published_raw = entry.get("published") or entry.get("updated")
-        published_at = parse_datetime(published_raw)
-        preview_text = extract_rss_text(entry)
-
-        if not title or not url:
+        url = str(entry.get("link", "")).strip()
+        if not title or not url or url in seen_urls:
+            continue
+        if urlparse(url).scheme not in ("http", "https"):
+            continue
+        if not same_domain(url, source.url):
             continue
 
-        previews.append(
-            ArticlePreview(
-                source=source.name,
-                title=normalize_title(title, source.name),
-                url=url,
-                published_at=published_at,
-                preview_text=preview_text,
-            )
-        )
+        preview_text = extract_rss_text(entry)
+        if general_feed and not matches_industrial_rss(title, preview_text):
+            continue
+
+        published_raw = entry.get("published") or entry.get("updated")
+        published_at = _parse_published(published_raw)
+        seen_urls.add(url)
+        previews.append(ArticlePreview(
+            source=source.name,
+            title=normalize_title(title, source.name),
+            url=url,
+            published_at=published_at,
+            preview_text=preview_text,
+        ))
+        if len(previews) >= limit:
+            break
 
     return previews
-
 
 # =========================
 # Специальные сборщики ссылок
