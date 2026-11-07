@@ -181,7 +181,7 @@ def seed_sources(session: Session):
         {
             "name": "РИА Новости",
             "url": "https://ria.ru",
-            "rss_url": "https://ria.ru/export/rss2/index.xml",
+            "rss_url": "https://ria.ru/export/rss2/archive/index.xml",
             "source_type": "rss",
             "is_active": True,
         },
