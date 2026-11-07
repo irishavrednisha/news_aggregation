@@ -2941,6 +2941,9 @@ def collect_news(
     """
     all_articles = []
     seen_urls = set()
+    # У Mil.Press одна и та же публикация доступна на нескольких
+    # доменах. Канонический ключ — путь статьи, а не домен-зеркало.
+    seen_milpress_article_paths = set()
 
     for source in sources:
         stat = {
@@ -3087,6 +3090,16 @@ def collect_news(
                     })
                     continue
 
+                if source.name in MILPRESS_SOURCES:
+                    from urllib.parse import unquote
+                    mirror_key = unquote(urlparse(article.url).path).casefold().rstrip("/")
+                    if mirror_key in seen_milpress_article_paths:
+                        stat["duplicate_milpress"] = (
+                            stat.get("duplicate_milpress", 0) + 1
+                        )
+                        continue
+                    seen_milpress_article_paths.add(mirror_key)
+
                 all_articles.append(article)
                 stat["accepted"] += 1
                 if stat["accepted"] >= limit_per_source:
@@ -3109,6 +3122,8 @@ def collect_news(
                     f"{e['kind']}: {e['url']}" for e in stat["fetch_failures"]
                 )
                 stat["errors"].extend(list(reasons)[:15])
+            elif stat.get("duplicate_milpress"):
+                stat["status"] = "duplicates_only"
             elif stat["candidates"]:
                 stat["status"] = "article_extraction_failed"
             else:
