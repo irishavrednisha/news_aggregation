@@ -227,7 +227,7 @@ class ReactivatedSourcesTests(unittest.TestCase):
                 [source], limit_per_source=1, diagnostics=diagnostics,
             )
         self.assertEqual(len(articles), 1)
-        self.assertIn("Янтарь", articles[0].title)
+        self.assertIn("Янтаре", articles[0].title)
         self.assertEqual(diagnostics["ФлотПром"]["accepted"], 1)
         self.assertEqual(len(diagnostics["ФлотПром"]["filtered_out"]), 2)
 
