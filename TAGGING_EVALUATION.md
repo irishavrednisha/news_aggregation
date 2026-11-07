@@ -83,6 +83,70 @@
 на этих примерах; все улучшения должны подтверждаться независимой
 выборкой новых материалов и содержательной проверкой спорных меток.
 
+## Комбинированный режим: SBERT + проверка главного события
+
+Режим `hybrid` теперь доступен в основном
+`processing/tagger.py`, но **не включён по умолчанию**.
+
+Схема:
+1. Обычный Sentence-BERT вычисляет сходство заголовка и summary
+   с описаниями 18 тегов, учитывает статью и ключевые слова;
+2. обычный порог и максимальный отрыв формируют предварительный
+   набор тегов;
+3. `processing/tag_role_challenger.py` проверяет соответствие тегов
+   именно действию и объекту новости. Например, морские перевозки
+   не тождественны судостроению, а применение готового беспилотника
+   не тождественно его разработке;
+4. при явном сообщении о выпуске или модернизации линии может быть
+   предложен дополнительный тег `технологическое производство`,
+   если его SBERT-оценка не ниже внутреннего экспериментального порога.
+
+**Никакого обучения / обновления весов Sentence-BERT не выполняется.**
+Режим NLI (`NEWS_TAGGER_BACKEND=nli`) также не меняется.
+Сбор новостей не изменяется.
+
+### Сначала проверить без БД и MAX
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_hybrid_tagging_integration.py" -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_tag_role_challenger.py" -v
+
+.\.venv\Scripts\python.exe check_focused_tagging.py benchmarks/synthetic_tagging_120.json --limit 120 --tagger-mode hybrid --min-score 0.38 --output collector_test_results/synthetic_hybrid_audit_120.json
+
+.\.venv\Scripts\python.exe evaluate_tagging.py collector_test_results/synthetic_hybrid_audit_120.json benchmarks/synthetic_tagging_labels_120.csv --include-drafts --output collector_test_results/synthetic_hybrid_evaluation_120.json
+```
+
+Для сравнения на старом реальном наборе можно аналогично указать
+`tagging_benchmark_100.json` и `--tagger-mode hybrid`. Но даже если
+гибрид побеждает на этих 100 статьях, это **не независимая оценка**:
+регулярные выражения обсуждались и корректировались после просмотра
+этой выборки. Для новой выборки исключайте старые URL с помощью
+`--exclude-urls-from tagging_benchmark_100.json`.
+
+### Включение при штатном тэггировании — только осознанно
+
+В окне PowerShell, из которого запускается основной процесс приложения:
+
+```powershell
+$env:NEWS_TAGGER_BACKEND = "hybrid"
+```
+
+Для возврата старого поведения в этом же окне:
+
+```powershell
+$env:NEWS_TAGGER_BACKEND = "legacy"
+```
+
+Это задаёт окружение только для текущего процесса PowerShell и
+процессов, запущенных из него. Проверочный
+`check_focused_tagging.py --tagger-mode hybrid` не меняет
+настройки основного процесса и не публикует ничего в MAX.
+
+**Важное предостережение:** гибридный режим может менять состав тегов
+и статусы `ready/not_for_publication` при реальном запуске приложения.
+До новых независимых проверок используйте его в read-only тестах,
+а не в автоматической публикации.
+
 ## Подготовка
 
 Поместить в корень репозитория два файла, собранных из предыдущих
