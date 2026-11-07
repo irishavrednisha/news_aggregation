@@ -2782,6 +2782,17 @@ def _strip_source_boilerplate(text: str, source_name: str) -> str:
     if not text:
         return ""
 
+    if source_name in MILPRESS_SOURCES:
+        # В HTML после новости размещается постоянная подпись
+        # MilPressWeekly (в слове «интeресные» иногда латинская e).
+        # Удаляем только подтверждённый хвост, не затрагивая тело статьи.
+        text = re.sub(
+            r"\s+Не хотите пропускать инт[еe]ресные материалы\?"
+            r".{0,230}?t\.me/MilPressWeekly\.?\s*$",
+            "", text, count=1, flags=re.I | re.S,
+        )
+        text = re.sub(r"\s+Версия для печати\s*$", "", text, flags=re.I)
+
     if source_name == "Вестник промышленности":
         # В реальном JSON 06.11.2026 три статьи начинаются «Новости.».
         text = re.sub(r"^\s*Новости\.\s+", "", text, count=1, flags=re.I)
@@ -2846,6 +2857,24 @@ def build_full_article(preview: ArticlePreview) -> Article:
     if html:
         soup = BeautifulSoup(html, "html.parser")
         jsonld = _jsonld_article(soup)
+
+        # РИА: диагностика уже загруженной страницы без дополнительных
+        # запросов. Нужна, если RSS отдаёт ссылки, но тело не извлекается.
+        if preview.source == "РИА Новости":
+            audit = _FETCH_AUDIT.get()
+            if audit is not None and len(audit.get("article_probes", [])) < 3:
+                h1_probe = soup.find("h1")
+                audit.setdefault("article_probes", []).append({
+                    "url": preview.url,
+                    "html_chars": len(html),
+                    "visible_text_chars": len(soup.get_text(" ", strip=True)),
+                    "h1": clean_text(h1_probe.get_text(" ", strip=True))[:150] if h1_probe else "",
+                    "jsonld_body_chars": len(str(jsonld.get("articleBody", "") or "")),
+                    "article_nodes": len(soup.select("article")),
+                    "article_body_nodes": len(soup.select("[itemprop='articleBody']")),
+                    "preview_chars": len(preview.preview_text or ""),
+                })
+
         if jsonld.get("headline"):
             title = clean_text(str(jsonld["headline"]))
         elif preview.source == "ЛУКОЙЛ":
@@ -2911,6 +2940,15 @@ def build_full_article(preview: ArticlePreview) -> Article:
         text = clean_text(preview.preview_text)
         text_source = "rss"
     if not text:
+        if preview.source == "РИА Новости":
+            audit = _FETCH_AUDIT.get()
+            if audit is not None and len(audit.get("empty_article_examples", [])) < 5:
+                audit.setdefault("empty_article_examples", []).append({
+                    "url": preview.url,
+                    "rss_title": preview.title,
+                    "rss_summary_chars": len(preview.preview_text or ""),
+                    "html_loaded": bool(html),
+                })
         print(f"Нет достоверного текста, пропуск: {preview.url}")
 
     if preview.source == "Добывающая промышленность":
