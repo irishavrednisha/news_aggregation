@@ -317,7 +317,7 @@ class ReactivatedSourcesTests(unittest.TestCase):
         article = Article(
             source=source.name, title=preview.title, url=preview.url,
             published_at=datetime(2026, 11, 7),
-            text="Зарубежная новость из отраслевого раздела сайта. " * 12,
+            text="Короткий текст.",
             text_source="html",
         )
         diagnostics = {}
