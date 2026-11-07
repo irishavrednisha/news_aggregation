@@ -275,6 +275,72 @@ class ReactivatedSourcesTests(unittest.TestCase):
         self.assertEqual(len(diagnostics["ФлотПром"]["filtered_out"]), 2)
 
 
+    def test_raw_rss_collection_does_not_apply_industrial_or_foreign_filters(self):
+        source = SimpleNamespace(
+            name="ТАСС", url="https://tass.ru",
+            rss_url="https://tass.ru/rss/v2.xml", source_type="rss",
+        )
+        xml = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<rss version="2.0"><channel>'
+            '<item><title>Результаты футбольного матча</title>'
+            '<link>https://tass.ru/sport/100</link></item>'
+            '<item><title>США сообщили о зарубежном заводе</title>'
+            '<link>https://tass.ru/mezhdunarodnaya-panorama/101</link></item>'
+            '</channel></rss>'
+        )
+        with patch(
+            "collectors.data_collector.requests.get",
+            return_value=FakeResponse(xml.encode("utf-8")),
+        ):
+            filtered = collect_rss_previews(source, limit=5)
+            raw = collect_rss_previews(
+                source, limit=5, apply_filters=False,
+            )
+        self.assertEqual(filtered, [])
+        self.assertEqual(len(raw), 2)
+        self.assertEqual(raw[0].title, "Результаты футбольного матча")
+        self.assertIn("США", raw[1].title)
+
+    def test_raw_html_collection_keeps_full_news_without_topic_filtering(self):
+        source = SimpleNamespace(
+            name="Отраслевое.рф", url="https://отраслевое.рф",
+            source_type="html",
+        )
+        preview = ArticlePreview(
+            source=source.name,
+            title="Дайджест зарубежных новостей",
+            url="https://отраслевое.рф/2026/Дайджест39/",
+            published_at=None,
+            preview_text="",
+        )
+        article = Article(
+            source=source.name, title=preview.title, url=preview.url,
+            published_at=datetime(2026, 11, 7),
+            text="Зарубежная новость из отраслевого раздела сайта. " * 12,
+            text_source="html",
+        )
+        diagnostics = {}
+        with (
+            patch(
+                "collectors.data_collector.collect_milpress_previews",
+                return_value=[preview],
+            ),
+            patch(
+                "collectors.data_collector.build_full_article",
+                return_value=article,
+            ),
+            patch("collectors.data_collector.time.sleep"),
+        ):
+            result = collect_news(
+                [source], limit_per_source=2,
+                apply_filters=False, diagnostics=diagnostics,
+            )
+        self.assertEqual(result, [article])
+        self.assertEqual(diagnostics[source.name]["status"], "ok")
+        self.assertNotIn("filtered_out", diagnostics[source.name])
+
+
     def test_ria_uses_larger_verified_archive_feed(self):
         registered = []
         with patch(
