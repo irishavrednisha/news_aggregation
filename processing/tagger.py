@@ -1557,36 +1557,16 @@ def cut_text(text: str, max_chars: int) -> str:
 
 
 def get_cluster_text_for_tagging(session, cluster: Cluster) -> str:
+    """Текст для тэгов: один заголовок, одно summary и реальные статьи.
+
+    Первые две строки — опорный контекст для score_tags_detailed().
+    Не повторяем их искусственно: в SBERT лишние повторы вытесняют
+    важные сведения из статьи при ограничении длины входа.
     """
-    Формирует текст для тематического тегирования кластера.
-
-    Используем не только summary, но и полный текст статей:
-    - заголовок кластера имеет самый большой вес;
-    - summary тоже усиливается, потому что отражает основное событие;
-    - полный текст основной новости даёт отраслевые термины;
-    - остальные новости кластера добавляются как дополнительный контекст.
-
-    Повторение заголовка и summary — простой способ повысить их вес
-    без изменения всей логики score_tags_detailed().
-    """
-
-    parts = []
-
-    if cluster.title:
-        title = cut_text(cluster.title, 500)
-
-        # Заголовок самый важный, поэтому добавляем несколько раз
-        parts.append(title)
-        parts.append(title)
-        parts.append(title)
-
-    if cluster.summary_text:
-        summary = cut_text(cluster.summary_text, 1500)
-
-        # Summary важнее обычного полного текста
-        parts.append(summary)
-        parts.append(summary)
-
+    parts = [
+        cut_text(cluster.title or "", 400),
+        cut_text(cluster.summary_text or "", 900),
+    ]
     news_items = (
         session.query(News)
         .filter(News.cluster_id == cluster.id)
@@ -1597,25 +1577,15 @@ def get_cluster_text_for_tagging(session, cluster: Cluster) -> str:
         )
         .all()
     )
-
     for index, news in enumerate(news_items[:5]):
         if news.title:
-            news_title = cut_text(news.title, 500)
-
-            # Заголовки новостей внутри кластера тоже полезны
-            parts.append(news_title)
-            parts.append(news_title)
-
+            parts.append(cut_text(news.title, 250))
         if news.text:
-            if index == 0 or news.is_primary:
-                # Основную новость берём почти полностью
-                parts.append(cut_text(news.text, 5000))
-            else:
-                # Остальные новости добавляем короче,
-                # чтобы не забить текст повторами и служебными фрагментами
-                parts.append(cut_text(news.text, 2500))
+            parts.append(cut_text(news.text, 2200 if index == 0 else 900))
+    # Заголовок и summary не могут содержать переводов строк: cut_text
+    # нормализует whitespace. Сохраняем две начальные строки даже пустыми.
+    return "\n".join(parts)
 
-    return "\n".join(part for part in parts if part)
 
 def score_tags(text: str) -> list[tuple[str, float]]:
     """
@@ -1779,7 +1749,8 @@ def tag_cluster(
 
         return []
 
-    scored_tags = score_tags_detailed(text)
+    focus_text = f"{cluster.title or ''}\n{cluster.summary_text or ''}"
+    scored_tags = score_tags_detailed(text, focus_text=focus_text)
 
     selected_tags = select_tags_by_score_gap(
         scored_tags=scored_tags,
@@ -1920,33 +1891,111 @@ def keyword_boost_for_tag(text: str, tag: str) -> float:
 
     return min(0.03 * matches, 0.09)
 
-def score_tags_detailed(text: str) -> list[dict]:
-    if not text:
+def score_tags_detailed(
+    text: str,
+    focus_text: str | None = None,
+) -> list[dict]:
+    """Тэги по смыслу главного события и подтверждению в статье.
+
+    У модели SBERT длина входа ограничена; один embedding для
+    многокилобайтной строки почти не учитывает её конец. Поэтому
+    заголовок + summary и тело оцениваются ОТДЕЛЬНО. Ключевые слова
+    во вступлении значимее случайных упоминаний в длинной статье.
+    Если focus_text не передан, сохраняется совместимый старый API.
+    """
+    if not text and not focus_text:
         return []
 
-    text_embedding = build_embedding(text)
-    tag_embeddings = get_tag_embeddings()
+    if focus_text:
+        focus = cut_text(focus_text, 1050)
+        lines = (text or "").split("\n")
+        # get_cluster_text_for_tagging() располагает title/summary
+        # в первых двух строках. Остальные строки — тексты новостей.
+        body = cut_text("\n".join(lines[2:]), 2300) if len(lines) >= 3 else ""
+        if not body:
+            body = cut_text(text, 1800)
+    else:
+        focus = cut_text(text, 1050)
+        body = ""
 
-    result = []
+    if not focus:
+        return []
+    focus_vector = build_embedding(focus)
+    body_vector = build_embedding(body) if body else None
+    tag_embeddings = get_tag_embeddings()
+    results = []
+
+    # Лемматизацию проводим один раз на каждый сегмент, а не внутри
+    # 18 * N списков ключевых слов для каждого тега.
+    normalized_focus = lemmatize_text(focus)
+    normalized_body = lemmatize_text(body) if body else ""
 
     for tag, tag_embedding in tag_embeddings.items():
-        embedding_score = cosine_sim(text_embedding, tag_embedding)
-        boost = keyword_boost_for_tag(text, tag)
-        penalty = keyword_penalty_for_tag(text, tag)
+        focus_similarity = cosine_sim(focus_vector, tag_embedding)
+        body_similarity = (
+            cosine_sim(body_vector, tag_embedding)
+            if body_vector is not None else focus_similarity
+        )
+        embedding_score = (
+            0.78 * focus_similarity + 0.22 * body_similarity
+            if body_vector is not None else focus_similarity
+        )
 
+        positive = TAG_KEYWORDS.get(tag, [])
+        negative = TAG_NEGATIVE_KEYWORDS.get(tag, [])
+        focus_matches = _count_prepared_keywords(normalized_focus, positive)
+        body_matches = _count_prepared_keywords(normalized_body, positive)
+        focus_negative = _count_prepared_keywords(normalized_focus, negative)
+        body_negative = _count_prepared_keywords(normalized_body, negative)
+
+        boost = min(0.026 * focus_matches, 0.078) + min(0.006 * body_matches, 0.018)
+        penalty = min(0.035 * focus_negative, 0.105) + min(0.006 * body_negative, 0.018)
         final_score = embedding_score + boost - penalty
 
-        result.append({
+        results.append({
             "tag": tag,
             "embedding_score": embedding_score,
+            "focus_similarity": focus_similarity,
+            "body_similarity": body_similarity,
             "keyword_boost": boost,
             "keyword_penalty": penalty,
+            "focus_matches": focus_matches,
+            "body_matches": body_matches,
             "final_score": final_score,
         })
 
-    result.sort(key=lambda item: item["final_score"], reverse=True)
+    results.sort(key=lambda item: item["final_score"], reverse=True)
+    return results
 
-    return result
+
+def _count_prepared_keywords(normalized_text: str, keywords: list[str]) -> int:
+    """Совпадения полных слов/фраз, а не подстрок чужих терминов.
+
+    Например, «газ» не должен совпадать со словом «газета».
+    """
+    if not normalized_text:
+        return 0
+
+    count = 0
+    for keyword in keywords:
+        normalized = _normalize_tag_keyword(keyword)
+        if not normalized:
+            continue
+        if re.search(
+            r"(?<![а-яa-z0-9])" + re.escape(normalized) + r"(?![а-яa-z0-9])",
+            normalized_text,
+        ):
+            count += 1
+    return count
+
+
+from functools import lru_cache
+
+
+@lru_cache(maxsize=4096)
+def _normalize_tag_keyword(keyword: str) -> str:
+    return lemmatize_text(keyword)
+
 
 def select_tags_by_score_gap(
         scored_tags: list[dict],
