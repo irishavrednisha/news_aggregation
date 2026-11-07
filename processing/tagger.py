@@ -1679,6 +1679,22 @@ def tag_cluster(
 
         return []
 
+    # Отрасль может присутствовать только как фон (ОСК провела
+    # фестиваль, акции металлургической компании и т. п.).
+    # Не назначаем тематические теги событию другого типа.
+    # Это проверка главного события только по заголовку;
+    # новости не удаляются, этап сбора не меняется.
+    from processing.tagging_event_guard import nonindustrial_event_reason
+    event_reason = nonindustrial_event_reason(cluster.title or "")
+    if event_reason:
+        cluster.tags = None
+        cluster.status = "not_for_publication"
+        session.commit()
+        if debug:
+            print(f"Кластер #{cluster.id}: теги не назначены; "
+                  f"основное событие не промышленное ({event_reason})")
+        return []
+
     # Экспериментальная NLI-классификация: AI оценивает смысл
     # заголовка + summary и затем независимо 18 тематик.
     # Без подтверждённых тегов публикации нет.
