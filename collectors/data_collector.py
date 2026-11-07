@@ -2632,6 +2632,28 @@ def _extract_main_text(soup, source_name, title, jsonld):
     Для НедраДВ НЕ используем запасной широкий поиск: там он
     гарантированно смешивает несколько соседних публикаций.
     """
+    if source_name in MILPRESS_SOURCES:
+        # Реальные страницы Mil.Press имеют articleBody, где только
+        # первый абзац размечен <p>, а продолжение идёт текстовыми
+        # узлами в <div>. Извлечение только <p> теряло большую часть
+        # новости. Контейнер articleBody ограничивает нас статьёй.
+        for block in soup.select("[itemprop='articleBody']")[:2]:
+            isolated = BeautifulSoup(str(block), "html.parser")
+            for noise in isolated.select(
+                "nav,aside,footer,script,style,"
+                "[class*='related'],[class*='recommend'],"
+                "[class*='share'],[class*='social']"
+            ):
+                noise.decompose()
+            text = clean_text(isolated.get_text(" ", strip=True))
+            if text and len(text) >= 200:
+                return text
+        # Старые Mil.Press шаблоны без itemprop.
+        for block in soup.select("article.detail")[:2]:
+            text = _article_paragraphs(block, title)
+            if len(text) >= 200:
+                return text
+
     if source_name == "НедраДВ":
         return extract_text_nedradv(soup, title=title)
     if source_name == "ЛУКОЙЛ":
