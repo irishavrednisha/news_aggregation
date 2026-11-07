@@ -1743,8 +1743,8 @@ def tag_cluster(
                 print(f"  {tag}: {score:.3f}")
         return prediction.tags
 
-    if backend != "legacy":
-        raise ValueError("NEWS_TAGGER_BACKEND должен быть legacy или nli")
+    if backend not in ("legacy", "hybrid"):
+        raise ValueError("NEWS_TAGGER_BACKEND должен быть legacy, hybrid или nli")
 
     text = get_cluster_text_for_tagging(session, cluster)
 
@@ -1774,6 +1774,33 @@ def tag_cluster(
         max_tags=max_tags,
         max_gap_from_best=0.05
     )
+
+    # Гибрид: Sentence-BERT остаётся источником всех 18 оценок.
+    # Экспериментальный второй этап проверяет, соответствует ли
+    # отрасль конкретному событию и объекту заголовка/summary.
+    # Режим включается явно через NEWS_TAGGER_BACKEND=hybrid;
+    # legacy и NLI сохраняют прежнее поведение. Модель не обучается.
+    if backend == "hybrid":
+        from processing.tag_role_challenger import candidate_tags
+        legacy_tags = list(selected_tags)
+        decision = candidate_tags(
+            {
+                "title": cluster.title or "",
+                "summary_used": cluster.summary_text or "",
+                "tags": legacy_tags,
+                "ranked": scored_tags,
+            },
+            min_score=min_score,
+            gap=0.05,
+            max_tags=max_tags,
+        )
+        selected_tags = decision["tags"]
+        if debug:
+            print(f"Hybrid: SBERT={legacy_tags}; "
+                  f"после проверки события={selected_tags}; "
+                  f"отклонены={decision['rejected_categories']}; "
+                  f"производство={decision['production_process']}")
+
     # Проверка связи с РФ уже выполнена выше и завершает функцию.
     # Не перезаписываем статус повторным блоком.
     if selected_tags:
