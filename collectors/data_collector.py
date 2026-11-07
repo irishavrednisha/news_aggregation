@@ -2662,6 +2662,33 @@ def extract_text_kommersant(soup, title: str | None = None) -> str:
     return clean_text(" ".join(parts))
 
 
+def _extract_ria_article_text(soup) -> str:
+    """Извлекает основной текст РИА из div.article__text без меню сайта.
+
+    РИА размечает текстовые блоки div, а не тегами <article>/<p>.
+    Не используем все параграфы страницы: там много меню и рекомендаций.
+    """
+    # Ограничиваемся телом статьи, если контейнер присутствует.
+    body = soup.select_one(".article__body")
+    root = body if body is not None else soup
+    parts, seen = [], set()
+    for block in root.select(".article__text"):
+        if block.find_parent(
+            class_=re.compile(
+                r"article__(?:related|inject|recommend|advert|sidebar|promo)",
+                re.I,
+            )
+        ):
+            continue
+        paragraph = clean_text(block.get_text(" ", strip=True))
+        if len(paragraph) < 20 or paragraph in seen:
+            continue
+        seen.add(paragraph)
+        parts.append(paragraph)
+    text = clean_text(" ".join(parts))
+    return text if len(text) >= 60 else ""
+
+
 def _extract_main_text(soup, source_name, title, jsonld):
     """
     1. JSON-LD, если автор сайта указал articleBody.
@@ -2692,6 +2719,11 @@ def _extract_main_text(soup, source_name, title, jsonld):
             text = _article_paragraphs(block, title)
             if len(text) >= 200:
                 return text
+
+    if source_name == "РИА Новости":
+        text = _extract_ria_article_text(soup)
+        if text:
+            return text
 
     if source_name == "НедраДВ":
         return extract_text_nedradv(soup, title=title)
@@ -2873,6 +2905,8 @@ def build_full_article(preview: ArticlePreview) -> Article:
                     "jsonld_body_chars": len(str(jsonld.get("articleBody", "") or "")),
                     "article_nodes": len(soup.select("article")),
                     "article_body_nodes": len(soup.select("[itemprop='articleBody']")),
+                    "ria_text_blocks": len(soup.select(".article__text")),
+                    "ria_text_chars": sum(len(x.get_text(" ", strip=True)) for x in soup.select(".article__text")),
                     "preview_chars": len(preview.preview_text or ""),
                 })
 
