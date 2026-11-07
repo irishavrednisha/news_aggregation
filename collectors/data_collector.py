@@ -942,11 +942,18 @@ def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
 # =========================
 
 def collect_milpress_previews(source, limit: int) -> list[ArticlePreview]:
-    """Только статьи за текущий год, не категории и не страницы архива."""
-    match = re.search(r"/(20\d{2})(?:/|$)", source.url)
-    year = int(match.group(1)) if match else datetime.now().year
+    """Только статьи текущего года, не категории и не страницы архива."""
+    year = datetime.now().year
+    listing_url = re.sub(r"/20\d{2}/?$", f"/{year}/", source.url)
+    if listing_url != source.url:
+        # Не меняем ORM-модель и адрес источника в PostgreSQL.
+        from types import SimpleNamespace
+        listing_source = SimpleNamespace(name=source.name, url=listing_url)
+    else:
+        listing_source = source
+
     return collect_links_by_path(
-        source=source,
+        source=listing_source,
         limit=limit,
         required_prefix=f"/{year}/",
         exclude_exact=f"/{year}/",
