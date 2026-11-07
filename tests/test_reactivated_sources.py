@@ -21,6 +21,7 @@ from collectors.data_collector import (
     is_milpress_consumer_news,
     collect_rss_previews,
     fetch_html,
+    _strip_source_boilerplate,
 )
 from database.repository import seed_sources
 
@@ -273,6 +274,27 @@ class ReactivatedSourcesTests(unittest.TestCase):
         self.assertIn("Янтаре", articles[0].title)
         self.assertEqual(diagnostics["ФлотПром"]["accepted"], 1)
         self.assertEqual(len(diagnostics["ФлотПром"]["filtered_out"]), 2)
+
+
+    def test_milpress_removes_technical_footer_but_preserves_article(self):
+        body = (
+            "На заводе установили роботизированную линию резки металла. "
+            "Оборудование ускоряет подготовку деталей для судостроения."
+        )
+        footer = (
+            " Не хотите пропускать интeресные материалы? Раз в неделю "
+            "публикуем дайджест с главными новостями в Telegram-канале: "
+            "t.me/MilPressWeekly."
+        )
+        for name in ("Военное.рф", "ФлотПром", "Отраслевое.рф", "ФлотКом"):
+            with self.subTest(source=name):
+                self.assertEqual(
+                    _strip_source_boilerplate(body + footer, name), body,
+                )
+                self.assertEqual(
+                    _strip_source_boilerplate(body + " Версия для печати", name),
+                    body,
+                )
 
 
     def test_raw_rss_collection_does_not_apply_industrial_or_foreign_filters(self):
