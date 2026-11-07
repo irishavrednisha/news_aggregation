@@ -89,6 +89,9 @@ def main():
             "full_html_texts": sum(e["has_full_html_text"] for e in examples),
             "dated": sum(e["published_at"] is not None for e in examples),
             "status": diagnostics.get(source.name, {}).get("status", "unknown"),
+            "short_or_empty": diagnostics.get(source.name, {}).get("short_or_empty", 0),
+            "article_probes": diagnostics.get(source.name, {}).get("article_probes", []),
+            "empty_article_examples": diagnostics.get(source.name, {}).get("empty_article_examples", []),
             "errors": diagnostics.get(source.name, {}).get("errors", [])[:5],
             "fetch_failures": diagnostics.get(source.name, {}).get(
                 "fetch_failures", []
@@ -125,6 +128,10 @@ def main():
                 f"published_at={example['published_at']}, "
                 f"has_full_html_text={example['has_full_html_text']}"
             )
+        for probe in stat["article_probes"][:2]:
+            print(f"    PAGE PROBE: {probe}")
+        for empty in stat["empty_article_examples"][:2]:
+            print(f"    NO TEXT: {empty}")
         for error in stat["errors"][:2]:
             print(f"    ERROR: {error}")
     print(f"Report: {destination}")
