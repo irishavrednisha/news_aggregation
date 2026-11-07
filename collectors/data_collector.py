@@ -982,6 +982,25 @@ def matches_industrial_rss(title: str, summary: str) -> bool:
     return any(marker in text for marker in INDUSTRY_RSS_MARKERS)
 
 
+GENERAL_RSS_FOREIGN_SECTIONS = (
+    "/world/", "/mezhdunarodnaya-panorama/",
+)
+
+GENERAL_RSS_RUSSIA_CONTEXT = re.compile(
+    r"\b(?:росси\w*|рф|отечественн\w*|росатом\w*|"
+    r"ростех\w*|роснефт\w*|газпром\w*|оск|"
+    r"норникел\w*|лукойл\w*)\b", re.IGNORECASE,
+)
+
+
+def is_foreign_general_rss(url: str, title: str, summary: str) -> bool:
+    """Международный сюжет без российской связи не относим к промновостям РФ."""
+    path = urlparse(url).path.lower()
+    if not any(path.startswith(section) for section in GENERAL_RSS_FOREIGN_SECTIONS):
+        return False
+    return GENERAL_RSS_RUSSIA_CONTEXT.search(title + " " + summary) is None
+
+
 def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
     """Читаем RSS с таймаутом и просматриваем больше записей общих СМИ."""
     previews = []
@@ -1032,6 +1051,8 @@ def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
 
         preview_text = extract_rss_text(entry)
         if general_feed and not matches_industrial_rss(title, preview_text):
+            continue
+        if general_feed and is_foreign_general_rss(url, title, preview_text):
             continue
 
         published_raw = entry.get("published") or entry.get("updated")
