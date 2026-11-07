@@ -40,6 +40,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=2)
     parser.add_argument(
+        "--source", action="append", choices=NAMES,
+        help="Проверить только указанный источник (можно повторить)",
+    )
+    parser.add_argument(
         "--output", default="collector_test_results/reactivated_sources_live.json"
     )
     args = parser.parse_args()
@@ -47,6 +51,9 @@ def main():
         parser.error("--limit должен быть от 1 до 5")
 
     sources = configured_sources()
+    if args.source:
+        requested = set(args.source)
+        sources = [source for source in sources if source.name in requested]
     diagnostics = {}
     articles = collect_news(
         sources=sources,
