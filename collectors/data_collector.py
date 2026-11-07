@@ -3019,6 +3019,16 @@ def collect_news(
                         print(message)
                         continue
 
+                # У общих СМИ одна и та же CDN-защита обычно блокирует
+                # все статьи. После подтверждённой пустой страницы
+                # не тратим десятки браузерных запросов на остальные.
+                if source.name in {"РИА Новости", "ТАСС"} and any(
+                    item.get("kind") == "site_shell_or_access_denied"
+                    for item in stat["fetch_failures"]
+                ):
+                    print(f"{source.name}: ограничение доступа к статьям; останавливаем запросы")
+                    break
+
                 try:
                     article = build_full_article(preview)
                 except Exception as error:
