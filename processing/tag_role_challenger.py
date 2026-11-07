@@ -10,12 +10,34 @@ import re
 from processing.tagging_event_guard import nonindustrial_event_reason
 
 SHIP_CUE = re.compile(r"\b(?:судостроен\w*|кораблестроен\w*|верф\w*|судоремонт\w*|судозавод\w*)\b")
-SHIP_VESSEL = r"(?:корабл\w*|судн\w*|эсмин\w*|фрегат\w*|корвет\w*|ледокол\w*|танкер\w*|траулер\w*|газовоз\w*|тральщик\w*|подводн\w*\s+лодк\w*)"
-SHIP_EVENT = r"(?:постро\w*|строительств\w*|разработ\w*|проектир\w*|концепт\w*|производ\w*|выпуск\w*|спуск\w*|заклад\w*|ремонт\w*|модернизац\w*|модернизир\w*)"
+SHIP_VESSEL = r"(?:корабл\w*|судн\w*|эсмин\w*|фрегат\w*|корвет\w*|ледокол\w*|танкер\w*|траулер\w*|газовоз\w*|катер\w*|тральщик\w*|подводн\w*\s+лодк\w*)"
+SHIP_EVENT = r"(?:постро\w*|строительств\w*|разработ\w*|спроект\w*|проектир\w*|концепт\w*|производ\w*|выпуск\w*|спуск\w*|заклад\w*|ремонт\w*|модернизац\w*|модернизир\w*)"
 SHIP_COMBINED = re.compile(rf"(?:{SHIP_EVENT}.{{0,65}}{SHIP_VESSEL}|{SHIP_VESSEL}.{{0,65}}{SHIP_EVENT})")
-AIRCRAFT_OBJECT = re.compile(r"(?:самолет\w*|вертолет\w*|авиационн\w*|авиастроен\w*|авиадвигател\w*|ил-\d+|су-\d+|пд-\d+|мс-\d+|ssj|sj-100|беспилотник\w*|бпла)")
-AIRCRAFT_PRODUCTION = re.compile(r"(?:разработ\w*|изготов\w*|выпуст\w*|производ\w*|постав\w*|создал\w*|испыт\w*|сертифицир\w*|модерниз\w*)")
-DRONE_MANUFACTURING = re.compile(r"(?:производ\w*|изготов\w*|разработ\w*).{0,28}(?:беспилотник\w*|бпла)")
+# A drone can be called either "беспилотник", "БПЛА" or "беспилотный
+# летательный аппарат". Separate its manufacturing/development from mere use.
+DRONE_PLATFORM = r"(?:беспилотник\w*|бпла|беспилотн\w*\s+(?:летательн\w*\s+)?аппарат\w*)"
+AIRCRAFT_OBJECT = re.compile(
+    rf"(?:самолет\w*|вертолет\w*|авиационн\w*|авиастроен\w*|"
+    rf"авиадвигател\w*|ил-\d+|су-\d+|пд-\d+|мс-\d+|ssj|sj-100|{DRONE_PLATFORM})"
+)
+AIRCRAFT_PRODUCTION = re.compile(
+    r"(?:разработ\w*|изготов\w*|выпуст\w*|производ\w*|постав\w*|"
+    r"создал\w*|создан\w*|созда\w*|спроект\w*|испыт\w*|"
+    r"сертифицир\w*|модерниз\w*)"
+)
+DRONE_DEVELOPMENT = (
+    r"(?:производ\w*|изготов\w*|разработ\w*|"
+    r"создан\w*|созда\w*|спроект\w*|испыт\w*)"
+)
+DRONE_MANUFACTURING = re.compile(
+    rf"(?:{DRONE_DEVELOPMENT}.{{0,90}}{DRONE_PLATFORM}|"
+    rf"{DRONE_PLATFORM}.{{0,90}}{DRONE_DEVELOPMENT})"
+)
+# A report on *defending against* UAVs isn't a report on aircraft design.
+DRONE_COUNTERMEASURES = re.compile(
+    rf"(?:борьб\w*\s+с|защит\w*.{{0,25}}\s+от|"
+    rf"средств\w*\s+против|перехват\w*.{{0,25}})\s*{DRONE_PLATFORM}"
+)
 
 # A round-up of several unrelated events does not have one industry topic.
 # This is a tagging-only rule; the collector still saves the full material.
@@ -58,8 +80,12 @@ def aviation_production_evidence(title: str, summary: str) -> bool:
     if (re.search(r"ракет\w*|космодром\w*", text)
             and not re.search(r"самолет\w*|авиационн\w*|вертолет\w*", text)):
         return False
-    if "беспилотник" in text or "бпла" in text:
-        return bool(DRONE_MANUFACTURING.search(text))
+    if re.search(DRONE_PLATFORM, text):
+        # Do not mistake a counter-UAV radar or field observation for
+        # a new aircraft. Check the manufacturing/development action.
+        if DRONE_COUNTERMEASURES.search(normalized(title)):
+            return False
+        return bool(DRONE_MANUFACTURING.search(normalized(title)))
     return bool(AIRCRAFT_PRODUCTION.search(text))
 
 
