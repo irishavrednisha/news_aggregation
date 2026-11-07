@@ -390,5 +390,57 @@ class ReactivatedSourcesTests(unittest.TestCase):
                     self.assertEqual(fetch_html(url), "")
 
 
+    def test_milpress_mirrors_do_not_duplicate_same_article(self):
+        sources = [
+            SimpleNamespace(
+                name=name, url=base, rss_url=None, source_type="html",
+            )
+            for name, base in (
+                ("Военное.рф", "https://военное.рф/2026/"),
+                ("ФлотПром", "https://flotprom.ru/2026/"),
+            )
+        ]
+
+        def previews(source, limit):
+            return [
+                ArticlePreview(
+                    source=source.name,
+                    title='На "Янтаре" автоматизируют линию резки металла',
+                    url=source.url + "Янтарь5/",
+                    published_at=datetime(2026, 11, 6),
+                    preview_text="",
+                )
+            ]
+
+        def article(preview):
+            return Article(
+                source=preview.source, title=preview.title,
+                url=preview.url, published_at=preview.published_at,
+                text="На заводе Янтарь ОСК в России введена линия резки металла. " * 8,
+                text_source="html",
+            )
+
+        with (
+            patch(
+                "collectors.data_collector.collect_milpress_previews",
+                side_effect=previews,
+            ),
+            patch(
+                "collectors.data_collector.build_full_article",
+                side_effect=article,
+            ),
+            patch("collectors.data_collector.time.sleep"),
+        ):
+            diagnostics = {}
+            collected = collect_news(
+                sources, limit_per_source=1, diagnostics=diagnostics,
+            )
+
+        self.assertEqual(len(collected), 1)
+        self.assertEqual(collected[0].source, "Военное.рф")
+        self.assertEqual(diagnostics["ФлотПром"]["duplicate_milpress"], 1)
+        self.assertEqual(diagnostics["ФлотПром"]["status"], "duplicates_only")
+
+
 if __name__ == "__main__":
     unittest.main()
