@@ -13,6 +13,7 @@ import urllib3
 from bs4 import BeautifulSoup
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
+from datetime import datetime
 from urllib.parse import urlparse, urljoin
 from playwright.sync_api import sync_playwright
 
@@ -102,6 +103,61 @@ def extract_rss_text(entry) -> str:
             return normalize_article_text(content[0].get("value", ""))
 
     return ""
+
+
+
+MONTH_NUMBERS = {
+    "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
+    "мая": 5, "июня": 6, "июля": 7, "августа": 8,
+    "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+}
+
+
+def extract_published_at(soup: BeautifulSoup):
+    """Дата из метаданных или строки даты рядом с заголовком (Mil.Press)."""
+    for selector, attr in [
+        ('meta[property="article:published_time"]', "content"),
+        ('meta[itemprop="datePublished"]', "content"),
+        ('meta[name="pubdate"]', "content"),
+        ('time[datetime]', "datetime"),
+    ]:
+        tag = soup.select_one(selector)
+        if not tag or not tag.get(attr):
+            continue
+        raw = tag.get(attr).strip()
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                return parsedate_to_datetime(raw)
+            except (TypeError, ValueError):
+                pass
+
+    # На сайтах Mil.Press дата обычно расположена непосредственно после h1.
+    h1 = soup.find("h1")
+    if h1:
+        containers = [h1.parent, h1.parent.parent if h1.parent else None]
+        pattern = re.compile(
+            r"\\b([0-3]?\\d)\\s+(января|февраля|марта|апреля|мая|июня|июля|"
+            r"августа|сентября|октября|ноября|декабря)\\s+(20\\d{2})"
+            r"\\s+в\\s+([0-2]?\\d):([0-5]\\d)\\b",
+            re.IGNORECASE,
+        )
+        for container in containers:
+            if container is None:
+                continue
+            context = container.get_text(" ", strip=True)[:600]
+            match = pattern.search(context)
+            if match:
+                day, month, year, hour, minute = match.groups()
+                try:
+                    return datetime(
+                        int(year), MONTH_NUMBERS[month.lower()],
+                        int(day), int(hour), int(minute)
+                    )
+                except ValueError:
+                    pass
+    return None
 
 
 # =========================
@@ -836,6 +892,18 @@ def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
 # Специальные сборщики ссылок
 # =========================
 
+def collect_milpress_previews(source, limit: int) -> list[ArticlePreview]:
+    """Только статьи за текущий год, не категории и не страницы архива."""
+    match = re.search(r"/(20\\d{2})(?:/|$)", source.url)
+    year = int(match.group(1)) if match else datetime.now().year
+    return collect_links_by_path(
+        source=source,
+        limit=limit,
+        required_prefix=f"/{year}/",
+        exclude_exact=f"/{year}/",
+    )
+
+
 def collect_rosatom_previews(source, limit: int) -> list[ArticlePreview]:
     return collect_links_by_path(
         source=source,
@@ -879,13 +947,14 @@ def collect_links_by_path(
 
         path = get_path(absolute_url)
 
-        if not path.startswith(required_prefix.rstrip("/")):
+        prefix = required_prefix.rstrip("/")
+        if prefix != "/" and not (path == prefix or path.startswith(prefix + "/")):
             continue
 
         if exclude_exact and path == exclude_exact.rstrip("/"):
             continue
 
-        if absolute_url in seen_urls:
+        if absolute_url in seen_urls or is_bad_url(absolute_url):
             continue
 
         title = extract_link_title(a)
@@ -1589,11 +1658,14 @@ def build_full_article(preview: ArticlePreview) -> Article:
 
     full_title = preview.title
     full_text = ""
+    published_at = preview.published_at
     text_source = "html"
 
     if html:
         soup = BeautifulSoup(html, "html.parser")
         domain = get_domain(preview.url)
+        if published_at is None:
+            published_at = extract_published_at(soup)
 
         if "lukoil.ru" in domain:
             page_title = extract_lukoil_title(
@@ -1672,7 +1744,7 @@ def build_full_article(preview: ArticlePreview) -> Article:
         source=preview.source,
         title=normalize_title(full_title, preview.source),
         url=preview.url,
-        published_at=preview.published_at,
+        published_at=published_at,
         text=full_text,
         text_source=text_source,
     )
@@ -1690,7 +1762,10 @@ def collect_news(
 
         elif source.source_type == "html":
 
-            if source.name == "Росатом":
+            if source.name in {"Военное.рф", "ФлотПром", "Отраслевое.рф", "ФлотКом"}:
+                previews = collect_milpress_previews(source, limit=limit_per_source)
+
+            elif source.name == "Росатом":
                 previews = collect_rosatom_previews(source, limit=limit_per_source)
 
             elif source.name == "Вестник промышленности":
