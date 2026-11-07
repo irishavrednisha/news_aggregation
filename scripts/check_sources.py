@@ -55,6 +55,12 @@ def check_article(article, expected_source):
         errors.append("invalid URL")
     if len(article.text.strip()) < 250:
         errors.append("body shorter than 250 chars")
+    if article.text_source != "html":
+        errors.append("full HTML text unavailable (RSS preview fallback)")
+    if article.published_at is None:
+        errors.append("publication date missing")
+    if "новости по теме" in article.text.lower():
+        errors.append("related-news block leaked into text")
     if not is_valid_article(article):
         errors.append("rejected by topic_filter")
     return errors
@@ -88,7 +94,7 @@ def main():
             failures += 1
             continue
 
-        print(f"\\n{'=' * 88}\\nCHECK: {name} ({source.source_type})\\n{'=' * 88}")
+        print(f"\n{'=' * 88}\nCHECK: {name} ({source.source_type})\n{'=' * 88}")
         try:
             articles = collect_news([source], limit_per_source=args.limit, session=None)
         except Exception as exc:
@@ -119,7 +125,7 @@ def main():
         if valid == 0:
             failures += 1
 
-    print(f"\\nDiagnostics completed: {len(names) - failures}/{len(names)} sources passed.")
+    print(f"\nDiagnostics completed: {len(names) - failures}/{len(names)} sources passed.")
     return 1 if failures else 0
 
 
