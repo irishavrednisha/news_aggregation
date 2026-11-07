@@ -5,6 +5,7 @@ Usage:
 
 Does not connect to PostgreSQL, change source flags or publish to MAX.
 Only loads public web pages and writes a local JSON diagnostic report.
+No thematic, foreign-story or editorial filters are applied in this mode.
 """
 import argparse
 import json
@@ -15,7 +16,6 @@ from unittest.mock import patch
 
 from collectors.data_collector import collect_news
 from database.repository import seed_sources
-from processing.topic_filter import filter_articles
 
 
 NAMES = (
@@ -61,9 +61,8 @@ def main():
         session=None,
         diagnostics=diagnostics,
         allow_unverified_tls=False,
+        apply_filters=False,
     )
-    filtered = filter_articles(articles)
-    accepted_urls = {article.url for article in filtered}
     summary = {}
     for source in sources:
         examples = []
@@ -79,18 +78,17 @@ def main():
                 ),
                 "text_length": len(article.text or ""),
                 "text_source": article.text_source,
-                "passed_filter": article.url in accepted_urls,
+                "has_full_html_text": article.text_source == "html",
+                "text": article.text or "",
                 "text_sample": (article.text or "")[:350],
             })
         summary[source.name] = {
             "configured_active": source.is_active,
             "candidates": diagnostics.get(source.name, {}).get("candidates", 0),
             "collected": len(examples),
-            "passed_filter": sum(e["passed_filter"] for e in examples),
+            "full_html_texts": sum(e["has_full_html_text"] for e in examples),
             "dated": sum(e["published_at"] is not None for e in examples),
             "status": diagnostics.get(source.name, {}).get("status", "unknown"),
-            "skipped_by_filter": len(diagnostics.get(source.name, {}).get("filtered_out", [])),
-            "filtered_reasons": diagnostics.get(source.name, {}).get("filtered_out", [])[:10],
             "errors": diagnostics.get(source.name, {}).get("errors", [])[:5],
             "fetch_failures": diagnostics.get(source.name, {}).get(
                 "fetch_failures", []
@@ -101,6 +99,8 @@ def main():
     report = {
         "checked_at_utc": datetime.now(timezone.utc).isoformat(),
         "read_only": True,
+        "filtering_applied": False,
+        "full_text_included": True,
         "limit_per_source": args.limit,
         "results": summary,
     }
@@ -115,18 +115,16 @@ def main():
     for name, stat in summary.items():
         print(
             f"{name}: status={stat['status']}, candidates={stat['candidates']}, "
-            f"collected={stat['collected']}, filtered={stat['passed_filter']}, "
-            f"dated={stat['dated']}, skipped={stat['skipped_by_filter']}"
+            f"collected={stat['collected']}, full_html_texts={stat['full_html_texts']}, "
+            f"dated={stat['dated']}"
         )
         for example in stat["examples"]:
             print(f"  - {example['title']} | {example['url']}")
             print(
                 f"    chars={example['text_length']}, "
                 f"published_at={example['published_at']}, "
-                f"passed_filter={example['passed_filter']}"
+                f"has_full_html_text={example['has_full_html_text']}"
             )
-        for excluded in stat["filtered_reasons"][:4]:
-            print(f"    SKIPPED: {excluded['reason']} | {excluded['url']}")
         for error in stat["errors"][:2]:
             print(f"    ERROR: {error}")
     print(f"Report: {destination}")
