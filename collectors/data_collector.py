@@ -1105,12 +1105,23 @@ MILPRESS_RUSSIA_CONTEXT = re.compile(
 
 
 def clearly_foreign_milpress_article(title: str, text: str) -> bool:
-    """Отсекаем явный зарубежный заголовок только без российской связи."""
-    if not MILPRESS_FOREIGN_TITLE.search((title or "").strip()):
-        return False
-    context = f"{title} {(text or '')[:1400]}"
+    """Для Mil.Press допускаем к публикации только российский контекст.
+
+    Эти четыре сайта одновременно отображают зарубежные новости ВПК.
+    Публикации без проверяемой связи с Россией не должны попадать
+    в дайджест промышленных новостей России.
+    """
+    context = f"{title or ''} {(text or '')[:1800]}"
     return MILPRESS_RUSSIA_CONTEXT.search(context) is None
 
+
+def is_milpress_consumer_news(title: str) -> bool:
+    """Заголовочные сюжеты о бытовых ценах, а не производстве."""
+    return bool(re.search(
+        r"\b(?:дорожа\w*|подорожа\w*|цены\s+на)\s+"
+        r"(?:куриц\w*|яйц\w*|мяс\w*|хлеб\w*|молок\w*)\b",
+        title or "", re.IGNORECASE,
+    ))
 
 
 def collect_milpress_previews(source, limit: int) -> list[ArticlePreview]:
@@ -2982,6 +2993,14 @@ def collect_news(
                             "url": article.url, "reason": decision.reason,
                         })
                         continue
+
+                if source.name in MILPRESS_SOURCES and is_milpress_consumer_news(
+                    article.title
+                ):
+                    stat.setdefault("filtered_out", []).append({
+                        "url": article.url, "reason": "consumer_price_story",
+                    })
+                    continue
 
                 if source.name in MILPRESS_SOURCES and clearly_foreign_milpress_article(
                     article.title, article.text
