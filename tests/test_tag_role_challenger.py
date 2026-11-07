@@ -78,6 +78,53 @@ class TagRoleChallengerTests(unittest.TestCase):
         self.assertEqual(candidate_tags(r)["tags"],
                          ["оборонная промышленность", "судостроение"])
 
+    def test_military_mines_are_not_mineral_mining(self):
+        r = row(
+            "Финляндия поставит донные мины для датского флота",
+            "Военные поставят морские мины для противокорабельной обороны.",
+            [("судостроение", 0.47),
+             ("оборонная промышленность", 0.43),
+             ("горнодобывающая промышленность", 0.41)],
+        )
+        result = candidate_tags(r)
+        self.assertEqual(result["tags"], ["оборонная промышленность"])
+        self.assertEqual(result["rejected_categories"], ["судостроение"])
+
+        actual_mining = row(
+            "На руднике увеличили добычу медной руды",
+            "Горнодобывающая компания добывает больше руды.",
+            [("горнодобывающая промышленность", 0.56)],
+        )
+        self.assertEqual(
+            candidate_tags(actual_mining)["tags"],
+            ["горнодобывающая промышленность"],
+        )
+
+    def test_news_roundup_does_not_receive_individual_event_tags(self):
+        r = row(
+            "Главное в отраслевых СМИ за неделю: реактор, завод и дроны",
+            "Обзор событий сразу нескольких промышленных отраслей.",
+            [("оборонная промышленность", 0.62),
+             ("атомная отрасль", 0.59)],
+        )
+        result = candidate_tags(r)
+        self.assertEqual(result["tags"], [])
+        self.assertEqual(result["event_reason"], "news_roundup")
+
+    def test_rejected_categories_only_reports_assigned_tags(self):
+        r = row(
+            "Подписано соглашение о строительстве атомной электростанции",
+            "В атомной отрасли создадут новое предприятие.",
+            [("атомная отрасль", 0.52),
+             ("судостроение", 0.10),
+             ("авиация", 0.05)],
+        )
+        r["tags"] = ["атомная отрасль"]
+        result = candidate_tags(r)
+        self.assertEqual(result["tags"], ["атомная отрасль"])
+        self.assertEqual(result["rejected_categories"], [])
+
+
     def test_comparison_only_records_changes_without_editing_inputs(self):
         r = row(
             "ОСК провела фестиваль судостроителей",
