@@ -95,6 +95,13 @@ def main():
                 f" смысл статьи={entry['body_similarity']:.3f},"
                 f" совпадения={entry['focus_matches']}/{entry['body_matches']})"
             )
+            if entry["focus_keywords"] or entry["body_keywords"]:
+                print(
+                    "    Основания: "
+                    + ", ".join(
+                        (entry["focus_keywords"][:4] + entry["body_keywords"][:3])
+                    )
+                )
         rows.append({
             "source": article.get("source"),
             "title": title,
