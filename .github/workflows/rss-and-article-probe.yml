@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install requests feedparser beautifulsoup4
+      - run: python -m pip install requests feedparser beautifulsoup4 playwright
       - name: Probe official feeds and URLs read-only
         shell: bash
         run: |
