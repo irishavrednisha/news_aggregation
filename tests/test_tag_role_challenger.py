@@ -38,6 +38,34 @@ class TagRoleChallengerTests(unittest.TestCase):
             "Новый проект эсминца проходит модельные испытания."
         ))
 
+    def test_uav_wing_development_is_aircraft_engineering(self):
+        self.assertTrue(aviation_production_evidence(
+            "Конструкторы испытали новое крыло беспилотного летательного аппарата",
+            "Проверили аэродинамику летательного аппарата.",
+        ))
+        self.assertTrue(aviation_production_evidence(
+            "Создан беспилотник с новым автопилотом для мониторинга лесов",
+            "Специалисты изготовили опытный летательный аппарат.",
+        ))
+        self.assertFalse(aviation_production_evidence(
+            "Готовые беспилотники провели съёмку лесного пожара",
+            "Дроны выполняли мониторинг леса, разработки оборудования не было.",
+        ))
+        self.assertFalse(aviation_production_evidence(
+            "Разработан комплекс защиты от беспилотников",
+            "Инженеры испытали наземный радиолокационный комплекс.",
+        ))
+
+    def test_autonomous_boat_design_is_shipbuilding(self):
+        self.assertTrue(shipbuilding_evidence(
+            "Спроектирован автономный беспилотный научный катер",
+            "Судостроительное бюро разработало проект научного катера.",
+        ))
+        self.assertFalse(shipbuilding_evidence(
+            "Туроператор увеличил количество прогулок на катерах",
+            "Судоходная компания изменила график морских рейсов.",
+        ))
+
     def test_aviation_requires_production_or_development(self):
         self.assertFalse(aviation_production_evidence(
             "Дроны следят за лесными пожарами",
