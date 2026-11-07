@@ -276,6 +276,70 @@ class ReactivatedSourcesTests(unittest.TestCase):
         self.assertEqual(len(diagnostics["ФлотПром"]["filtered_out"]), 2)
 
 
+    def test_ria_html_article_text_blocks_without_article_tag(self):
+        preview = ArticlePreview(
+            source="РИА Новости",
+            title="Российский завод установил новое оборудование",
+            url="https://ria.ru/20261108/stanok-2130049999.html",
+            published_at=datetime(2026, 11, 8, 9, 15),
+            preview_text="",
+        )
+        html = """
+        <html><body>
+          <nav>Политика Общество Спорт Экономика Новости</nav>
+          <h1>Российский завод установил новое оборудование</h1>
+          <div class="article__body">
+            <div class="article__block" data-type="text">
+              <div class="article__text">
+                На российском заводе ввели в эксплуатацию новую
+                автоматизированную линию для выпуска станков.
+              </div>
+            </div>
+            <div class="article__block" data-type="text">
+              <div class="article__text">
+                Сотрудники предприятия проверили оборудование,
+                запустили производство и начали отгрузки заказчикам.
+              </div>
+            </div>
+          </div>
+          <div class="article__related">
+            <div class="article__text">Совсем другая новость о футболе.</div>
+          </div>
+        </body></html>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertIn("автоматизированную линию", article.text)
+        self.assertIn("начали отгрузки", article.text)
+        self.assertNotIn("Совсем другая новость", article.text)
+        self.assertNotIn("Политика Общество Спорт", article.text)
+        self.assertEqual(article.text_source, "html")
+        self.assertEqual(article.published_at, preview.published_at)
+
+    def test_ria_html_text_blocks_without_article_body(self):
+        preview = ArticlePreview(
+            source="РИА Новости", title="Модернизация станции",
+            url="https://ria.ru/20261108/stantsiya-2130049998.html",
+            published_at=datetime(2026, 11, 8), preview_text="",
+        )
+        html = """
+        <h1>Модернизация станции</h1>
+        <div class="article__text">
+          На электростанции завершили техническое переоснащение
+          первого энергоблока с новым оборудованием.
+        </div>
+        <div class="article__text">
+          После испытаний специалисты приступили к эксплуатации
+          модернизированных турбин и систем автоматики.
+        </div>
+        """
+        with patch("collectors.data_collector.fetch_html", return_value=html):
+            article = build_full_article(preview)
+        self.assertEqual(article.text_source, "html")
+        self.assertIn("энергоблока", article.text)
+        self.assertIn("турбин", article.text)
+
+
     def test_raw_collection_retains_mirror_articles_from_each_source(self):
         sources = [
             SimpleNamespace(
