@@ -18,6 +18,7 @@ from pathlib import Path
 from collections import Counter
 
 from processing.tagger import score_tags_detailed, select_tags_by_score_gap
+from processing.tagging_event_guard import nonindustrial_event_reason
 
 
 def get_articles(payload: dict) -> list[dict]:
@@ -82,11 +83,15 @@ def main():
         ranked = score_tags_detailed(
             scoring_text, focus_text=focus,
         )
-        selected = select_tags_by_score_gap(
+        raw_selected = select_tags_by_score_gap(
             ranked, min_score=args.min_score,
             max_tags=args.max_tags, max_gap_from_best=0.05,
         )
+        event_reason = nonindustrial_event_reason(title)
+        selected = [] if event_reason else raw_selected
         print(f"\n[{article.get('source') or 'Источник неизвестен'}] {title}")
+        if event_reason:
+            print(f"  Основное событие не промышленное: {event_reason}")
         print("  Теги: " + (", ".join(selected) if selected else "не определены"))
         for entry in ranked[:5]:
             print(
@@ -108,6 +113,8 @@ def main():
             "url": article.get("url"),
             "summary_used": summary,
             "tags": selected,
+            "raw_tags_before_event_guard": raw_selected,
+            "event_guard_reason": event_reason,
             "ranked": ranked,
             "manual_tags": [],
         })
@@ -127,6 +134,7 @@ def main():
         "counts": {
             "articles": len(rows),
             "with_tags": sum(bool(r["tags"]) for r in rows),
+            "blocked_by_event_guard": sum(bool(r["event_guard_reason"]) for r in rows),
             "tag_frequency": dict(Counter(
                 tag for r in rows for tag in r["tags"]
             )),
