@@ -1057,6 +1057,40 @@ MILPRESS_SOURCES = frozenset({
     "Военное.рф", "ФлотПром", "Отраслевое.рф", "ФлотКом",
 })
 
+REACTIVATED_SOURCES = MILPRESS_SOURCES | frozenset({
+    "Газпром", "РИА Новости", "ТАСС", "Интерфакс",
+})
+
+# Очевидно зарубежные сюжеты Mil.Press без российской связи.
+# Не проверяем по одному иностранному топониму: в новости
+# о российских поставках может упоминаться иностранный заказчик.
+MILPRESS_FOREIGN_TITLE = re.compile(
+    r"^(?:финлянд|дания|датск|герман|япони|южн\w+\s+коре|"
+    r"саудов|француз|британ|великобритан|американ|сша|китай|"
+    r"швеци|канад|грец|испан|индийск|италия|турци|норвеги|"
+    r"австрали|пентагон|naval group|navantia|saab)\b",
+    re.IGNORECASE,
+)
+
+MILPRESS_RUSSIA_CONTEXT = re.compile(
+    r"\b(?:росси\w*|отечественн\w*|рф|росатом\w*|"
+    r"ростех\w*|оск|янтар\w*|северн\w*\s+верф\w*|"
+    r"адмиралтейск\w*\s+верф\w*|чукотк\w*|"
+    r"калининград\w*|петербург\w*|москв\w*|"
+    r"владивосток\w*|северодвинск\w*|комсомольск\w*|"
+    r"хабаровск\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def clearly_foreign_milpress_article(title: str, text: str) -> bool:
+    """Отсекаем явный зарубежный заголовок только без российской связи."""
+    if not MILPRESS_FOREIGN_TITLE.search((title or "").strip()):
+        return False
+    context = f"{title} {(text or '')[:1400]}"
+    return MILPRESS_RUSSIA_CONTEXT.search(context) is None
+
+
 
 def collect_milpress_previews(source, limit: int) -> list[ArticlePreview]:
     """Собираем только статьи текущего года, исключая архив и рубрики."""
@@ -2855,7 +2889,12 @@ def collect_news(
                             if source.name in _SOURCE_ARTICLE_PATHS
                             else _legacy_collect_html_previews
                         )
-                    previews = fn(source, limit=min(limit_per_source * 3, 30))
+                    preview_limit = (
+                        min(max(24, limit_per_source * 12), 40)
+                        if source.name in MILPRESS_SOURCES
+                        else min(limit_per_source * 3, 30)
+                    )
+                    previews = fn(source, limit=preview_limit)
                 else:
                     message = f"Неизвестный тип источника: {source.source_type}"
                     stat["errors"].append(message)
@@ -2896,16 +2935,41 @@ def collect_news(
                     print(f"Ошибка парсинга: {message}")
                     continue
 
-                min_text_length = 350 if source.name == "Коммерсантъ — Промышленность" else 120
-                if article.text and len(article.text.strip()) >= min_text_length:
-                    all_articles.append(article)
-                    stat["accepted"] += 1
-                    if stat["accepted"] >= limit_per_source:
-                        break
-                else:
+                min_text_length = (
+                    350 if source.name == "Коммерсантъ — Промышленность"
+                    else 250 if source.name in REACTIVATED_SOURCES
+                    else 120
+                )
+                if not article.text or len(article.text.strip()) < min_text_length:
                     stat["short_or_empty"] += 1
                     stat["rejected_urls"].append(preview.url)
-                    print(f"Не извлечён основной текст: {preview.url}")
+                    print(f"Не извлечён достаточный основной текст: {preview.url}")
+                    continue
+
+                # У новых источников нельзя прерывать поиск на дайджесте
+                # или нерелевантной статье: она всё равно не пройдёт
+                # последующий фильтр и займёт слот лимита.
+                if source.name in REACTIVATED_SOURCES:
+                    from processing.topic_filter import classify_article
+                    decision = classify_article(article)
+                    if not decision.accepted:
+                        stat.setdefault("filtered_out", []).append({
+                            "url": article.url, "reason": decision.reason,
+                        })
+                        continue
+
+                if source.name in MILPRESS_SOURCES and clearly_foreign_milpress_article(
+                    article.title, article.text
+                ):
+                    stat.setdefault("filtered_out", []).append({
+                        "url": article.url, "reason": "foreign_without_russian_connection",
+                    })
+                    continue
+
+                all_articles.append(article)
+                stat["accepted"] += 1
+                if stat["accepted"] >= limit_per_source:
+                    break
 
                 time.sleep(1)
 
