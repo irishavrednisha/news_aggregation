@@ -6,6 +6,47 @@
 Все команды ниже только читают локальные JSON/CSV. PostgreSQL и MAX не
 используются. Обычный сборщик, фильтр и публикация не запускаются.
 
+## Отдельная синтетическая проверка — без обучения на реальных новостях
+
+В папке `benchmarks/` добавлены два **полностью вымышленных**
+файла, созданных специально для проверки:
+- `synthetic_tagging_120.json` — 120 искусственно составленных заголовков и
+  текстов: 72 профильных (по 4 для каждого из 18 тегов), 24 непрофильных,
+  24 неоднозначных;
+- `synthetic_tagging_labels_120.csv` — ожидаемые ответы отдельно от текстов.
+  Все метки имеют `label_origin=synthetic` и `review_status=draft`.
+  События, предприятия и факты в этих примерах вымышлены, их нельзя
+  публиковать как новости.
+
+**Модель Sentence-BERT не переобучается и не обновляет веса.**
+Эти примеры не загружаются в базу и не смешиваются с 100 реальными
+статьями. Синтетика используется как **стресс-тест**, не как объективная
+оценка качества на реальных данных. В тексты не включаются ожидаемые теги
+или указания, какой ответ верный.
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_synthetic_tagging_data.py" -v
+
+.\.venv\Scripts\python.exe check_focused_tagging.py benchmarks/synthetic_tagging_120.json --limit 120 --output collector_test_results/synthetic_tagging_audit_120.json
+
+.\.venv\Scripts\python.exe evaluate_tagging.py collector_test_results/synthetic_tagging_audit_120.json benchmarks/synthetic_tagging_labels_120.csv --include-drafts --output collector_test_results/synthetic_tagging_evaluation_120.json
+
+.\.venv\Scripts\python.exe check_tag_role_challenger.py collector_test_results/synthetic_tagging_audit_120.json --reference benchmarks/synthetic_tagging_labels_120.csv --include-drafts --output collector_test_results/synthetic_role_challenger_120.json
+```
+
+Не применять `--optimize` к синтетическому датасету: нельзя выбирать
+правила или пороги только потому, что они дали высокую метрику на
+сгенерированных примерах. Лучше разбирать ошибки по типам и затем
+проверять изменения на **новых** реальных статьях, не участвовавших
+в создании правил.
+
+Для свежего набора можно запустить исходный сборщик, затем использовать
+`check_focused_tagging.py --exclude-urls-from tagging_benchmark_100.json`,
+чтобы исключить URL старой выборки. Если сборщик возвращает тексты
+с повторяющимися сюжетами под разными URL, исключить такие дубликаты
+при ручной проверке отдельно. Результаты по синтетике и новым реальным
+статьям нельзя усреднять в одну метрику.
+
 ## Подготовка
 
 Поместить в корень репозитория два файла, собранных из предыдущих
