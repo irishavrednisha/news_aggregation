@@ -18,16 +18,55 @@ from processing.tagging_event_guard import nonindustrial_event_reason
 from evaluate_tagging import read_references, metrics
 
 
-def compare(audit: dict) -> dict:
+def _select_sbert_at_threshold(
+    row: dict, *, min_score: float, max_tags: int, gap: float = 0.05,
+) -> list[str]:
+    """Reapply the legacy selection rule to saved scores; never rerun SBERT.
+
+    Reports can have been generated with a different min_score. Using
+    their stored tags would make a comparison against the reranker unfair.
+    """
+    scores = row.get("ranked")
+    if not isinstance(scores, list) or not scores:
+        return list(row.get("raw_tags_before_event_guard", row.get("tags") or []))
+    pairs = sorted(
+        (
+            (entry["tag"], float(entry["final_score"]))
+            for entry in scores if "tag" in entry and "final_score" in entry
+        ), key=lambda item: item[1], reverse=True,
+    )
+    if not pairs:
+        return []
+    best = pairs[0][1]
+    return [
+        tag for tag, score in pairs
+        if score >= min_score and (best - score) <= gap + 1e-9
+    ][:max_tags]
+
+
+def compare(
+    audit: dict, *, min_score: float = 0.35, max_tags: int = 2,
+) -> dict:
+    """Compare baseline and reranker with IDENTICAL score thresholds."""
+    if not (0.0 <= min_score <= 1.0):
+        raise ValueError("min_score must be between 0 and 1")
+    if max_tags < 1:
+        raise ValueError("max_tags must be >= 1")
+
     changed = []
     rows = []
     for row in audit.get("results", []):
         if not row.get("url"):
             continue
-        original = row.get("raw_tags_before_event_guard", row.get("tags") or [])
+        original = _select_sbert_at_threshold(
+            row, min_score=min_score, max_tags=max_tags,
+        )
         event = nonindustrial_event_reason(row.get("title") or "")
         baseline = [] if event else original
-        experimental = candidate_tags(row)
+        experimental = candidate_tags(
+            {**row, "tags": original, "raw_tags_before_event_guard": original},
+            min_score=min_score, gap=0.05, max_tags=max_tags,
+        )
         if set(baseline) != set(experimental["tags"]):
             changed.append(row["url"])
         rows.append({
@@ -43,6 +82,8 @@ def compare(audit: dict) -> dict:
     return {
         "read_only": True,
         "production_tagger_changed": False,
+        "min_score": min_score,
+        "max_tags": max_tags,
         "warning": "Exploratory hypothesis; labels must be manually verified and test articles should be new.",
         "articles": len(rows),
         "changed": len(changed),
@@ -59,11 +100,14 @@ def main() -> None:
                         help="Optional reviewed labels CSV/JSON")
     parser.add_argument("--include-drafts", action="store_true",
                         help="Experimental metrics only; not validated gold")
+    parser.add_argument("--min-score", type=float, default=0.35,
+                        help="Одинаковый порог для SBERT и гибрида (0.35 или 0.38)")
+    parser.add_argument("--max-tags", type=int, default=2)
     parser.add_argument("--output", type=Path,
                         default=Path("collector_test_results/tag_role_challenger.json"))
     args = parser.parse_args()
     audit = json.loads(args.audit.read_text(encoding="utf-8"))
-    result = compare(audit)
+    result = compare(audit, min_score=args.min_score, max_tags=args.max_tags)
     if args.reference:
         reference = read_references(args.reference, include_drafts=args.include_drafts)
         entries = [(r, reference[r["url"]]) for r in result["results"]
