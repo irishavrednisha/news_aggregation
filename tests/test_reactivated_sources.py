@@ -18,6 +18,7 @@ from collectors.data_collector import (
     collect_news,
     clearly_foreign_milpress_article,
     is_foreign_general_rss,
+    is_milpress_consumer_news,
     collect_rss_previews,
 )
 from database.repository import seed_sources
@@ -205,6 +206,20 @@ class ReactivatedSourcesTests(unittest.TestCase):
         self.assertFalse(clearly_foreign_milpress_article(
             'На "Янтаре" автоматизируют линию резки металла',
             "Завод ОСК внедрил роботизированную линию.",
+        ))
+        self.assertTrue(clearly_foreign_milpress_article(
+            "Акции немецкого оборонного гиганта подешевели",
+            "В Германии участники торгов снизили цену бумаг компании.",
+        ))
+        self.assertTrue(clearly_foreign_milpress_article(
+            "Начался новый этап европейского многоцелевого корвета",
+            "Франция и Италия подписали договор о разработке корабля.",
+        ))
+        self.assertTrue(is_milpress_consumer_news(
+            "Россиянам объяснили, почему дорожает курица",
+        ))
+        self.assertFalse(is_milpress_consumer_news(
+            "На заводе начали выпуск нового оборудования",
         ))
 
     def test_milpress_does_not_stop_on_rejected_news(self):
