@@ -138,9 +138,9 @@ def extract_published_at(soup: BeautifulSoup):
     if h1:
         containers = [h1.parent, h1.parent.parent if h1.parent else None]
         pattern = re.compile(
-            r"\\b([0-3]?\\d)\\s+(января|февраля|марта|апреля|мая|июня|июля|"
-            r"августа|сентября|октября|ноября|декабря)\\s+(20\\d{2})"
-            r"\\s+в\\s+([0-2]?\\d):([0-5]\\d)\\b",
+            r"\b([0-3]?\d)\s+(января|февраля|марта|апреля|мая|июня|июля|"
+            r"августа|сентября|октября|ноября|декабря)\s+(20\d{2})"
+            r"\s+в\s+([0-2]?\d):([0-5]\d)\b",
             re.IGNORECASE,
         )
         for container in containers:
@@ -894,7 +894,7 @@ def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
 
 def collect_milpress_previews(source, limit: int) -> list[ArticlePreview]:
     """Только статьи за текущий год, не категории и не страницы архива."""
-    match = re.search(r"/(20\\d{2})(?:/|$)", source.url)
+    match = re.search(r"/(20\d{2})(?:/|$)", source.url)
     year = int(match.group(1)) if match else datetime.now().year
     return collect_links_by_path(
         source=source,
