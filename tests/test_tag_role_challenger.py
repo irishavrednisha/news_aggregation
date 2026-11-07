@@ -153,6 +153,23 @@ class TagRoleChallengerTests(unittest.TestCase):
         self.assertEqual(result["rejected_categories"], [])
 
 
+    def test_fair_comparison_recomputes_both_thresholds_from_scores(self):
+        r = row(
+            "Станкостроители разработали новый станок",
+            "Изготовлен опытный станок для производственного цеха.",
+            [("машиностроение", 0.37), ("инжиниринг", 0.36)],
+        )
+        # The audit file was previously tagged at 0.35.
+        r["tags"] = ["машиностроение", "инжиниринг"]
+        at_035 = compare({"results": [r]}, min_score=0.35)
+        at_038 = compare({"results": [r]}, min_score=0.38)
+        self.assertEqual(at_035["results"][0]["baseline_tags"],
+                         ["машиностроение", "инжиниринг"])
+        self.assertEqual(at_038["results"][0]["baseline_tags"], [])
+        self.assertEqual(at_038["results"][0]["candidate_tags"], [])
+        self.assertEqual(at_035["min_score"], 0.35)
+        self.assertEqual(at_038["min_score"], 0.38)
+
     def test_comparison_only_records_changes_without_editing_inputs(self):
         r = row(
             "ОСК провела фестиваль судостроителей",
