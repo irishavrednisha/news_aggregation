@@ -216,6 +216,10 @@ class ReactivatedSourcesTests(unittest.TestCase):
             "Начался новый этап европейского многоцелевого корвета",
             "Франция и Италия подписали договор о разработке корабля.",
         ))
+        self.assertTrue(clearly_foreign_milpress_article(
+            "Подгорица и Тирана запросили помощь у НАТО",
+            "Страны обсуждают так называемые гибридные угрозы из России.",
+        ))
         self.assertTrue(is_milpress_consumer_news(
             "Россиянам объяснили, почему дорожает курица",
         ))
