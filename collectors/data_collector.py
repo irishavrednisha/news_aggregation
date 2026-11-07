@@ -1053,6 +1053,28 @@ def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
 # Специальные сборщики ссылок
 # =========================
 
+MILPRESS_SOURCES = frozenset({
+    "Военное.рф", "ФлотПром", "Отраслевое.рф", "ФлотКом",
+})
+
+
+def collect_milpress_previews(source, limit: int) -> list[ArticlePreview]:
+    """Собираем только статьи текущего года, исключая архив и рубрики."""
+    from types import SimpleNamespace
+
+    year = datetime.now().year
+    # URL архивов Военное.рф / ФлотПром нужно обновлять каждый год.
+    # Отраслевое.рф и ФлотКом показывают новости на главной странице.
+    listing_url = re.sub(r"/20\d{2}/?$", f"/{year}/", source.url)
+    listing_source = SimpleNamespace(name=source.name, url=listing_url)
+    return collect_links_by_path(
+        source=listing_source,
+        limit=limit,
+        required_prefix=f"/{year}/",
+        exclude_exact=f"/{year}/",
+    )
+
+
 def collect_rosatom_previews(source, limit: int) -> list[ArticlePreview]:
     return collect_links_by_path(
         source=source,
@@ -1708,6 +1730,7 @@ _SOURCE_ARTICLE_PATHS = {
     ),
     "Коммерсантъ — Промышленность": re.compile(r"^/doc/\d+/?$"),
     "Ростех": re.compile(r"^/media/news/[^/]+/?$"),
+    "Газпром": re.compile(r"^/press/news/\d{4}/[a-z]+/article\d+/?$", re.I),
     "Роснефть": re.compile(r"^/press/news/item/\d+/?$"),
 }
 
@@ -1974,6 +1997,11 @@ def collect_rosneft_previews(source, limit: int):
 # Селекторы в порядке от наиболее узких к общим.
 # Широкий поиск по всем <p> страницы ЗАПРЕЩЁН.
 _ARTICLE_SELECTORS = {
+    "Газпром": (".article-body", ".news-detail__text", "article"),
+    "Военное.рф": ("[itemprop='articleBody']", ".article_text", ".news_text", "article"),
+    "ФлотПром": ("[itemprop='articleBody']", ".article_text", ".news_text", "article"),
+    "Отраслевое.рф": ("[itemprop='articleBody']", ".article_text", ".news_text", "article"),
+    "ФлотКом": ("[itemprop='articleBody']", ".article_text", ".news_text", "article"),
     "Ростех": (".media-news-detailed__content", "[itemprop='articleBody']", ".news-detail__content", ".news-detail__text", "article"),
     "ОСК": (".news-detail__text", ".detail_text", ".news-detail", "article"),
     "Роснефть": (".content-column .common-text", ".common-text", ".news-detail", ".news-body", ".news-text", "article"),
@@ -2795,6 +2823,7 @@ def collect_news(
                         "Добывающая промышленность": collect_dprom_previews,
                         "Ростех": collect_rostec_previews,
                         "Роснефть": collect_rosneft_previews,
+                        **{name: collect_milpress_previews for name in MILPRESS_SOURCES},
                     }
                     fn = collectors.get(source.name)
                     if fn is None:
