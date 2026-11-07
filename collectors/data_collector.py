@@ -986,6 +986,13 @@ GENERAL_RSS_FOREIGN_SECTIONS = (
     "/world/", "/mezhdunarodnaya-panorama/",
 )
 
+GENERAL_RSS_FOREIGN_ACTOR = re.compile(
+    r"^(?:сша|американ\w*|иран\w*|израил\w*|хусит\w*|"
+    r"саудовск\w*|финлянд\w*|герман\w*|китай\w*|"
+    r"франци\w*|британи\w*|египет\w*|турци\w*)\b",
+    re.IGNORECASE,
+)
+
 GENERAL_RSS_RUSSIA_CONTEXT = re.compile(
     r"\b(?:росси\w*|рф|отечественн\w*|росатом\w*|"
     r"ростех\w*|роснефт\w*|газпром\w*|оск|"
@@ -994,12 +1001,15 @@ GENERAL_RSS_RUSSIA_CONTEXT = re.compile(
 
 
 def is_foreign_general_rss(url: str, title: str, summary: str) -> bool:
-    """Международный сюжет без российской связи не относим к промновостям РФ."""
+    """Исключаем явно зарубежные сюжеты без связи с промышленностью РФ."""
     path = urlparse(url).path.lower()
-    if not any(path.startswith(section) for section in GENERAL_RSS_FOREIGN_SECTIONS):
+    foreign_section = any(
+        path.startswith(section) for section in GENERAL_RSS_FOREIGN_SECTIONS
+    )
+    foreign_actor = bool(GENERAL_RSS_FOREIGN_ACTOR.search(title.strip()))
+    if not foreign_section and not foreign_actor:
         return False
     return GENERAL_RSS_RUSSIA_CONTEXT.search(title + " " + summary) is None
-
 
 def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
     """Читаем RSS с таймаутом и просматриваем больше записей общих СМИ."""
@@ -2921,7 +2931,15 @@ def collect_news(
         try:
             try:
                 if source.source_type == "rss":
-                    previews = collect_rss_previews(source, limit=limit_per_source)
+                    # RSS-кандидаты тоже нужно проверять глубже: первая
+                    # подходящая по ключевым словам запись может оказаться
+                    # непрофильной или не иметь полного текста.
+                    rss_preview_limit = (
+                        min(max(20, limit_per_source * 10), 60)
+                        if source.name in {"РИА Новости", "ТАСС", "Интерфакс"}
+                        else limit_per_source
+                    )
+                    previews = collect_rss_previews(source, limit=rss_preview_limit)
                 elif source.source_type == "html":
                     collectors = {
                         "Росатом": collect_rosatom_previews,
