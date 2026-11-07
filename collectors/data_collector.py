@@ -157,6 +157,25 @@ def extract_published_at(soup: BeautifulSoup):
                     )
                 except ValueError:
                     pass
+
+        # Если дата лежит в отдельном соседнем блоке, ищем только
+        # ближайшие текстовые узлы, а не даты в боковой ленте новостей.
+        examined = 0
+        for element in h1.next_elements:
+            if isinstance(element, str):
+                examined += 1
+                match = pattern.search(element)
+                if match:
+                    day, month, year, hour, minute = match.groups()
+                    try:
+                        return datetime(
+                            int(year), MONTH_NUMBERS[month.lower()],
+                            int(day), int(hour), int(minute)
+                        )
+                    except ValueError:
+                        pass
+                if examined >= 20:
+                    break
     return None
 
 
@@ -978,7 +997,7 @@ def collect_links_by_path(
         path = get_path(absolute_url)
 
         prefix = required_prefix.rstrip("/")
-        if prefix != "/" and not (path == prefix or path.startswith(prefix + "/")):
+        if prefix and not (path == prefix or path.startswith(prefix + "/")):
             continue
 
         if exclude_exact and path == exclude_exact.rstrip("/"):
