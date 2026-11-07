@@ -2868,6 +2868,7 @@ def build_full_article(preview: ArticlePreview) -> Article:
                     "url": preview.url,
                     "html_chars": len(html),
                     "visible_text_chars": len(soup.get_text(" ", strip=True)),
+                    "visible_text_start": soup.get_text(" ", strip=True)[:240],
                     "h1": clean_text(h1_probe.get_text(" ", strip=True))[:150] if h1_probe else "",
                     "jsonld_body_chars": len(str(jsonld.get("articleBody", "") or "")),
                     "article_nodes": len(soup.select("article")),
