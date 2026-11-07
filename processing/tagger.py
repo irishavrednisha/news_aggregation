@@ -1943,8 +1943,10 @@ def score_tags_detailed(
 
         positive = TAG_KEYWORDS.get(tag, [])
         negative = TAG_NEGATIVE_KEYWORDS.get(tag, [])
-        focus_matches = _count_prepared_keywords(normalized_focus, positive)
-        body_matches = _count_prepared_keywords(normalized_body, positive)
+        focus_evidence = _matching_prepared_keywords(normalized_focus, positive)
+        body_evidence = _matching_prepared_keywords(normalized_body, positive)
+        focus_matches = len(focus_evidence)
+        body_matches = len(body_evidence)
         focus_negative = _count_prepared_keywords(normalized_focus, negative)
         body_negative = _count_prepared_keywords(normalized_body, negative)
 
@@ -1961,6 +1963,8 @@ def score_tags_detailed(
             "keyword_penalty": penalty,
             "focus_matches": focus_matches,
             "body_matches": body_matches,
+            "focus_keywords": focus_evidence[:8],
+            "body_keywords": body_evidence[:8],
             "final_score": final_score,
         })
 
@@ -1968,15 +1972,13 @@ def score_tags_detailed(
     return results
 
 
-def _count_prepared_keywords(normalized_text: str, keywords: list[str]) -> int:
-    """Совпадения полных слов/фраз, а не подстрок чужих терминов.
-
-    Например, «газ» не должен совпадать со словом «газета».
-    """
+def _matching_prepared_keywords(
+    normalized_text: str, keywords: list[str],
+) -> list[str]:
+    """Фразы, действительно найденные в текущем сегменте статьи."""
     if not normalized_text:
-        return 0
-
-    count = 0
+        return []
+    found = []
     for keyword in keywords:
         normalized = _normalize_tag_keyword(keyword)
         if not normalized:
@@ -1985,8 +1987,12 @@ def _count_prepared_keywords(normalized_text: str, keywords: list[str]) -> int:
             r"(?<![а-яa-z0-9])" + re.escape(normalized) + r"(?![а-яa-z0-9])",
             normalized_text,
         ):
-            count += 1
-    return count
+            found.append(keyword)
+    return found
+
+
+def _count_prepared_keywords(normalized_text: str, keywords: list[str]) -> int:
+    return len(_matching_prepared_keywords(normalized_text, keywords))
 
 
 from functools import lru_cache
