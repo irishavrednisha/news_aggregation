@@ -3141,7 +3141,9 @@ def collect_news(
                     })
                     continue
 
-                if source.name in MILPRESS_SOURCES:
+                # При чистом сборе показываем даже зеркальные публикации
+                # разных источников: дедупликация относится к обработке.
+                if apply_filters and source.name in MILPRESS_SOURCES:
                     from urllib.parse import unquote
                     mirror_key = unquote(urlparse(article.url).path).casefold().rstrip("/")
                     if mirror_key in seen_milpress_article_paths:
