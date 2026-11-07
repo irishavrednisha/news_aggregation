@@ -22,7 +22,7 @@ jobs:
           python -m pip install beautifulsoup4 requests feedparser playwright sqlalchemy psycopg2-binary python-dotenv
       - name: Compile source files
         run: |
-          python -m py_compile collectors/data_collector.py processing/topic_filter.py processing/tagger.py processing/ai_tagger.py publishing/publisher.py tests/test_ai_tagger.py tests/test_ai_tagging_audit.py check_ai_tagging.py tests/test_topic_filter.py tests/test_tagging_filter_contract.py tests/test_collector_regressions.py tests/test_text_extraction_all_sources.py tests/test_reactivated_sources.py check_news_collection.py check_news_filter.py compare_ai_tagging.py tests/test_compare_ai_tagging.py tests/test_focused_tagging.py check_focused_tagging.py tests/test_tagging_evaluation.py evaluate_tagging.py tests/test_tagging_event_guard.py processing/tagging_event_guard.py
+          python -m py_compile collectors/data_collector.py processing/topic_filter.py processing/tagger.py processing/ai_tagger.py publishing/publisher.py tests/test_ai_tagger.py tests/test_ai_tagging_audit.py check_ai_tagging.py tests/test_topic_filter.py tests/test_tagging_filter_contract.py tests/test_collector_regressions.py tests/test_text_extraction_all_sources.py tests/test_reactivated_sources.py check_news_collection.py check_news_filter.py compare_ai_tagging.py tests/test_compare_ai_tagging.py tests/test_focused_tagging.py check_focused_tagging.py tests/test_tagging_evaluation.py evaluate_tagging.py tests/test_tagging_event_guard.py processing/tagging_event_guard.py tests/test_tag_role_challenger.py processing/tag_role_challenger.py check_tag_role_challenger.py
       - name: Run collector regression tests
         run: python -m unittest discover -s tests -p 'test_collector_regressions.py' -v
       - name: Run checks for eight reactivated sources
@@ -39,6 +39,8 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_tagging_evaluation.py' -v
       - name: Check non-industrial headline event guard
         run: python -m unittest discover -s tests -p 'test_tagging_event_guard.py' -v
+      - name: Test offline tag role challenger
+        run: python -m unittest discover -s tests -p 'test_tag_role_challenger.py' -v
       - name: Run AI zero-shot tagging contract tests without model download
         run: python -m unittest discover -s tests -p 'test_ai_tagger.py' -v
       - name: Run AI audit summary parity tests without model download
