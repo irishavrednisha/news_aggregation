@@ -147,6 +147,31 @@ $env:NEWS_TAGGER_BACKEND = "legacy"
 До новых независимых проверок используйте его в read-only тестах,
 а не в автоматической публикации.
 
+## Сравнение гибрида и SBERT при одном пороге
+
+Отчёт `synthetic_hybrid_evaluation_120.json` дал F1=0.738,
+Precision=0.750 и Recall=0.7263. Предыдущая оценка SBERT
+(0.761, 0.7091, 0.8211 соответственно) была выполнена с
+`--min-score 0.35`, а гибрид — с `--min-score 0.38`.
+Поэтому считать падение F1 результатом именно reranker нельзя.
+
+Скрипт `check_tag_role_challenger.py` теперь переоценивает **оба
+алгоритма** из одного сохранённого `ranked` при выбранном пороге.
+SBERT повторно не запускается, обучение отсутствует, БД и MAX
+не затрагиваются.
+
+```powershell
+.\.venv\Scripts\python.exe check_tag_role_challenger.py collector_test_results/synthetic_tagging_audit_120.json --reference benchmarks/synthetic_tagging_labels_120.csv --include-drafts --min-score 0.35 --output collector_test_results/synthetic_matched_035.json
+
+.\.venv\Scripts\python.exe check_tag_role_challenger.py collector_test_results/synthetic_tagging_audit_120.json --reference benchmarks/synthetic_tagging_labels_120.csv --include-drafts --min-score 0.38 --output collector_test_results/synthetic_matched_038.json
+```
+
+Оба JSON включают `evaluation.baseline` и
+`evaluation.candidate`. Только их следует сравнивать в пределах
+одного и того же `min_score`. Если вы исследуете пороги по тем же
+120 статьям, результаты становятся ещё менее независимыми;
+настройки нельзя автоматически переносить на новые реальные новости.
+
 ## Подготовка
 
 Поместить в корень репозитория два файла, собранных из предыдущих
