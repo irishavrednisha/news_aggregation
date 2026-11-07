@@ -276,6 +276,50 @@ class ReactivatedSourcesTests(unittest.TestCase):
         self.assertEqual(len(diagnostics["ФлотПром"]["filtered_out"]), 2)
 
 
+    def test_raw_collection_retains_mirror_articles_from_each_source(self):
+        sources = [
+            SimpleNamespace(
+                name=name, url=base, source_type="html",
+            )
+            for name, base in (
+                ("Военное.рф", "https://военное.рф/2026/"),
+                ("ФлотПром", "https://flotprom.ru/2026/"),
+            )
+        ]
+
+        def previews(source, limit):
+            return [ArticlePreview(
+                source=source.name, title="Новый завод модернизировал цех",
+                url=source.url + "Завод7/",
+                published_at=datetime(2026, 11, 7), preview_text="",
+            )]
+
+        def article(preview):
+            return Article(
+                source=preview.source, title=preview.title,
+                url=preview.url, published_at=preview.published_at,
+                text="На предприятии заработало оборудование.", text_source="html",
+            )
+
+        with (
+            patch(
+                "collectors.data_collector.collect_milpress_previews",
+                side_effect=previews,
+            ),
+            patch(
+                "collectors.data_collector.build_full_article",
+                side_effect=article,
+            ),
+            patch("collectors.data_collector.time.sleep"),
+        ):
+            result = collect_news(
+                sources, limit_per_source=1, apply_filters=False,
+            )
+        self.assertEqual([a.source for a in result], [
+            "Военное.рф", "ФлотПром",
+        ])
+
+
     def test_milpress_removes_technical_footer_but_preserves_article(self):
         body = (
             "На заводе установили роботизированную линию резки металла. "
