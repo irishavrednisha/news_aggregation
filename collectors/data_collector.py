@@ -2956,6 +2956,10 @@ def collect_news(
                     print(f"Ошибка парсинга: {message}")
                     continue
 
+                # Ограничиваем частоту запросов и для отсеянных публикаций.
+                # Ранее continue в фильтрах пропускал паузу.
+                time.sleep(1)
+
                 min_text_length = (
                     350 if source.name == "Коммерсантъ — Промышленность"
                     else 250 if source.name in REACTIVATED_SOURCES
@@ -2991,8 +2995,6 @@ def collect_news(
                 stat["accepted"] += 1
                 if stat["accepted"] >= limit_per_source:
                     break
-
-                time.sleep(1)
 
             print(
                 f"{source.name}: успешно {stat['accepted']}/"
