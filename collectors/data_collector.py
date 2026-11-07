@@ -1119,7 +1119,7 @@ MILPRESS_FOREIGN_TITLE = re.compile(
     r"^(?:финлянд|дания|датск|герман|япони|южн\w+\s+коре|"
     r"саудов|француз|британ|великобритан|американ|сша|китай|"
     r"швеци|канад|грец|испан|индийск|италия|турци|норвеги|"
-    r"австрали|пентагон|naval group|navantia|saab)\w*\b",
+    r"австрали|подгориц|тиран|албан|черногор|пентагон|naval group|navantia|saab)\w*\b",
     re.IGNORECASE,
 )
 
@@ -1141,7 +1141,14 @@ def clearly_foreign_milpress_article(title: str, text: str) -> bool:
     Публикации без проверяемой связи с Россией не должны попадать
     в дайджест промышленных новостей России.
     """
-    context = f"{title or ''} {(text or '')[:1800]}"
+    # Заголовок с иностранным главным действующим лицом не становится
+    # российской промышленной новостью лишь из-за упоминания России
+    # как геополитического противника в конце статьи.
+    if MILPRESS_FOREIGN_TITLE.search(title or "") and not (
+        MILPRESS_RUSSIA_CONTEXT.search(title or "")
+    ):
+        return True
+    context = f"{title or ''} {(text or '')[:850]}"
     return MILPRESS_RUSSIA_CONTEXT.search(context) is None
 
 
