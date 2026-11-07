@@ -305,6 +305,26 @@ def fetch_html(url: str) -> str:
         if not html:
             html = fetch_html_with_browser(url)
 
+    # РИА и ТАСС иногда возвращают HTTP 200 с пустой JS-оболочкой
+    # вместо текста статьи. Не считаем это успешно загруженной новостью.
+    if html and domain in ("tass.ru", "ria.ru"):
+        text_len = len(BeautifulSoup(html, "html.parser").get_text(" ", strip=True))
+        if text_len < 120:
+            print(f"{domain}: пустая HTML-оболочка ({text_len} символов), пробуем Chromium")
+            rendered = fetch_html_with_browser(url)
+            rendered_len = (
+                len(BeautifulSoup(rendered, "html.parser").get_text(" ", strip=True))
+                if rendered else 0
+            )
+            if rendered_len >= 250:
+                html = rendered
+            else:
+                _record_fetch_problem(
+                    url, "site_shell_or_access_denied",
+                    f"requests_text={text_len}, chromium_text={rendered_len}",
+                )
+                return ""
+
     if html:
         if "Error establishing a database connection" in html:
             _record_fetch_problem(url, "origin_database_error", "Сайт не может подключиться к собственной базе данных")
