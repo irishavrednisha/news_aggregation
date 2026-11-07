@@ -24,6 +24,8 @@ from processing.tagging_event_guard import nonindustrial_event_reason
 def get_articles(payload: dict) -> list[dict]:
     if isinstance(payload.get("articles"), list):
         return payload["articles"]
+    if isinstance(payload.get("results"), list):
+        return payload["results"]
     results = payload.get("results", {})
     if isinstance(results, dict):
         return [
@@ -43,6 +45,10 @@ def main():
     parser.add_argument("input", type=Path, help="JSON с полными текстами статей")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--source", type=str, default=None)
+    parser.add_argument(
+        "--exclude-urls-from", type=Path, action="append", default=[],
+        help="Не проверять статьи, URL которых есть в старом JSON (можно повторить)",
+    )
     parser.add_argument("--max-tags", type=int, default=2)
     parser.add_argument("--min-score", type=float, default=0.35)
     parser.add_argument(
@@ -61,6 +67,20 @@ def main():
     articles = get_articles(payload)
     if args.source:
         articles = [a for a in articles if a.get("source") == args.source]
+    exclude_urls = set()
+    for old_path in args.exclude_urls_from:
+        old_payload = json.loads(old_path.read_text(encoding="utf-8"))
+        exclude_urls.update(
+            str(row.get("url") or "").strip()
+            for row in get_articles(old_payload)
+            if isinstance(row, dict) and row.get("url")
+        )
+    before_exclusion = len(articles)
+    articles = [
+        a for a in articles
+        if str(a.get("url") or "").strip() not in exclude_urls
+    ]
+    excluded_existing = before_exclusion - len(articles)
     articles = articles[:args.limit]
 
     from check_ai_tagging import prepare_text_for_ai
@@ -126,6 +146,8 @@ def main():
         "summary_mode": args.summary_mode,
         "threshold": args.min_score,
         "max_tags": args.max_tags,
+        "excluded_existing_urls": excluded_existing,
+        "exclude_urls_from": [str(path) for path in args.exclude_urls_from],
         "note": (
             "Одиночные новости: summary сгенерировано из статьи; "
             "у кластеров с несколькими статьями оно может отличаться. "
@@ -145,6 +167,8 @@ def main():
     args.output.write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8",
     )
+    if args.exclude_urls_from:
+        print(f"Исключено старых URL: {excluded_existing}")
     print(f"\nОтчёт: {args.output}")
 
 
