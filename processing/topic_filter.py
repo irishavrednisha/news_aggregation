@@ -81,6 +81,15 @@ FOREIGN_LEAD_TITLE = re.compile(
     r"германии|бразилии|корее|китае|австралии)\b)",
     re.IGNORECASE,
 )
+# Явно зарубежные действующие лица в заголовке. Учитываем
+# только отсутствие российской связи во вступлении — обычные
+# упоминания иностранных стран внутри статьи не запрещены.
+FOREIGN_TITLE_ACTOR = re.compile(
+    r"^(?:хусит\w*|финлянд\w*|саудовск\w*|израил\w*|"
+    r"иран\w*|турц\w*|япон\w*|герман\w*|китай\w*|"
+    r"датск\w*|американск\w*)\b",
+    re.IGNORECASE,
+)
 RUSSIA_CONTEXT = re.compile(
     r"\b(?:росси\w*|рф|отечественн\w*|росатом\w*|"
     r"ростех\w*|норникел\w*|лукойл\w*|газпром\w*|"
@@ -192,7 +201,7 @@ def classify_article(
     if off_topic is not None:
         return FilterDecision(False, "offtopic_" + off_topic)
 
-    if FOREIGN_LEAD_TITLE.search(normalized_title):
+    if FOREIGN_LEAD_TITLE.search(normalized_title) or FOREIGN_TITLE_ACTOR.search(normalized_title):
         context = normalize(title + " " + text[:650])
         if not RUSSIA_CONTEXT.search(context):
             return FilterDecision(False, "foreign_without_russian_connection")
