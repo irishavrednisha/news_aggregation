@@ -1,0 +1,34 @@
+name: Reactivated sources live smoke
+
+on:
+  push:
+    branches:
+      - fix/site-specific-news-collection-2026-11-06
+    paths:
+      - .github/workflows/reactivated-source-live-smoke.yml
+      - check_reactivated_sources_live.py
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install collector dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install beautifulsoup4 requests feedparser playwright sqlalchemy psycopg2-binary python-dotenv
+          python -m playwright install --with-deps chromium
+      - name: Check live sources (no database writes and no publishing)
+        run: python check_reactivated_sources_live.py --limit 2
+      - name: Upload JSON diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reactivated-sources-live-result
+          path: collector_test_results/reactivated_sources_live.json
+          if-no-files-found: warn
