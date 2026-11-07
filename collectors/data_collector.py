@@ -3063,7 +3063,12 @@ def collect_news(
                     else 250 if source.name in REACTIVATED_SOURCES
                     else 120
                 )
-                if not article.text or len(article.text.strip()) < min_text_length:
+                # При чистой проверке сбора не скрываем короткие статьи:
+                # длина текста остаётся видна в JSON, а решение принимает человек.
+                # Пустая страница не является статьёй даже в raw-режиме.
+                if not article.text or not article.text.strip() or (
+                    apply_filters and len(article.text.strip()) < min_text_length
+                ):
                     stat["short_or_empty"] += 1
                     stat["rejected_urls"].append(preview.url)
                     print(f"Не извлечён достаточный основной текст: {preview.url}")
