@@ -1031,8 +1031,10 @@ def is_foreign_general_rss(url: str, title: str, summary: str) -> bool:
         return False
     return GENERAL_RSS_RUSSIA_CONTEXT.search(title + " " + summary) is None
 
-def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
-    """Читаем RSS с таймаутом и просматриваем больше записей общих СМИ."""
+def collect_rss_previews(
+    source, limit: int, *, apply_filters: bool = True
+) -> list[ArticlePreview]:
+    """Читаем RSS. apply_filters=False оставляет все записи для проверки сбора."""
     previews = []
     if not source.rss_url:
         return previews
@@ -1080,9 +1082,9 @@ def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
             continue
 
         preview_text = extract_rss_text(entry)
-        if general_feed and not matches_industrial_rss(title, preview_text):
+        if apply_filters and general_feed and not matches_industrial_rss(title, preview_text):
             continue
-        if general_feed and is_foreign_general_rss(url, title, preview_text):
+        if apply_filters and general_feed and is_foreign_general_rss(url, title, preview_text):
             continue
 
         published_raw = entry.get("published") or entry.get("updated")
@@ -2934,10 +2936,12 @@ def collect_news(
     session=None,
     diagnostics: dict | None = None,
     allow_unverified_tls: bool = False,
+    apply_filters: bool = True,
 ) -> list[Article]:
     """
     Собирает статьи (БД не изменяет). Если передан diagnostics, сохраняет
     статистику по каждому источнику для анализа ошибок.
+    apply_filters=False: техническая проверка сбора без тематического отбора.
     """
     all_articles = []
     seen_urls = set()
@@ -2969,7 +2973,10 @@ def collect_news(
                         if source.name in {"РИА Новости", "ТАСС", "Интерфакс"}
                         else limit_per_source
                     )
-                    previews = collect_rss_previews(source, limit=rss_preview_limit)
+                    previews = collect_rss_previews(
+                        source, limit=rss_preview_limit,
+                        apply_filters=apply_filters,
+                    )
                 elif source.source_type == "html":
                     collectors = {
                         "Росатом": collect_rosatom_previews,
@@ -3065,7 +3072,7 @@ def collect_news(
                 # У новых источников нельзя прерывать поиск на дайджесте
                 # или нерелевантной статье: она всё равно не пройдёт
                 # последующий фильтр и займёт слот лимита.
-                if source.name in REACTIVATED_SOURCES:
+                if apply_filters and source.name in REACTIVATED_SOURCES:
                     from processing.topic_filter import classify_article
                     decision = classify_article(article)
                     if not decision.accepted:
@@ -3074,7 +3081,7 @@ def collect_news(
                         })
                         continue
 
-                if source.name in MILPRESS_SOURCES and is_milpress_consumer_news(
+                if apply_filters and source.name in MILPRESS_SOURCES and is_milpress_consumer_news(
                     article.title
                 ):
                     stat.setdefault("filtered_out", []).append({
@@ -3082,7 +3089,7 @@ def collect_news(
                     })
                     continue
 
-                if source.name in MILPRESS_SOURCES and clearly_foreign_milpress_article(
+                if apply_filters and source.name in MILPRESS_SOURCES and clearly_foreign_milpress_article(
                     article.title, article.text
                 ):
                     stat.setdefault("filtered_out", []).append({
