@@ -847,6 +847,27 @@ def is_probably_article_url(url: str) -> bool:
 # Сбор превью из RSS
 # =========================
 
+# Общие ленты РИА, ТАСС и Интерфакса публикуют много непрофильных новостей.
+# Просматриваем больше записей и выбираем технические/промышленные сюжеты.
+INDUSTRY_RSS_MARKERS = (
+    "промышлен", "производств", "завод", "предприяти", "машиностро",
+    "металлург", "станк", "судостро", "верф", "судоремонт", "судн",
+    "авиацион", "авиастро", "самолетостро", "самолётостро",
+    "нефт", "газопровод", "газодобы", "газоперераб", "газификац",
+    "горнодобы", "добыч", "месторожд", "рудник", "шахт",
+    "атомн", "реактор", "электроэнерг", "энергетик", "электростанц",
+    "оборудован", "двигател", "инженер", "робот", "автоматизац",
+    "микросхем", "полупроводник", "электроник", "технолог",
+    "инновац", "ржд", "железнодорож", "химическ", "нефтехим",
+    "логист", "грузоперевоз", "портов", "оборонн", "вооружени",
+)
+
+
+def matches_industrial_rss(title: str, summary: str) -> bool:
+    text = (title + " " + summary).lower().replace("ё", "е")
+    return any(marker in text for marker in INDUSTRY_RSS_MARKERS)
+
+
 def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
     previews = []
 
@@ -865,7 +886,10 @@ def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
 
     print(f"Найдено записей: {len(feed.entries)}")
 
-    for entry in feed.entries[:limit]:
+    is_general_feed = source.name in {"РИА Новости", "ТАСС", "Интерфакс"}
+    scan_limit = max(300, limit * 30) if is_general_feed else limit
+
+    for entry in feed.entries[:scan_limit]:
         title = clean_text(entry.get("title", ""))
         url = entry.get("link", "").strip()
         published_raw = entry.get("published") or entry.get("updated")
@@ -873,6 +897,9 @@ def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
         preview_text = extract_rss_text(entry)
 
         if not title or not url:
+            continue
+
+        if is_general_feed and not matches_industrial_rss(title, preview_text):
             continue
 
         previews.append(
@@ -884,6 +911,9 @@ def collect_rss_previews(source, limit: int) -> list[ArticlePreview]:
                 preview_text=preview_text,
             )
         )
+
+        if len(previews) >= limit:
+            break
 
     return previews
 
