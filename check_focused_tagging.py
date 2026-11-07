@@ -52,6 +52,10 @@ def main():
     parser.add_argument("--max-tags", type=int, default=2)
     parser.add_argument("--min-score", type=float, default=0.35)
     parser.add_argument(
+        "--tagger-mode", choices=("legacy", "hybrid"), default="legacy",
+        help="Режим выбора тэгов; по умолчанию старый SBERT без reranker",
+    )
+    parser.add_argument(
         "--summary-mode", choices=("textrank", "lead"), default="textrank",
         help="TextRank как в основном приложении или первые абзацы",
     )
@@ -108,7 +112,21 @@ def main():
             max_tags=args.max_tags, max_gap_from_best=0.05,
         )
         event_reason = nonindustrial_event_reason(title)
-        selected = [] if event_reason else raw_selected
+        baseline = [] if event_reason else raw_selected
+        decision = None
+        if args.tagger_mode == "hybrid":
+            from processing.tag_role_challenger import candidate_tags
+            decision = candidate_tags(
+                {"title": title, "summary_used": summary,
+                 "tags": raw_selected, "ranked": ranked},
+                min_score=args.min_score,
+                gap=0.05,
+                max_tags=args.max_tags,
+            )
+            selected = decision["tags"]
+            event_reason = decision["event_reason"]
+        else:
+            selected = baseline
         print(f"\n[{article.get('source') or 'Источник неизвестен'}] {title}")
         if event_reason:
             print(f"  Основное событие не промышленное: {event_reason}")
@@ -134,7 +152,9 @@ def main():
             "summary_used": summary,
             "tags": selected,
             "raw_tags_before_event_guard": raw_selected,
+            "baseline_tags": baseline,
             "event_guard_reason": event_reason,
+            "hybrid_details": decision,
             "ranked": ranked,
             "manual_tags": [],
         })
@@ -143,6 +163,7 @@ def main():
         "read_only": True,
         "filtering_applied": False,
         "mode": "focused_sbert_title_summary_body",
+        "tagger_mode": args.tagger_mode,
         "summary_mode": args.summary_mode,
         "threshold": args.min_score,
         "max_tags": args.max_tags,
