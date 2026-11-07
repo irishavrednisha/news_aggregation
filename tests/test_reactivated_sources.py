@@ -17,6 +17,7 @@ from collectors.data_collector import (
     collect_milpress_previews,
     collect_news,
     clearly_foreign_milpress_article,
+    is_foreign_general_rss,
     collect_rss_previews,
 )
 from database.repository import seed_sources
@@ -117,6 +118,28 @@ class ReactivatedSourcesTests(unittest.TestCase):
                 self.assertIn("завод", previews[0].title.lower())
                 self.assertEqual(previews[0].published_at, datetime(2026, 11, 7, 9))
                 self.assertEqual(request.call_args.kwargs["timeout"], (10, 30))
+
+    def test_international_rss_requires_russian_connection(self):
+        self.assertTrue(is_foreign_general_rss(
+            "https://www.interfax.ru/world/12345",
+            "Хуситы атаковали нефтяные объекты Саудовской Аравии",
+            "Йеменские повстанцы сообщили об ударах.",
+        ))
+        self.assertTrue(is_foreign_general_rss(
+            "https://tass.ru/mezhdunarodnaya-panorama/456",
+            "В Европе построили иностранный оборонный завод",
+            "Европейские компании инвестируют в производство.",
+        ))
+        self.assertFalse(is_foreign_general_rss(
+            "https://www.interfax.ru/world/12345",
+            "Российский завод заключил зарубежный контракт",
+            "Ростех поставит оборудование.",
+        ))
+        self.assertFalse(is_foreign_general_rss(
+            "https://www.interfax.ru/russia/12345",
+            "Промышленное предприятие открыли в Пензе",
+            "В Пензенской области заработала новая линия.",
+        ))
 
     def test_rss_http_failure_does_not_return_fake_articles(self):
         source = SimpleNamespace(
