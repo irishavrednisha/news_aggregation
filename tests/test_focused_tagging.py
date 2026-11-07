@@ -21,7 +21,8 @@ def load_functions():
     names = {
         "get_cluster_text_for_tagging", "cut_text",
         "score_tags_detailed", "_count_prepared_keywords",
-        "_normalize_tag_keyword", "select_tags_by_score_gap",
+        "_matching_prepared_keywords", "_normalize_tag_keyword",
+        "select_tags_by_score_gap",
     }
     nodes = [
         node for node in tree.body
@@ -82,6 +83,7 @@ class FocusedTaggingTests(unittest.TestCase):
                            scored[0]["body_similarity"])
         self.assertEqual(len(scored), 2)
         self.assertIn("focus_matches", scored[0])
+        self.assertIn("ледокол", scored[0]["focus_keywords"])
         selected = ns["select_tags_by_score_gap"](
             scored, min_score=0.35, max_tags=2, max_gap_from_best=0.05,
         )
