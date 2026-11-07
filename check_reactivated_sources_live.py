@@ -82,6 +82,8 @@ def main():
             "passed_filter": sum(e["passed_filter"] for e in examples),
             "dated": sum(e["published_at"] is not None for e in examples),
             "status": diagnostics.get(source.name, {}).get("status", "unknown"),
+            "skipped_by_filter": len(diagnostics.get(source.name, {}).get("filtered_out", [])),
+            "filtered_reasons": diagnostics.get(source.name, {}).get("filtered_out", [])[:10],
             "errors": diagnostics.get(source.name, {}).get("errors", [])[:5],
             "fetch_failures": diagnostics.get(source.name, {}).get(
                 "fetch_failures", []
@@ -107,7 +109,7 @@ def main():
         print(
             f"{name}: status={stat['status']}, candidates={stat['candidates']}, "
             f"collected={stat['collected']}, filtered={stat['passed_filter']}, "
-            f"dated={stat['dated']}"
+            f"dated={stat['dated']}, skipped={stat['skipped_by_filter']}"
         )
         for example in stat["examples"]:
             print(f"  - {example['title']} | {example['url']}")
