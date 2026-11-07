@@ -20,6 +20,7 @@ from collectors.data_collector import (
     is_foreign_general_rss,
     is_milpress_consumer_news,
     collect_rss_previews,
+    fetch_html,
 )
 from database.repository import seed_sources
 
@@ -268,6 +269,113 @@ class ReactivatedSourcesTests(unittest.TestCase):
         self.assertIn("Янтаре", articles[0].title)
         self.assertEqual(diagnostics["ФлотПром"]["accepted"], 1)
         self.assertEqual(len(diagnostics["ФлотПром"]["filtered_out"]), 2)
+
+
+    def test_ria_uses_larger_verified_archive_feed(self):
+        registered = []
+        with patch(
+            "database.repository.get_or_create_source",
+            side_effect=lambda **kwargs: registered.append(kwargs),
+        ):
+            seed_sources(None)
+        ria = next(s for s in registered if s["name"] == "РИА Новости")
+        self.assertEqual(
+            ria["rss_url"], "https://ria.ru/export/rss2/archive/index.xml",
+        )
+
+    def test_rss_excludes_foreign_actor_without_world_section(self):
+        self.assertTrue(is_foreign_general_rss(
+            "https://ria.ru/20261107/sudno-1000.html",
+            "США вывели из строя судно в Оманском заливе",
+            "",
+        ))
+        self.assertFalse(is_foreign_general_rss(
+            "https://ria.ru/20261107/stanok-1000.html",
+            "США закупили российские станки",
+            "Российский завод отправил оборудование на экспорт.",
+        ))
+
+    def test_rss_collector_scans_more_than_requested_publication_limit(self):
+        source = SimpleNamespace(
+            name="РИА Новости", url="https://ria.ru",
+            rss_url="https://ria.ru/export/rss2/archive/index.xml",
+            source_type="rss",
+        )
+        previews = [
+            ArticlePreview(
+                source=source.name,
+                title="В России отметили лучшие промышленные проекты",
+                url=f"https://ria.ru/20261107/news-{i}.html",
+                published_at=datetime(2026, 11, 7),
+                preview_text="",
+            )
+            for i in range(3)
+        ]
+        def make_article(p):
+            if p.url.endswith("news-0.html"):
+                title = "Дайджест главных новостей промышленности"
+            elif p.url.endswith("news-1.html"):
+                title = "Новостной заголовок"
+            else:
+                title = "Российский завод открыл производство двигателей"
+            return Article(
+                source=p.source, title=title, url=p.url,
+                published_at=p.published_at,
+                text="Российский завод модернизировал производство. " * 12,
+                text_source="html",
+            )
+        with (
+            patch(
+                "collectors.data_collector.collect_rss_previews",
+                return_value=previews,
+            ) as collector,
+            patch(
+                "collectors.data_collector.build_full_article",
+                side_effect=make_article,
+            ),
+            patch("collectors.data_collector.time.sleep"),
+        ):
+            result = collect_news([source], limit_per_source=1)
+        self.assertEqual(len(result), 1)
+        self.assertIn("двигателей", result[0].title)
+        self.assertGreaterEqual(collector.call_args.kwargs["limit"], 20)
+
+    def test_ria_tass_empty_html_shell_uses_browser_or_fails_closed(self):
+        shell = "<html><head><script>renderArticle()</script></head><body></body></html>"
+        article = (
+            "<html><h1>Российский завод ввёл в эксплуатацию новый станок</h1>"
+            "<article><p>В России модернизирован завод по выпуску "
+            "промышленного оборудования и новых станков для предприятий.</p>"
+            "</article></html>"
+        )
+        for url in (
+            "https://tass.ru/ekonomika/28295367",
+            "https://ria.ru/20261107/stanok-123.html",
+        ):
+            with self.subTest(url=url):
+                with (
+                    patch(
+                        "collectors.data_collector.fetch_html_with_requests",
+                        return_value=shell,
+                    ),
+                    patch(
+                        "collectors.data_collector.fetch_html_with_browser",
+                        return_value=article,
+                    ) as browser,
+                ):
+                    self.assertIn("Российский завод", fetch_html(url))
+                    browser.assert_called_once()
+                with (
+                    patch(
+                        "collectors.data_collector.fetch_html_with_requests",
+                        return_value=shell,
+                    ),
+                    patch(
+                        "collectors.data_collector.fetch_html_with_browser",
+                        return_value=shell,
+                    ),
+                ):
+                    self.assertEqual(fetch_html(url), "")
 
 
 if __name__ == "__main__":
