@@ -2057,7 +2057,7 @@ def _parse_published(value):
         pass
 
     match = re.search(
-        r"\b(\d{1,2})[ .]+([а-яё]+)[ .]+(\d{4})(?:\s*г(?:ода|\.)?)?\s*,?\s*(\d{1,2}:\d{2})?",
+        r"\b(\d{1,2})[ .]+([а-яё]+)[ .]+(\d{4})(?:\s*г(?:ода|\.)?)?\s*,?\s*(?:в\s+)?(\d{1,2}:\d{2})?",
         str(value).lower()
     )
     if match and match.group(2) in _RU_MONTHS:
@@ -2380,6 +2380,29 @@ def _source_article_headline_date(soup, source_name, title):
 
 def _source_specific_published_date(soup, source_name):
     """Даты из подтверждённых HTML-контейнеров конкретных сайтов."""
+    if source_name in MILPRESS_SOURCES:
+        heading = soup.find("h1")
+        if heading:
+            # Mil.Press: «Важное 6 ноября 2026 в 10:07» рядом с h1.
+            date_pattern = re.compile(
+                r"\b\d{1,2}\s+[а-яё]+\s+20\d{2}\s+в\s+"
+                r"\d{1,2}:\d{2}\b", re.I,
+            )
+            headline = clean_text(heading.get_text(" ", strip=True))
+            inspected = 0
+            for node in heading.next_elements:
+                if not isinstance(node, str):
+                    continue
+                value = clean_text(node)
+                if not value or value == headline:
+                    continue
+                inspected += 1
+                if inspected > 15 or len(value) > 220:
+                    break
+                match = date_pattern.search(value)
+                if match:
+                    return _parse_published(match.group())
+
     if source_name == "Ростех":
         # Реальный HTML: <div class="media-news-single__date">
         #   <span class="date">06.11.2026</span>
