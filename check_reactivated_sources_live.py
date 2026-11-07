@@ -125,6 +125,8 @@ def main():
                 f"published_at={example['published_at']}, "
                 f"passed_filter={example['passed_filter']}"
             )
+        for excluded in stat["filtered_reasons"][:4]:
+            print(f"    SKIPPED: {excluded['reason']} | {excluded['url']}")
         for error in stat["errors"][:2]:
             print(f"    ERROR: {error}")
     print(f"Report: {destination}")
