@@ -17,6 +17,8 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
+from processing.tagging_event_guard import nonindustrial_event_reason
+
 
 def read_references(path: Path, include_drafts: bool = False) -> dict[str, dict]:
     if path.suffix.lower() == ".csv":
@@ -119,6 +121,8 @@ def metrics(rows: list[tuple[dict, dict]], predictions=None) -> dict:
 
 def threshold_tags(record: dict, weight: float, minimum: float,
                    gap: float, max_tags: int) -> list[str]:
+    if record.get("event_guard_reason"):
+        return []
     ranked = record.get("ranked") or []
     scored = []
     for entry in ranked:
@@ -143,6 +147,39 @@ def threshold_tags(record: dict, weight: float, minimum: float,
         tag for tag, score in scored
         if score >= minimum and (best - score) <= gap + 1e-9
     ][:max_tags]
+
+
+def compare_event_guard(rows: list[tuple[dict, dict]]) -> dict:
+    """Compare headline veto using stored SBERT scores (no model rerun).
+
+    If audit already ran guard, compare with its raw_tags_before_event_guard.
+    Gold labels may be drafts: this is an experiment, not proof of accuracy.
+    """
+    def before(row):
+        return row.get("raw_tags_before_event_guard", row.get("tags") or [])
+
+    def after(row):
+        return [] if nonindustrial_event_reason(row.get("title") or "") else before(row)
+
+    train = [(r, g) for r, g in rows if bucket(g["url"]) == "train"]
+    holdout = [(r, g) for r, g in rows if bucket(g["url"]) == "holdout"]
+
+    def stats(subset):
+        return {
+            name: {k: v for k, v in metrics(subset, fn).items()
+                   if k not in ("per_tag", "errors")}
+            for name, fn in (("before", before), ("after", after))
+        }
+
+    return {
+        "blocked_headlines": sum(bool(nonindustrial_event_reason(r.get("title") or ""))
+                                 for r, _ in rows),
+        "total": stats(rows),
+        "train": stats(train),
+        "holdout": stats(holdout),
+        "warning": ("Preliminary unless all reference labels have been reviewed. "
+                    "No hyperparameters are fitted in this comparison."),
+    }
 
 
 def bucket(url: str) -> str:
@@ -203,6 +240,8 @@ def main() -> None:
                    help="ПРЕДВАРИТЕЛЬНЫЕ метрики по непроверенным меткам")
     p.add_argument("--optimize", action="store_true",
                    help="Перебор весов/порогов на train с проверкой на holdout")
+    p.add_argument("--event-guard", action="store_true",
+                   help="Сравнить удаление очевидных непрофильных событий без повторного SBERT")
     p.add_argument("--max-tags", type=int, default=2)
     p.add_argument("--baseline", type=Path, help="Старый NLI/SBERT отчёт для сравнения по общим URL")
     p.add_argument("--output", type=Path,
@@ -231,6 +270,8 @@ def main() -> None:
     }
     if args.optimize:
         report["optimization"] = optimize(rows, args.max_tags)
+    if args.event_guard:
+        report["event_guard_comparison"] = compare_event_guard(rows)
     if args.baseline:
         old = read_predictions(args.baseline)
         common = {url: ref for url, ref in references.items()
@@ -252,6 +293,16 @@ def main() -> None:
     if args.optimize:
         print("Оптимизация:", report["optimization"].get("parameters",
               report["optimization"].get("status")))
+    if args.event_guard:
+        comparison = report["event_guard_comparison"]
+        before = comparison["holdout"]["before"]
+        after = comparison["holdout"]["after"]
+        print(
+            f"Проверка событий (holdout): F1 {before['micro_f1']:.3f}"
+            f" -> {after['micro_f1']:.3f}; Precision"
+            f" {before['precision']:.3f} -> {after['precision']:.3f};"
+            f" исключено заголовков: {comparison['blocked_headlines']}"
+        )
     if args.baseline:
         c = report["comparison"]
         print(f"На тех же {c['same_urls']} статьях: новый F1={c['focused_sbert']['micro_f1']:.3f}, "
