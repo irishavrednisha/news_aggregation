@@ -16,6 +16,24 @@ SHIP_COMBINED = re.compile(rf"(?:{SHIP_EVENT}.{{0,65}}{SHIP_VESSEL}|{SHIP_VESSEL
 AIRCRAFT_OBJECT = re.compile(r"(?:самолет\w*|вертолет\w*|авиационн\w*|авиастроен\w*|авиадвигател\w*|ил-\d+|су-\d+|пд-\d+|мс-\d+|ssj|sj-100|беспилотник\w*|бпла)")
 AIRCRAFT_PRODUCTION = re.compile(r"(?:разработ\w*|изготов\w*|выпуст\w*|производ\w*|постав\w*|создал\w*|испыт\w*|сертифицир\w*|модерниз\w*)")
 DRONE_MANUFACTURING = re.compile(r"(?:производ\w*|изготов\w*|разработ\w*).{0,28}(?:беспилотник\w*|бпла)")
+
+# A round-up of several unrelated events does not have one industry topic.
+# This is a tagging-only rule; the collector still saves the full material.
+DIGEST_HEADLINE = re.compile(
+    r"^(?:дайджест\b|главн(?:ое|ые)\b.{0,90}\bза\s+недел\w*\b|"
+    r"обзор\s+новост\w*\b|подборка\s+новост\w*\b|"
+    r"итоги\s+недел\w*\s*[:\-])"
+)
+# Polysemy: an explosive sea/land mine is NOT a mineral deposit.
+MILITARY_MINE = re.compile(
+    r"\b(?:донн\w*|морск\w*|противокорабельн\w*|"
+    r"противопехотн\w*|противотанк\w*)\s+мин\w*\b"
+    r"|\bмин\w*\s+для\s+(?:морск\w*|флот\w*|корабл\w*)\b"
+)
+GEOLOGICAL_EVIDENCE = re.compile(
+    r"\b(?:добыч\w*|добыва\w*|рудник\w*|руд\w*|"
+    r"шахт\w*|месторожд\w*|геолог\w*|ископаем\w*)\b"
+)
 PROCESS_TITLE_PATTERNS = (
     re.compile(r"(?:модернизац\w*\s+производств\w*|модернизир\w*.{0,80}производств\w*)"),
     re.compile(r"(?:наращива\w*|расширя\w*|запуст\w*|налажива\w*|возобнов\w*|возрожда\w*|откр\w*).{0,55}(?:выпуск\w*|производств\w*|переработк\w*|производственн\w*\s+лини\w*)"),
@@ -56,10 +74,14 @@ def candidate_tags(record: dict, *, min_score: float = 0.35,
     title = str(record.get("title") or "")
     summary = str(record.get("summary_used") or "")
     event_reason = nonindustrial_event_reason(title)
+    if DIGEST_HEADLINE.search(normalized(title)):
+        event_reason = "news_roundup"
     if event_reason:
         return {"tags": [], "event_reason": event_reason,
                 "rejected_categories": [], "production_process": False}
 
+    military_mine = bool(MILITARY_MINE.search(normalized(title)))
+    mineral_evidence = bool(GEOLOGICAL_EVIDENCE.search(normalized(title)))
     ship_ok = shipbuilding_evidence(title, summary)
     air_ok = aviation_production_evidence(title, summary)
     scores = sorted(
@@ -69,13 +91,22 @@ def candidate_tags(record: dict, *, min_score: float = 0.35,
         key=lambda item: float(item["final_score"]), reverse=True,
     )
     eligible, rejected = [], []
+    original_tags = set(record.get("raw_tags_before_event_guard",
+                                   record.get("tags") or []))
     for entry in scores:
         tag = entry["tag"]
-        if tag == "судостроение" and not ship_ok:
-            rejected.append(tag)
-            continue
-        if tag == "авиация" and not air_ok:
-            rejected.append(tag)
+        disallowed = (
+            (tag == "судостроение" and not ship_ok)
+            or (tag == "авиация" and not air_ok)
+            or (tag == "горнодобывающая промышленность"
+                and military_mine and not mineral_evidence)
+        )
+        if disallowed:
+            # Report only tags the original algorithm actually assigned.
+            # Old diagnostics misleadingly listed irrelevant low-score tags
+            # as "rejected" for almost every industrial article.
+            if tag in original_tags:
+                rejected.append(tag)
             continue
         eligible.append(entry)
     best = float(eligible[0]["final_score"]) if eligible else None
