@@ -11,10 +11,12 @@ from unittest.mock import patch
 from requests.exceptions import HTTPError
 
 from collectors.data_collector import (
-    ArticlePreview,
+    Article, ArticlePreview,
     _is_real_article_link,
     build_full_article,
     collect_milpress_previews,
+    collect_news,
+    clearly_foreign_milpress_article,
     collect_rss_previews,
 )
 from database.repository import seed_sources
@@ -166,6 +168,68 @@ class ReactivatedSourcesTests(unittest.TestCase):
         self.assertIn("роботизированная линия", article.text)
         self.assertNotIn("ипотеке", article.text)
         self.assertEqual(article.text_source, "html")
+
+
+    def test_milpress_foreign_relevance_with_russia_exception(self):
+        self.assertTrue(clearly_foreign_milpress_article(
+            "Финляндия поставит донные мины для датского флота",
+            "Финские компании поставляют мины военно-морским силам Дании.",
+        ))
+        self.assertFalse(clearly_foreign_milpress_article(
+            "Финляндия поставит оборудование для России",
+            "Российские предприятия закупили оборудование.",
+        ))
+        self.assertFalse(clearly_foreign_milpress_article(
+            'На "Янтаре" автоматизируют линию резки металла',
+            "Завод ОСК внедрил роботизированную линию.",
+        ))
+
+    def test_milpress_does_not_stop_on_rejected_news(self):
+        source = SimpleNamespace(
+            name="ФлотПром", url="https://flotprom.ru/2026/",
+            rss_url=None, source_type="html",
+        )
+        def preview(title, slug):
+            return ArticlePreview(
+                source="ФлотПром", title=title,
+                url=f"https://flotprom.ru/2026/{slug}/",
+                published_at=None, preview_text="",
+            )
+        previews = [
+            preview("Главное в отраслевых СМИ за неделю: обзор событий", "Дайджест39"),
+            preview("Финляндия поставит донные мины для датского флота", "Европа130"),
+            preview('На "Янтаре" автоматизируют линию резки металла', "Янтарь5"),
+        ]
+        def make_article(p):
+            if "Дайджест" in p.url:
+                text = "Обзор отраслевых событий за неделю. " * 20
+            elif "Европа" in p.url:
+                text = "Финские компании поставляют военные технологии Дании. " * 15
+            else:
+                text = "На заводе Янтарь ОСК введена новая линия резки металла. " * 12
+            return Article(
+                source=p.source, title=p.title, url=p.url,
+                published_at=None, text=text, text_source="html",
+            )
+        with (
+            patch(
+                "collectors.data_collector.collect_milpress_previews",
+                return_value=previews,
+            ),
+            patch(
+                "collectors.data_collector.build_full_article",
+                side_effect=make_article,
+            ),
+            patch("collectors.data_collector.time.sleep"),
+        ):
+            diagnostics = {}
+            articles = collect_news(
+                [source], limit_per_source=1, diagnostics=diagnostics,
+            )
+        self.assertEqual(len(articles), 1)
+        self.assertIn("Янтарь", articles[0].title)
+        self.assertEqual(diagnostics["ФлотПром"]["accepted"], 1)
+        self.assertEqual(len(diagnostics["ФлотПром"]["filtered_out"]), 2)
 
 
 if __name__ == "__main__":
