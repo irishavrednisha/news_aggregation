@@ -399,6 +399,84 @@ Gemma **никогда** не используется. Используется
 редактора; Qwen цитирует только исходный текст статьи.
 Никаких изменений основного алгоритма, БД или MAX.
 
+## Отладка цитат, планы запуска и независимая оценка (обновлено)
+
+Решения в экспериментальном \`processing/local_news_llm.py\`:
+
+1. В режиме \`--tags-only\` Qwen просят вернуть только 1–2 **коротких**
+   подтверждающих фрагмента, а не 3–5 длинных для последующей суммаризации.
+2. Проверка цитат сохраняет номера, слова и отрицания, но допускает
+   **только типографские** эквиваленты кавычек, дефисов и пробелов.
+   Возвращается фрагмент оригинального текста с точными символами.
+   Не производится fuzzy-подбор по смыслу. При ошибке виден номер и
+   начало неправильной \`evidence\`; после повторной попытки решение
+   не может незаметно поменять теги или релевантность.
+3. Конкретные **планы** запуска производства не следует отвергать
+   только потому, что производство ещё не началось. Если Qwen
+   отклоняет явно выраженный в заголовке будущий производственный
+   проект, вместо уверенного \`false\` возвращаются \`relevant=null\`
+   и \`industrial_plan_requires_editorial_review\` для ручной проверки.
+   Положительные решения о планах помечаются \`model_uncertain\`.
+   Правила описаны в \`TAGGING_POLICY.md\`.
+
+Обновлённый сравнительный диагностический запуск на старых 25 статьях
+(не независимое измерение качества):
+
+\`\`\`powershell
+.\.venv\Scripts\python.exe check_local_news_llm.py tagging_fresh_25.json --limit 25 --model qwen3.5:4b --tags-only --gemma-report collector_test_results/gemma_for_tags25.json --fallback-extractive --output collector_test_results/qwen_gemma_fallback25_after_fixes.json
+\`\`\`
+
+### Отдельный тест по новым статьям
+
+В проекте уже есть процедура независимой разметки
+\`scripts.real_news_review\` — её используем, **не создаём
+искусственный gold** из Qwen/SBERT. Сначала соберите другой набор
+статей в JSON формата \`{"articles": [...]}\` (например
+\`collector_test_results/new_articles.json\`). Затем:
+
+\`\`\`powershell
+.\.venv\Scripts\python.exe -m scripts.real_news_review prepare --news collector_test_results/new_articles.json --exclude tagging_fresh_25.json --out training/real_review_nov2026 --max 120 --per-source 15
+\`\`\`
+
+В \`training/real_review_nov2026/review_sheet.csv\` вручную, без
+прогнозов тэггеров, укажите \`review_status=verified\`,
+\`relevant\`, \`tags\`, дословные \`evidence_1...5\`, \`summary\`
+и пояснения в \`notes\`. Не подтверждённые записи остаются draft.
+Для каждого конкретного планируемого производства уточняйте степень
+достоверности и решение редактора в \`notes\`.
+
+\`\`\`powershell
+.\.venv\Scripts\python.exe -m scripts.real_news_review finalize --review-dir training/real_review_nov2026 --output-dir training/news_sft
+\`\`\`
+
+\`real_gold_verified.json\` создаётся только из вручную подтверждённых
+новых реальных материалов. Train не перезаписывается. Для
+**одних и тех же новых статей** получите независимые прогнозы:
+
+\`\`\`powershell
+.\.venv\Scripts\python.exe check_focused_tagging.py collector_test_results/new_articles.json --limit 120 --tagger-mode legacy --output collector_test_results/legacy_new_real.json
+
+.\.venv\Scripts\python.exe check_extractive_rewrite.py collector_test_results/new_articles.json --limit 120 --rewrite-mode whole --model gemma3:4b --output collector_test_results/gemma_new_real.json
+
+.\.venv\Scripts\python.exe check_local_news_llm.py collector_test_results/new_articles.json --limit 120 --model qwen3.5:4b --tags-only --gemma-report collector_test_results/gemma_new_real.json --fallback-extractive --output collector_test_results/qwen_new_real.json
+\`\`\`
+
+Сравните модельные результаты **только по вручную подтверждённому
+validation** без подбора по финальному test:
+
+\`\`\`powershell
+.\.venv\Scripts\python.exe -m scripts.compare_real_tagging training/news_sft/real_gold_verified.json --audit legacy=collector_test_results/legacy_new_real.json --audit qwen=collector_test_results/qwen_new_real.json --split validation --output collector_test_results/compare_verified_validation.json
+\`\`\`
+
+Отчёт содержит для каждого варианта \`coverage\`, причины
+\`unresolved\`, Precision/Recall/F1 только по обработанным и отдельно
+по общей для обеих моделей подвыборке. \`null\`/ошибки/пропуски
+**не учитываются как корректный отрицательный ответ**.
+Validation используется для анализа ошибок и правок;
+\`--split test\` — единственный заранее зафиксированный финальный
+контроль после завершения настройки. Не тренируйте на нём модель.
+Ни одна из команд не пишет в MAX/PostgreSQL.
+
 ## Подготовка
 
 Поместить в корень репозитория два файла, собранных из предыдущих
