@@ -69,8 +69,17 @@ def normalized(*parts: str) -> str:
 
 
 def shipbuilding_evidence(title: str, summary: str) -> bool:
-    text = normalized(title, summary)
-    return bool(SHIP_CUE.search(text) or SHIP_COMBINED.search(text))
+    # Never match 'manufactures fish products' in the title to an
+    # unrelated 'fleet of 51 vessels' in the summary. Treat sentences
+    # as independent event descriptions, not one concatenated regex.
+    for paragraph in (normalized(title), normalized(summary)):
+        if SHIP_CUE.search(paragraph):
+            return True
+        if any(SHIP_COMBINED.search(sentence)
+               for sentence in re.split(r"[.!?;]+", paragraph)
+               if sentence.strip()):
+            return True
+    return False
 
 
 def aviation_production_evidence(title: str, summary: str) -> bool:
