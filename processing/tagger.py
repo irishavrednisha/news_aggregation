@@ -1645,6 +1645,8 @@ def tag_cluster(
     if not cluster:
         return []
 
+    review_pending = cluster.status == "review_required"
+
     if not cluster.summary_text or not cluster.summary_text.strip():
         cluster.tags = None
         cluster.status = "not_for_publication"
@@ -1724,14 +1726,17 @@ def tag_cluster(
             # нерелевантности. Оставляем кластер новым для повтора
             # и ни в коем случае не переводим его в ready.
             cluster.tags = None
-            cluster.status = "new"
+            cluster.status = "review_required" if review_pending else "new"
             session.commit()
             print(f"AI-тегирование кластера #{cluster.id} не выполнено: "
                   f"{type(exc).__name__}: {exc}")
             return []
 
         cluster.tags = ", ".join(prediction.tags) if prediction.tags else None
-        cluster.status = "ready" if prediction.tags else "not_for_publication"
+        from processing.summary_pipeline import tagged_summary_status
+        cluster.status = tagged_summary_status(
+            prediction.tags, review_pending=review_pending
+        )
         session.commit()
         if debug:
             print("-" * 100)
@@ -1803,12 +1808,11 @@ def tag_cluster(
 
     # Проверка связи с РФ уже выполнена выше и завершает функцию.
     # Не перезаписываем статус повторным блоком.
-    if selected_tags:
-        cluster.tags = ", ".join(selected_tags)
-        cluster.status = "ready"
-    else:
-        cluster.tags = None
-        cluster.status = "not_for_publication"
+    from processing.summary_pipeline import tagged_summary_status
+    cluster.tags = ", ".join(selected_tags) if selected_tags else None
+    cluster.status = tagged_summary_status(
+        selected_tags, review_pending=review_pending
+    )
 
     session.commit()
 
@@ -1848,7 +1852,7 @@ def tag_new_clusters(
         session.query(Cluster)
         .filter(Cluster.summary_text.isnot(None))
         .filter(Cluster.tags.is_(None))
-        .filter(Cluster.status == "new")
+        .filter(Cluster.status.in_(("new", "review_required")))
         .all()
     )
 
