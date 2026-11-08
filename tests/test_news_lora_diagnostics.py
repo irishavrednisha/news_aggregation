@@ -170,6 +170,25 @@ class DiagnosticsTests(unittest.TestCase):
             [("fact_tagging", "a"), ("abstractive_summary", "a")],
         )
 
+    def test_task_filter_keeps_only_requested_task(self):
+        rows = [
+            {"task": "fact_tagging", "story_id": "a"},
+            {"task": "abstractive_summary", "story_id": "a"},
+            {"task": "fact_tagging", "story_id": "b"},
+            {"task": "abstractive_summary", "story_id": "b"},
+        ]
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "validation.jsonl"
+            path.write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+            selected = select_rows(path, 0, "fact_tagging")
+            self.assertEqual([r["story_id"] for r in selected], ["a", "b"])
+            self.assertEqual([r["task"] for r in select_rows(path, 1, "abstractive_summary")],
+                             ["abstractive_summary"])
+            self.assertEqual(len(select_rows(path, 0)), 4)
+
     def test_summary_reports_failures_and_skips(self):
         rows = [
             {"task": "fact_tagging", "grade": {

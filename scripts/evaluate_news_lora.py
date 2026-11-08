@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 
-def select_rows(path: Path, limit_per_task: int) -> list[dict]:
+def select_rows(path: Path, limit_per_task: int, task_filter: str = "both") -> list[dict]:
     counts = Counter()
     rows = []
     with path.open(encoding="utf-8") as stream:
@@ -21,6 +21,8 @@ def select_rows(path: Path, limit_per_task: int) -> list[dict]:
                 continue
             row = json.loads(line)
             task = row.get("task", "unknown")
+            if task_filter != "both" and task != task_filter:
+                continue
             if limit_per_task > 0 and counts[task] >= limit_per_task:
                 continue
             counts[task] += 1
@@ -156,6 +158,8 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit-per-task", type=int, default=8,
                         help="0 evaluates every record; positive number selects first N of each task")
+    parser.add_argument("--task", choices=["both", "fact_tagging", "abstractive_summary"],
+                        default="both", help="Diagnose classification and summary independently")
     parser.add_argument("--max-seq-length", type=int, default=2048)
     parser.add_argument("--max-new-tokens", type=int, default=512)
     args = parser.parse_args()
@@ -167,7 +171,9 @@ def main() -> None:
         parser.error("Local checkpoint/adapter not found: " + args.model)
     if args.output.exists():
         parser.error("Output already exists. Choose a fresh filename; never overwrite a comparison.")
-    rows = select_rows(args.data_dir / (args.split + ".jsonl"), args.limit_per_task)
+    rows = select_rows(
+        args.data_dir / (args.split + ".jsonl"), args.limit_per_task, args.task
+    )
     if not rows:
         parser.error("No examples selected")
 
@@ -232,6 +238,7 @@ def main() -> None:
     metrics = summarize(results)
     metrics["model"] = args.model
     metrics["split"] = args.split
+    metrics["task_filter"] = args.task
     metrics["output"] = str(args.output)
     metrics_path = args.output.with_suffix(".metrics.json")
     metrics_path.write_text(
