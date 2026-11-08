@@ -279,8 +279,9 @@ def analyze_news(
     title: str, article: str, *,
     model: str = "qwen3.5:4b",
     request: Callable | None = None,
+    tags_only: bool = False,
 ) -> NewsDecision:
-    """Two-pass local inference. Fails closed; NEVER silently publishes."""
+    """Local classification with optional summary. Always a review-only draft."""
     source = source_payload(title, article)
     call = request if request is not None else ollama_chat
     raw = call(extract_messages(title, article), FACT_FORMAT, model=model)
@@ -314,6 +315,13 @@ def analyze_news(
             )
     if not relevant:
         return NewsDecision(False, [], "", [], bool(uncertain), [], model)
+    if tags_only:
+        # The same validated evidence-backed tag decision, without an
+        # unrelated second-generation summary request.
+        return NewsDecision(
+            True, tags, "", evidence, True,
+            ["model_uncertain"] if uncertain else [], model,
+        )
     second = call(summary_messages(evidence), SUMMARY_FORMAT, model=model)
     summary = second.get("summary")
     warnings = validate_summary(summary, evidence)
