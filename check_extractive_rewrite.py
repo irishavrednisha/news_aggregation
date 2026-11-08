@@ -57,7 +57,12 @@ def main() -> None:
         ) if source else ""
         rewrite = rewrite_extractive_whole if args.rewrite_mode == "whole" else rewrite_extractive
         result = rewrite(extractive, model=args.model)
+        outcome = (
+            "edited" if result.rewritten else
+            ("rejected" if result.warnings else "unchanged")
+        )
         row = {
+            "editorial_outcome": outcome,
             "source_quality_warnings": audit_source_alignment(title, extractive),
             "title": title, "url": item.get("url"),
             "source": item.get("source"),
@@ -67,7 +72,7 @@ def main() -> None:
         results.append(row)
         print(
             f"[{i}/{min(len(articles), args.limit)}] {title[:58]}: "
-            f"{'переписано' if result.rewritten else 'оставлен TextRank'}; "
+            f"{'отредактировано' if outcome == 'edited' else ('без правок' if outcome == 'unchanged' else 'отклонено')}; "
             f"предупреждений={len(result.warnings)}",
             flush=True,
         )
@@ -86,6 +91,8 @@ def main() -> None:
         "count": len(results),
         "rewritten_count": sum(r["rewritten"] for r in results),
         "fallback_count": sum(not r["rewritten"] for r in results),
+        "unchanged_count": sum(r["editorial_outcome"] == "unchanged" for r in results),
+        "rejected_count": sum(r["editorial_outcome"] == "rejected" for r in results),
         "results": results,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -94,7 +101,11 @@ def main() -> None:
         encoding="utf-8",
     )
     print(f"Отчёт: {args.output}")
-    print(f"Переписано: {report['rewritten_count']}; TextRank без изменений: {report['fallback_count']}")
+    print(
+        f"Отредактировано: {report['rewritten_count']}; "
+        f"не потребовались правки: {report['unchanged_count']}; "
+        f"отклонено: {report['rejected_count']}"
+    )
 
 
 if __name__ == "__main__":
