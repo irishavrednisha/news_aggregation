@@ -78,6 +78,63 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1][1], SUMMARY_FORMAT)
 
+    def test_exact_source_copy_is_flagged(self):
+        quote = (
+            "Предприятие освоило новую технологическую линию производства "
+            "промышленных насосов и испытало все агрегаты на стенде."
+        )
+        self.assertIn(
+            "summary_near_verbatim",
+            validate_summary(quote, [quote]),
+        )
+        self.assertNotIn(
+            "summary_near_verbatim",
+            validate_summary(
+                "Компания запустила выпуск насосов и проверила новое "
+                "оборудование в ходе заводских испытаний.",
+                [quote],
+            ),
+        )
+
+    def test_near_verbatim_summary_is_rewritten_once(self):
+        exact = EVIDENCE[0]
+        replies = [
+            {"relevant": True, "tags": ["электротехническое направление"],
+             "evidence": EVIDENCE, "uncertain": False},
+            {"summary": exact},
+            {"summary": "Компания выпустила трансформаторы для электросетей. "
+                        "Их изоляция прошла заводские испытания."},
+        ]
+        calls = []
+
+        def fake_request(messages, schema, **kwargs):
+            calls.append(messages)
+            return replies[len(calls) - 1]
+
+        result = analyze_news(TITLE, BODY, request=fake_request)
+        self.assertEqual(len(calls), 3)
+        self.assertFalse(result.warnings)
+        self.assertIn("Компания выпустила", result.summary)
+        self.assertTrue(result.review_required)
+
+    def test_failed_rewrite_remains_warning_for_review(self):
+        replies = [
+            {"relevant": True, "tags": ["электротехническое направление"],
+             "evidence": EVIDENCE, "uncertain": False},
+            {"summary": EVIDENCE[0]},
+            {"summary": EVIDENCE[0]},
+        ]
+        calls = []
+
+        def fake_request(messages, schema, **kwargs):
+            calls.append(messages)
+            return replies[len(calls) - 1]
+
+        result = analyze_news(TITLE, BODY, request=fake_request)
+        self.assertEqual(len(calls), 3)
+        self.assertIn("summary_near_verbatim", result.warnings)
+        self.assertTrue(result.review_required)
+
     def test_unrelated_news_does_not_generate_summary(self):
         calls = []
         def fake_request(messages, schema, **kwargs):
