@@ -2,7 +2,8 @@
 import unittest
 
 from processing.local_news_llm import (
-    TAGS, FACT_FORMAT, SUMMARY_FORMAT,
+    TAGS, FACT_FORMAT, SUMMARY_FORMAT, FACT_SYSTEM, SUMMARY_SYSTEM,
+    extract_messages, summary_messages,
     source_payload, validate_evidence,
     validate_fact_decision, validate_summary, analyze_news,
 )
@@ -124,6 +125,16 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(result.summary, "")
         self.assertIn("summary_discarded_too_long", result.warnings)
         self.assertTrue(result.review_required)
+
+    def test_prompts_prefer_diverse_source_facts_without_padding(self):
+        fact_prompt = extract_messages(TITLE, BODY)[1]["content"]
+        summary_prompt = summary_messages(EVIDENCE)[1]["content"]
+        self.assertIn("3–5", fact_prompt)
+        self.assertIn("технические детали", summary_prompt)
+        self.assertIn("«примерно»", FACT_SYSTEM)
+        self.assertIn("«примерно»", SUMMARY_SYSTEM)
+        self.assertIn("не растягивай", summary_prompt)
+        self.assertIn("организации", FACT_SYSTEM)
 
     def test_exact_source_copy_is_flagged(self):
         quote = (
