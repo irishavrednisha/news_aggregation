@@ -288,7 +288,7 @@ def check_paraphrase(source: str, rewritten: str) -> list[str]:
     missing_quoted = {
         name for name in missing_quoted
         if not any(
-            re.search(r"(?<!\\w)" + re.escape(name) + r"(?!\\w)", full)
+            re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", full)
             for full in rewritten_quoted
         )
     }
