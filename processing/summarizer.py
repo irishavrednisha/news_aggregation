@@ -60,6 +60,14 @@ BAD_STARTS = [
     "после этого",
     "до этого",
     "в результате этого",
+    # Deictic phrases require context which TextRank may omit.
+    "мы",
+    "я",
+    "и это",
+    "а мы",
+    "отметим",
+    "а на следующий год",
+    "на следующий год",
 ]
 BAD_CONTEXT_PHRASES = [
     "именно тогда",
@@ -75,6 +83,9 @@ BAD_CONTEXT_PHRASES = [
     "рассказал",
     "рассказала",
     "рассказали",
+    "по ней",
+    "буквально вчера",
+    "а мы тут",
 ]
 FACT_WORDS = [
     "запустил", "запустила", "запустили",
@@ -256,8 +267,9 @@ def remove_title_like_sentences(sentences: list[str], title: str | None) -> list
 def starts_badly(sentence: str) -> bool:
     key = normalize_sentence_key(sentence)
 
+    # Match whole opening words: "он" must not accidentally block "онлайн".
     return any(
-        key.startswith(start)
+        key == start or key.startswith(start + " ")
         for start in BAD_STARTS
     )
 
@@ -384,8 +396,11 @@ def build_textrank_summary(
 
     # Если фильтр оказался слишком строгим, возвращаемся к исходным,
     # но всё равно не берём совсем плохие короткие куски.
-    if good_sentences:
-        sentences = good_sentences
+    # If every sentence needs missing context, do not manufacture a
+    # 'self-contained' summary by falling back to unsuitable snippets.
+    if not good_sentences:
+        return ""
+    sentences = good_sentences
 
     if len(sentences) == 1:
         return limit_summary(sentences[0], max_chars=max_chars)
