@@ -97,6 +97,9 @@ class LocalLLMTests(unittest.TestCase):
             {"editorial_outcome": "rejected"},
             {"review_required": False},
             {"warnings": ["lost_exclusivity"]},
+            {"source_quality_warnings": [
+                "press_service_not_aligned_with_headline:review_source"
+            ]},
             {"text": ""},
             {"publication_performed": True},
         ):
