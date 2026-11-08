@@ -93,6 +93,8 @@ def main() -> None:
     if args.max_steps < 1 or args.max_seq_length < 512:
         p.error("Некорректное число шагов или длина контекста")
 
+    # Unsloth must patch Transformers before its first import.
+    from unsloth import FastLanguageModel
     # Stop before heavyweight model loading if labels will be truncated.
     from transformers import AutoTokenizer
     from scripts.audit_news_lora import audit as audit_lengths
@@ -108,8 +110,7 @@ def main() -> None:
               "a sufficiently large GPU-compatible context. Original data unchanged."
         )
 
-    # Import Unsloth first, per supported local fine-tuning setup.
-    from unsloth import FastLanguageModel
+    # Unsloth was imported above, before Transformers.
     import torch
     from datasets import load_dataset
     from trl import SFTTrainer, SFTConfig
