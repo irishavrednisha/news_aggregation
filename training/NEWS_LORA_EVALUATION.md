@@ -18,12 +18,17 @@
     source ~/qwen-env/bin/activate
     python -m scripts.audit_news_lora --data-dir training/news_sft --max-length 1024 --output reports/token_audit.json
 
-После аудита сравните исходную модель, checkpoint-50 и последний адаптер
-на **одной и той же validation**, а НЕ test, например по 8 примеров двух
-задач. Каждый запуск загрузит лишь одну модель в GPU, не все одновременно:
+После аудита сравните исходную модель и реально сохранившиеся адаптеры.
+Старый запуск использовал save_total_limit=2 без load_best_model_at_end,
+поэтому checkpoint-50, вероятно, удалён. Проверьте содержимое папки:
+
+    find models/news_qwen_lora -maxdepth 2 -name adapter_config.json -print
+
+Сравните на **одной и той же validation**, а НЕ test, например по 8
+примеров двух задач. Каждый запуск загружает лишь одну модель в GPU:
 
     python -m scripts.evaluate_news_lora --model unsloth/Qwen3.5-2B --output reports/val_base.jsonl
-    python -m scripts.evaluate_news_lora --model models/news_qwen_lora/checkpoint-50 --output reports/val_step50.jsonl
+    python -m scripts.evaluate_news_lora --model models/news_qwen_lora/checkpoint-200 --output reports/val_step200.jsonl
     python -m scripts.evaluate_news_lora --model models/news_qwen_lora/lora_adapter --output reports/val_step250.jsonl
 
 В reports/val_*.metrics.json будут числа валидных JSON, решений о релевантности,
@@ -37,3 +42,8 @@
 gold test. Не оценивать test при подборе параметров, не включать
 автоматическую публикацию в MAX. Для полноценного сравнения нужно
 проверять реальные события и точность доказательств отдельно.
+
+Обновлённый train_news_lora.py с будущего запуска сохраняет лучшую по
+validation loss контрольную точку даже при save_total_limit=2 и загружает
+её перед сохранением lora_adapter. Это не меняет уже законченный запуск;
+метрика AI validation по-прежнему не является независимой оценкой.

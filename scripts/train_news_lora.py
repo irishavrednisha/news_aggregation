@@ -146,8 +146,12 @@ def main() -> None:
             logging_steps=min(10, args.max_steps),
             eval_strategy="steps",
             eval_steps=min(50, args.max_steps),
+            save_strategy="steps",
             save_steps=min(50, args.max_steps),
             save_total_limit=2,
+            load_best_model_at_end=True,
+            metric_for_best_model="eval_loss",
+            greater_is_better=False,
             optim="adamw_8bit",
             bf16=torch.cuda.is_bf16_supported(),
             fp16=not torch.cuda.is_bf16_supported(),
@@ -157,6 +161,8 @@ def main() -> None:
         ),
     )
     trainer.train()
+    print("Best checkpoint by diagnostic validation loss:",
+          trainer.state.best_model_checkpoint)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(str(args.output_dir / "lora_adapter"))
     tokenizer.save_pretrained(str(args.output_dir / "lora_adapter"))

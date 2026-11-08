@@ -121,6 +121,8 @@ def main() -> None:
         parser.error("Test is held out. For a final audit pass --allow-test explicitly.")
     if args.max_new_tokens < 64 or args.max_seq_length < args.max_new_tokens + 128:
         parser.error("Sequence length must leave enough room for the input and output.")
+    if args.model.startswith(("models/", "./", "../", "/")) and not Path(args.model).exists():
+        parser.error("Local checkpoint/adapter not found: " + args.model)
     if args.output.exists():
         parser.error("Output already exists. Choose a fresh filename; never overwrite a comparison.")
     rows = select_rows(args.data_dir / (args.split + ".jsonl"), args.limit_per_task)
