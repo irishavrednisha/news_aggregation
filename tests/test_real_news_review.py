@@ -134,6 +134,27 @@ class IndependentReviewTests(unittest.TestCase):
                 outcome["validation_messages"] + outcome["test_messages"], 3
             )
 
+    def test_differently_named_syndicated_report_is_removed(self):
+        with tempfile.TemporaryDirectory() as td:
+            source = Path(td) / "new.json"
+            first = {
+                "title": "Начат выпуск новых промышленных насосов для водоочистки",
+                "text": EXAMPLE_TEXT * 3,
+                "source": "Первое издание", "url": "https://example.org/a-independent",
+                "published_at": "2026-11-09",
+            }
+            second = {
+                "title": "На новом участке инженеры провели испытания техники",
+                "text": EXAMPLE_TEXT * 3,
+                "source": "Второе издание", "url": "https://example.org/b-independent",
+                "published_at": "2026-11-09",
+            }
+            source.write_text(json.dumps({"articles": [first, second]},
+                                         ensure_ascii=False), encoding="utf-8")
+            chosen, dropped = select_articles([source], load_previous_hashes(), [])
+            self.assertEqual(len(chosen), 1)
+            self.assertEqual(dropped["same_story_body_in_new_batch"], 1)
+
     def test_prepare_never_overwrites_existing_review(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

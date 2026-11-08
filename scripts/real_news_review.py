@@ -109,6 +109,21 @@ def too_similar(title: str, previous_titles: list[str]) -> bool:
     )
 
 
+def text_shingles(text: str, size: int = 4) -> set[tuple[str, ...]]:
+    """Word shingles detect syndicated reports even when headlines differ."""
+    words = re.findall(r"[a-zа-яё0-9]+", (text or "").lower())
+    return {tuple(words[i:i + size]) for i in range(len(words) - size + 1)}
+
+
+def duplicate_story_body(current: set[tuple[str, ...]], prior: list[set[tuple[str, ...]]]) -> bool:
+    """Conservative exact-phrase overlap; a reviewer still checks semantic duplicates."""
+    for previous in prior:
+        common = len(current & previous)
+        if common >= 40 and common / len(current | previous) >= 0.09:
+            return True
+    return False
+
+
 def select_articles(
     files: list[Path], excluded_hashes: set[str], old_titles: list[str],
     *, max_articles: int = 120, per_source: int = 15, min_text: int = 300,
@@ -162,14 +177,20 @@ def select_articles(
     )
     pools = defaultdict(deque)
     local_titles = []
+    local_bodies = []
     for item in candidates:
         if too_similar(item["title"], local_titles):
             dropped["similar_title_in_new_batch"] += 1
+            continue
+        body = text_shingles(item["text"])
+        if duplicate_story_body(body, local_bodies):
+            dropped["same_story_body_in_new_batch"] += 1
             continue
         if len(pools[item["source"]]) >= per_source:
             dropped["per_source_limit"] += 1
             continue
         local_titles.append(canonical_title(item["title"]))
+        local_bodies.append(body)
         pools[item["source"]].append(item)
 
     selected = []
