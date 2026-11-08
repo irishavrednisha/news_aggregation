@@ -49,6 +49,8 @@ def eligible_gemma_draft(row: dict | None, title: str) -> tuple[str | None, str]
         return None, "gemma_edit_rejected"
     if row.get("warnings"):
         return None, "gemma_validation_warnings"
+    if row.get("source_quality_warnings"):
+        return None, "source_quality_review_needed"
     text = row.get("text")
     if not isinstance(text, str) or not text.strip():
         return None, "gemma_summary_empty"
