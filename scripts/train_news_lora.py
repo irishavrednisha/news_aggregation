@@ -32,10 +32,10 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Явно запустить bf16 LoRA для автономных новостей")
     p.add_argument("--data-dir", type=Path, default=Path("training/news_sft"))
     p.add_argument("--model", choices=tuple(VRAM_GB),
-                   default="unsloth/Qwen3.5-4B")
+                   default="unsloth/Qwen3.5-2B")
     p.add_argument("--output-dir", type=Path, default=Path("models/news_qwen_lora"))
     p.add_argument("--max-steps", type=int, default=250)
-    p.add_argument("--max-seq-length", type=int, default=2048)
+    p.add_argument("--max-seq-length", type=int, default=1024)
     p.add_argument("--run", action="store_true",
                    help="Без него обучение НЕ запускается")
     args = p.parse_args()
@@ -66,6 +66,14 @@ def main() -> None:
     if gpu_total + 0.5 < VRAM_GB[args.model]:
         p.error(f"Для {args.model} ориентир Unsloth: {VRAM_GB[args.model]} ГБ VRAM; "
                 "выбери модель поменьше")
+    # Desktop GPU memory is shared with the display server. A model that
+    # fits in total VRAM can still fail if Ollama, games or browsers use it.
+    free_bytes, _ = torch.cuda.mem_get_info()
+    free_gb = free_bytes / (1024**3)
+    print(f"Currently free GPU memory: {free_gb:.1f} GiB")
+    if free_gb < VRAM_GB[args.model]:
+        p.error("Недостаточно свободной GPU-памяти: закрой Ollama/игры "
+                "или уменьши длину контекста/модель, затем повтори")
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model,
