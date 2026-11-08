@@ -25,6 +25,11 @@ def main():
         "--source", action="append", default=None,
         help="Имя источника из базы (можно указать несколько раз)"
     )
+    parser.add_argument(
+        "--exclude-source", action="append", default=[],
+        help="Не проверять указанный источник в этом локальном тесте; "
+             "запись Source в БД не изменяется (можно повторять)",
+    )
     parser.add_argument("--limit", type=int, default=5, help="Лимит на источник")
     parser.add_argument("--dump-html", action="store_true", help="Сохранить HTML неудачных источников в ZIP")
     parser.add_argument(
@@ -48,6 +53,8 @@ def main():
         query = session.query(Source).filter(Source.is_active.is_(True))
         if args.source:
             query = query.filter(Source.name.in_(args.source))
+        if args.exclude_source:
+            query = query.filter(Source.name.notin_(args.exclude_source))
         sources = [
             SimpleNamespace(
                 name=s.name,
