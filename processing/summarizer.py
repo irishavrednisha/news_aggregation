@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
+import os
 import re
 import networkx as nx
 
@@ -575,7 +576,9 @@ def summarize_cluster(
     session,
     cluster_id: int,
     sentence_count: int = 4,
-    max_chars: int = 800
+    max_chars: int = 800,
+    backend: str | None = None,
+    model: str | None = None,
 ) -> str:
     cluster = session.query(Cluster).filter(Cluster.id == cluster_id).first()
 
@@ -591,19 +594,36 @@ def summarize_cluster(
 
     cluster_title = generate_cluster_title(session, cluster_id)
 
-    summary = build_textrank_summary(
+    # TextRank selects source sentences; Gemma only rephrases them.
+    from processing.summary_pipeline import rewrite_summary_draft
+
+    extractive = build_textrank_summary(
         text=text,
         title=cluster_title,
         sentence_count=sentence_count,
         max_chars=max_chars
     )
+    selected_backend = backend or os.getenv("NEWS_SUMMARY_BACKEND", "gemma")
+    selected_model = model or os.getenv("NEWS_GEMMA_MODEL", "gemma3:4b")
+    draft = rewrite_summary_draft(
+        extractive, backend=selected_backend, model=selected_model
+    )
+    if cluster.status == "published":
+        raise ValueError(f"Нельзя пересуммаризировать опубликованный кластер #{cluster_id}")
 
     cluster.title = cluster_title
-    cluster.summary_text = summary
-
+    cluster.summary_text = draft.text or None
+    # Old tags may describe a different summary and need recalculation.
+    cluster.tags = None
+    if cluster.status != "not_for_publication":
+        cluster.status = "review_required" if draft.review_required else "new"
     session.commit()
 
-    return summary
+    if draft.warnings:
+        print(f"Кластер #{cluster_id}: Gemma — {', '.join(draft.warnings)}")
+    if draft.review_required:
+        print(f"Кластер #{cluster_id}: ручная проверка обязательна перед MAX")
+    return draft.text
 
 
 def summarize_new_clusters(
@@ -638,9 +658,13 @@ def resummarize_all_clusters(
     sentence_count: int = 4,
     max_chars: int = 800
 ):
-    clusters = session.query(Cluster).all()
+    clusters = (
+        session.query(Cluster)
+        .filter(Cluster.status != "published")
+        .all()
+    )
 
-    print(f"Кластеров для пересуммаризации: {len(clusters)}")
+    print(f"Неопубликованных кластеров для пересуммаризации: {len(clusters)}")
 
     for cluster in clusters:
         summarize_cluster(
