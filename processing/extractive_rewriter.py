@@ -54,6 +54,19 @@ QUALIFIERS_RE = re.compile(
     r"возможно|возможен|возможна|возможны|может|могут|примерно|около)\b",
     re.I,
 )
+NEGATION_RE = re.compile(r"\b(?:не|нет|без|никогда|ни)\b", re.I)
+PLANNED_RE = re.compile(
+    r"\b(?:планиру\w*|намерен\w*|собира\w*|ожида\w*|предстоит|"
+    r"запланирован\w*|будет|должен|готовится|готовят)\b", re.I
+)
+COMPLETED_RE = re.compile(
+    r"\b(?:запустил\w*|запущен\w*|построил\w*|построен\w*|"
+    r"выпустил\w*|выпущен\w*|изготовил\w*|завершил\w*|"
+    r"закончил\w*|ввели|ввела|ввел|ввёл|открыл\w*|создал\w*)\b", re.I
+)
+NUMBER_CONTEXT_RE = re.compile(
+    r"(?<!\w)(\d+(?:[.,]\d+)*)(?:\s|\u00a0|\u202f)+([А-Яа-яЁёA-Za-z]+)", re.I
+)
 PROTECTED_ABBREVIATIONS = re.compile(
     r"\b(?:гг?|им|млн|млрд|руб|т|д|п|е)\.",
     re.IGNORECASE,
@@ -100,6 +113,14 @@ def _quoted_terms(text: str) -> set[str]:
     }
 
 
+def _number_contexts(value: str) -> Counter:
+    """Keep numeric values tied to following units/objects."""
+    return Counter(
+        (number, unit.casefold().replace("ё", "е")[:4])
+        for number, unit in NUMBER_CONTEXT_RE.findall(value)
+    )
+
+
 def check_paraphrase(source: str, rewritten: str) -> list[str]:
     """Fail closed on detectable loss/new anchors; semantic meaning needs review."""
     warnings: list[str] = []
@@ -115,6 +136,15 @@ def check_paraphrase(source: str, rewritten: str) -> list[str]:
         warnings.append("sentence_missing_terminal_punctuation")
     if Counter(NUMBER_RE.findall(source)) != Counter(NUMBER_RE.findall(rewritten)):
         warnings.append("changed_numbers_or_dates")
+    elif _number_contexts(source) != _number_contexts(rewritten):
+        warnings.append("changed_number_context")
+    if bool(NEGATION_RE.search(source)) != bool(NEGATION_RE.search(rewritten)):
+        warnings.append("changed_negation")
+    if PLANNED_RE.search(source) and not PLANNED_RE.search(rewritten):
+        warnings.append("lost_plan_marker")
+    if (PLANNED_RE.search(source) and not COMPLETED_RE.search(source)
+            and COMPLETED_RE.search(rewritten)):
+        warnings.append("introduced_completed_event")
     if _quoted_terms(source) != _quoted_terms(rewritten):
         warnings.append("changed_quoted_names")
     original_normalized = _normalize(source)
