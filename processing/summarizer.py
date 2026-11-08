@@ -622,8 +622,10 @@ def summarize_cluster(
     )
     selected_backend = backend or os.getenv("NEWS_SUMMARY_BACKEND", "gemma")
     selected_model = model or os.getenv("NEWS_GEMMA_MODEL", "gemma3:4b")
+    rewrite_mode = os.getenv("NEWS_GEMMA_REWRITE_MODE", "whole")
     draft = rewrite_summary_draft(
-        extractive, backend=selected_backend, model=selected_model
+        extractive, backend=selected_backend, model=selected_model,
+        rewrite_mode=rewrite_mode,
     )
     if cluster.status == "published":
         raise ValueError(f"Нельзя пересуммаризировать опубликованный кластер #{cluster_id}")
