@@ -284,7 +284,34 @@ def analyze_news(
     source = source_payload(title, article)
     call = request if request is not None else ollama_chat
     raw = call(extract_messages(title, article), FACT_FORMAT, model=model)
-    relevant, tags, evidence, uncertain = validate_fact_decision(raw, source)
+    try:
+        relevant, tags, evidence, uncertain = validate_fact_decision(raw, source)
+    except ValueError as exc:
+        # Repair ONLY malformed verbatim evidence, not arbitrary decisions.
+        # Never relax the exact-substring contract. This is a single retry.
+        if "LLM придумала или исказила цитату источника" not in str(exc):
+            raise
+        revised_messages = extract_messages(title, article) + [{
+            "role": "user",
+            "content": (
+                "Прошлый ответ содержал неточную цитату. "
+                "Повтори JSON-анализ, но скопируй каждую evidence ДОСЛОВНО "
+                "из статьи, символ за символом, с исходными кавычками, "
+                "дефисами, тире, буквами, числовыми формами и пробелами. "
+                "Не перефразируй, не склеивай части из разных предложений. "
+                "Каждая цитата должна быть непрерывным фрагментом "
+                "исходной статьи длиной 15–350 символов. "
+                "Не меняй решение о релевантности ради обхода проверки; "
+                "если точные доказательства отсутствуют, верни ошибочный "
+                "результат вместо их выдумывания."
+            ),
+        }]
+        revised = call(revised_messages, FACT_FORMAT, model=model)
+        relevant, tags, evidence, uncertain = validate_fact_decision(revised, source)
+        if raw.get("relevant") is True and not relevant:
+            raise ValueError(
+                "Модель отказалась от релевантной новости при перепроверке цитат"
+            )
     if not relevant:
         return NewsDecision(False, [], "", [], bool(uncertain), [], model)
     second = call(summary_messages(evidence), SUMMARY_FORMAT, model=model)
