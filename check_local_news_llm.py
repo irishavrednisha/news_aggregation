@@ -57,6 +57,33 @@ def eligible_gemma_draft(row: dict | None, title: str) -> tuple[str | None, str]
     return text.strip(), ""
 
 
+def choose_gemma_focus(
+    row: dict | None, title: str, *, fallback_extractive: bool = False,
+) -> tuple[str | None, str, str]:
+    """Return (focus text, focus kind, skip reason); fail closed.
+
+    A rejected model candidate must never be used as source text. With an
+    explicit opt-in, the unchanged TextRank fallback can still focus Qwen,
+    provided the fallback is present and the source is not flagged.
+    """
+    edited, reason = eligible_gemma_draft(row, title)
+    if not reason:
+        return edited, "gemma_" + row["editorial_outcome"], ""
+    if (fallback_extractive
+            and reason == "gemma_edit_rejected"
+            and row is not None
+            and row.get("source_quality_warnings") == []
+            and row.get("editorial_outcome") == "rejected"
+            and isinstance(row.get("warnings"), list)
+            and bool(row["warnings"])
+            and isinstance(row.get("extractive"), str)
+            and isinstance(row.get("text"), str)
+            and row["extractive"].strip()
+            and row["text"].strip() == row["extractive"].strip()):
+        return row["extractive"].strip(), "textrank_fallback", ""
+    return None, "none", reason
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Автономный локальный LLM: теги + новое саммари")
     p.add_argument("news_json", type=Path, help="JSON со списком articles")
@@ -71,6 +98,12 @@ def main() -> None:
         help="Эксперимент: тэги по заголовку и проверенной сводке Gemma, "
              "цитаты только из оригинала. Требует --tags-only",
     )
+    p.add_argument(
+        "--fallback-extractive", action="store_true",
+        help="При отклонённой редактуре Gemma использовать неизменённый "
+             "TextRank, только если первоисточник не помечен как сомнительный. "
+             "Требует --gemma-report и --tags-only",
+    )
     p.add_argument("--output", type=Path,
                    default=Path("collector_test_results/local_llm_news_audit.json"))
     args = p.parse_args()
@@ -80,6 +113,8 @@ def main() -> None:
         p.error("Нужен объект JSON с массивом articles")
     if args.gemma_report and not args.tags_only:
         p.error("--gemma-report требует --tags-only")
+    if args.fallback_extractive and (not args.gemma_report or not args.tags_only):
+        p.error("--fallback-extractive требует --gemma-report и --tags-only")
     gemma_by_url = load_gemma_report(args.gemma_report) if args.gemma_report else None
     if not 1 <= args.limit <= 1000:
         p.error("--limit должен быть от 1 до 1000")
@@ -95,7 +130,12 @@ def main() -> None:
         focus_summary = None
         if gemma_by_url is not None:
             gemma_row = gemma_by_url.get(str(item.get("url") or ""))
-            focus_summary, skip_reason = eligible_gemma_draft(gemma_row, title)
+            focus_summary, focus_kind, skip_reason = choose_gemma_focus(
+                gemma_row, title, fallback_extractive=args.fallback_extractive,
+            )
+            row["focus_kind"] = focus_kind
+            if focus_kind == "textrank_fallback":
+                row["gemma_rejection_warnings"] = gemma_row.get("warnings", [])
             row["gemma_outcome"] = (
                 gemma_row.get("editorial_outcome") if gemma_row else None
             )
@@ -149,7 +189,15 @@ def main() -> None:
         "count": len(results),
         "tags_only": args.tags_only,
         "gemma_report": str(args.gemma_report) if args.gemma_report else None,
-        "tagging_basis": "title_gemma_article" if args.gemma_report else "original_article",
+        "tagging_basis": (
+            "title_gemma_or_textrank_article" if args.fallback_extractive
+            else "title_gemma_article" if args.gemma_report
+            else "original_article"
+        ),
+        "fallback_extractive_enabled": args.fallback_extractive,
+        "fallback_extractive_count": sum(
+            row.get("focus_kind") == "textrank_fallback" for row in results
+        ),
         "skipped_gemma": sum(
             any(w.startswith("skipped:") for w in (row.get("warnings") or []))
             for row in results
