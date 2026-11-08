@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from scripts.audit_news_lora import surviving_reply_tokens, rendered_token_ids, audit
-from scripts.evaluate_news_lora import select_rows, summarize, f1, text_only_tokenizer
+from scripts.evaluate_news_lora import select_rows, summarize, f1, text_only_tokenizer, decode_json_response, grade_response
 
 
 class DiagnosticsTests(unittest.TestCase):
@@ -36,6 +36,54 @@ class DiagnosticsTests(unittest.TestCase):
         )
         self.assertEqual(text_tokenizer.last_input, "TEST NEWS")
         self.assertIs(text_only_tokenizer(text_tokenizer), text_tokenizer)
+
+    def test_complete_fenced_json_is_parsed_but_missing_fields_fail(self):
+        raw = '```json\\n{"relevant":false,"tags":[],"evidence":[]}\\n```'
+        parsed, wrapped = decode_json_response(raw)
+        self.assertTrue(wrapped)
+        self.assertFalse(parsed["relevant"])
+        result = grade_response(
+            "fact_tagging",
+            {"relevant": False, "tags": [], "evidence": []},
+            raw,
+            "Заголовок: Демонстрация\\nСтатья: Тестовая новость.",
+        )
+        self.assertTrue(result["valid_json"])
+        self.assertTrue(result["markdown_wrapped"])
+        self.assertFalse(result["valid_contract"])
+        self.assertIn("неверные типы", result["error"])
+
+    def test_truncated_json_is_not_repaired(self):
+        raw = '{"headline":"Длинный ответ","facts":[{"quote":"оборвал'
+        result = grade_response("fact_tagging", {}, raw, "article")
+        self.assertFalse(result["valid_json"])
+        self.assertFalse(result["valid_contract"])
+        with self.assertRaises(ValueError):
+            decode_json_response('```json\\n{"relevant":false}')
+
+    def test_valid_contract_without_fence(self):
+        raw = ('{"relevant":false,"tags":[],"evidence":[],'
+               '"uncertain":false}')
+        result = grade_response("fact_tagging", {"relevant": False, "tags": []},
+                                raw, "Статья: пример")
+        self.assertTrue(result["valid_json"])
+        self.assertFalse(result["markdown_wrapped"])
+        self.assertTrue(result["valid_contract"])
+        self.assertTrue(result["relevant_correct"])
+
+    def test_token_limit_diagnostic_in_summary(self):
+        records = [
+            {"task": "fact_tagging", "generation_hit_token_limit": True,
+             "grade": {"valid_json": False, "valid_contract": False}},
+            {"task": "fact_tagging", "generation_hit_token_limit": False,
+             "grade": {"valid_json": True, "valid_contract": False,
+                       "markdown_wrapped": True}},
+        ]
+        info = summarize(records)
+        self.assertEqual(info["generation_hit_token_limit"], 1)
+        self.assertEqual(info["markdown_wrapped_json"], 1)
+        self.assertEqual(info["valid_json"], 1)
+        self.assertEqual(info["valid_contract"], 0)
 
     def test_reply_survival(self):
         self.assertEqual(surviving_reply_tokens(1000, 1060, 1024), 24)

@@ -41,18 +41,46 @@ def f1(precision: float, recall: float) -> float:
     return 2 * precision * recall / (precision + recall) if precision + recall else 0.0
 
 
+def decode_json_response(prediction: str) -> tuple[dict, bool]:
+    """Parse complete JSON or one complete Markdown JSON fence.
+
+    Never attempt to repair an incomplete/truncated model answer or silently
+    convert an answer with a different schema into the requested schema.
+    """
+    import re
+
+    cleaned = prediction.strip()
+    wrapped = cleaned.startswith("```")
+    if wrapped:
+        matched = re.fullmatch(
+            r"```(?:json|JSON)?[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n?```",
+            cleaned,
+        )
+        if matched is None:
+            raise ValueError("Incomplete or malformed Markdown JSON fence")
+        cleaned = matched.group(1).strip()
+    value = json.loads(cleaned)
+    if not isinstance(value, dict):
+        raise ValueError("Not a JSON object")
+    return value, wrapped
+
+
 def grade_response(task: str, reference: dict, prediction: str, user_prompt: str) -> dict:
     """Static, imperfect checks: never label summaries as factually verified."""
     from processing.local_news_llm import (
         validate_fact_decision, validate_summary,
     )
     try:
-        parsed = json.loads(prediction.strip())
-        if not isinstance(parsed, dict):
-            raise ValueError("Not a JSON object")
+        parsed, markdown_wrapped = decode_json_response(prediction)
     except (ValueError, TypeError) as exc:
-        return {"valid_json": False, "error": str(exc), "parsed": None}
-    result = {"valid_json": True, "parsed": parsed}
+        return {
+            "valid_json": False, "valid_contract": False,
+            "error": str(exc), "parsed": None,
+        }
+    result = {
+        "valid_json": True, "markdown_wrapped": markdown_wrapped,
+        "valid_contract": False, "parsed": parsed,
+    }
     if task == "fact_tagging":
         try:
             relevant, tags, evidence, uncertain = validate_fact_decision(
@@ -97,6 +125,12 @@ def summarize(records: list[dict]) -> dict:
         "records": count,
         "skipped_long_prompt": sum("skip_reason" in r for r in records),
         "valid_json": ok_json,
+        "markdown_wrapped_json": sum(
+            r.get("grade", {}).get("markdown_wrapped", False) for r in records
+        ),
+        "generation_hit_token_limit": sum(
+            r.get("generation_hit_token_limit", False) for r in records
+        ),
         "valid_contract": valid,
         "fact_count": len(facts),
         "relevance_correct": sum(
@@ -182,6 +216,10 @@ def main() -> None:
                     generated[0, prompt_len:], skip_special_tokens=True
                 ).strip()
                 row["prediction"] = completion
+                row["completion_tokens"] = generated.shape[1] - prompt_len
+                row["generation_hit_token_limit"] = (
+                    row["completion_tokens"] >= args.max_new_tokens
+                )
                 row["grade"] = grade_response(
                     task, row["reference"], completion, messages[-2]["content"]
                 )
