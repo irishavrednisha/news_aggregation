@@ -250,8 +250,49 @@ def ollama_chat(
         raise ValueError("Ollama вернула некорректный JSON") from exc
 
 
-def extract_messages(title: str, article: str) -> list[dict]:
+def extract_messages(
+    title: str, article: str, *, focus_summary: str | None = None,
+) -> list[dict]:
+    """Build a tag decision prompt, optionally led by an edited Gemma draft.
+
+    Only the original article can supply exact evidence quotations. The
+    summary is untrusted focus context, not source evidence.
+    """
     source = source_payload(title, article)
+    if focus_summary is not None:
+        if not isinstance(focus_summary, str) or not focus_summary.strip():
+            raise ValueError("Сводка Gemma для тэггирования не должна быть пустой")
+        system = (
+            FACT_SYSTEM
+            + " Для этой проверки сначала определяй главное событие и "
+              "произведённый объект по заголовку и редакторской сводке. "
+              "Сверяй эти сведения с ПОЛНОЙ исходной статьёй. "
+              "Возможны ошибки в сводке: при противоречиях ставь "
+              "uncertain=true, ничего не додумывай. "
+              "Теги относятся к фактически изготовленному/разработанному "
+              "объекту, а не к прошлой специализации завода, владельцу "
+              "предприятия или отрасли покупателя. "
+              "Выпуск животных в природу, юбилеи, корпоративные мероприятия "
+              "и назначения сами по себе НЕ промышленное производство. "
+              "Цитаты evidence копируй ТОЛЬКО из исходной статьи, "
+              "никогда из перефразированной сводки."
+        )
+        user = (
+            "Оцени релевантность и теги по главному событию заголовка "
+            "и сводки. Для каждого промышленного тега найди "
+            "подтверждение в исходной статье. "
+            "Если в сводке отсутствует подтверждённое событие производства "
+            "или разработки, не притягивай теги из фоновых упоминаний. "
+            "Если статья противоречит сводке, укажи uncertain=true. "
+            "Допустимые теги: " + "; ".join(TAGS)
+            + "\nРедакторская сводка (не источник доказательств):\n"
+            + focus_summary.strip()[:1800]
+            + "\nИсходная статья для проверки цитат:\n" + source
+        )
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
     return [
         {"role": "system", "content": FACT_SYSTEM},
         {"role": "user", "content": (
@@ -280,11 +321,15 @@ def analyze_news(
     model: str = "qwen3.5:4b",
     request: Callable | None = None,
     tags_only: bool = False,
+    focus_summary: str | None = None,
 ) -> NewsDecision:
     """Local classification with optional summary. Always a review-only draft."""
     source = source_payload(title, article)
     call = request if request is not None else ollama_chat
-    raw = call(extract_messages(title, article), FACT_FORMAT, model=model)
+    raw = call(
+        extract_messages(title, article, focus_summary=focus_summary),
+        FACT_FORMAT, model=model,
+    )
     try:
         relevant, tags, evidence, uncertain = validate_fact_decision(raw, source)
     except ValueError as exc:
@@ -292,7 +337,9 @@ def analyze_news(
         # Never relax the exact-substring contract. This is a single retry.
         if "LLM придумала или исказила цитату источника" not in str(exc):
             raise
-        revised_messages = extract_messages(title, article) + [{
+        revised_messages = extract_messages(
+            title, article, focus_summary=focus_summary,
+        ) + [{
             "role": "user",
             "content": (
                 "Прошлый ответ содержал неточную цитату. "
@@ -314,7 +361,11 @@ def analyze_news(
                 "Модель отказалась от релевантной новости при перепроверке цитат"
             )
     if not relevant:
-        return NewsDecision(False, [], "", [], bool(uncertain), [], model)
+        return NewsDecision(
+            False, [], "", [], 
+            True if focus_summary is not None else bool(uncertain),
+            [], model,
+        )
     if tags_only:
         # The same validated evidence-backed tag decision, without an
         # unrelated second-generation summary request.
