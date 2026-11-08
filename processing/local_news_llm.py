@@ -119,7 +119,7 @@ SOURCE_LIMIT = 10000
 
 @dataclass
 class NewsDecision:
-    relevant: bool
+    relevant: bool | None
     tags: list[str]
     summary: str
     evidence: list[str]
@@ -206,6 +206,24 @@ def validate_evidence(source: str, evidence: list[str]) -> list[str]:
         if exact not in unique:
             unique.append(exact)
     return unique[:6]
+
+
+_PLANNED_FACILITY_TITLE = re.compile(
+    r"\\b(?:хотят|планиру\\w*|собира\\w*|намерен\\w*)\\b"
+    r".{0,110}\\b(?:перезапуст\\w*|возобнов\\w*|"
+    r"восстанов\\w*\\s+производств\\w*|запуст\\w*|"
+    r"строительств\\w*|выпуск\\w*|производств\\w*)\\b"
+)
+
+
+def possible_production_plan(title: str) -> bool:
+    """Conservative headline cue for human review, NOT a tagging rule.
+
+    This only prevents silent dismissal of clearly formulated production
+    plans; the real industrial relevance is still a manual editorial issue.
+    """
+    normalized = (title or "").casefold().replace("ё", "е")
+    return bool(_PLANNED_FACILITY_TITLE.search(normalized))
 
 
 def validate_fact_decision(output: dict, source: str) -> tuple[bool, list[str], list[str], bool]:
@@ -428,16 +446,31 @@ def analyze_news(
         }]
         revised = call(revised_messages, FACT_FORMAT, model=model)
         relevant, tags, evidence, uncertain = validate_fact_decision(revised, source)
-        if raw.get("relevant") is True and not relevant:
+        if revised.get("relevant") != raw.get("relevant"):
             raise ValueError(
-                "Модель отказалась от релевантной новости при перепроверке цитат"
+                "Модель изменила релевантность при перепроверке цитат"
             )
+        if revised.get("tags") != raw.get("tags"):
+            raise ValueError(
+                "Модель изменила отраслевые теги при перепроверке цитат"
+            )
+        uncertain = uncertain or bool(raw.get("uncertain"))
     if not relevant:
+        if possible_production_plan(title):
+            # A vague media rumor may be irrelevant; don't invent tags,
+            # but don't treat it as an unquestionable negative either.
+            return NewsDecision(
+                None, [], "", [], True,
+                ["industrial_plan_requires_editorial_review"], model,
+            )
         return NewsDecision(
-            False, [], "", [], 
+            False, [], "",
+            [],
             True if focus_summary is not None else bool(uncertain),
             [], model,
         )
+    if possible_production_plan(title):
+        uncertain = True
     if tags_only:
         # The same validated evidence-backed tag decision, without an
         # unrelated second-generation summary request.
