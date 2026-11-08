@@ -43,6 +43,23 @@ def trl_api_compat(trainer_type, config_type) -> tuple[str, str]:
     return tokenizer_arg, length_arg
 
 
+def length_issues(report: dict) -> dict[str, dict[str, int]]:
+    """Detect examples that silently lose training/evaluation labels."""
+    result = {}
+    for split in ("train", "validation"):
+        tasks = report.get(split, {})
+        truncated = sum(s["full_truncated"] for s in tasks.values())
+        unaligned = sum(s["possible_template_mismatch"] for s in tasks.values())
+        no_reply = sum(s["no_reply_tokens"] for s in tasks.values())
+        if truncated or unaligned or no_reply:
+            result[split] = {
+                "truncated": truncated,
+                "no_reply_tokens": no_reply,
+                "unaligned": unaligned,
+            }
+    return result
+
+
 def count_records(path: Path) -> int:
     with path.open(encoding="utf-8") as stream:
         return sum(bool(line.strip()) for line in stream)
@@ -56,6 +73,8 @@ def main() -> None:
     p.add_argument("--output-dir", type=Path, default=Path("models/news_qwen_lora"))
     p.add_argument("--max-steps", type=int, default=250)
     p.add_argument("--max-seq-length", type=int, default=1024)
+    p.add_argument("--assistant-loss-only", action="store_true",
+                   help="Opt in to prompt/completion loss only on assistant JSON")
     p.add_argument("--run", action="store_true",
                    help="Без него обучение НЕ запускается")
     args = p.parse_args()
@@ -73,6 +92,21 @@ def main() -> None:
         p.error("Нужно >=100 качественных train и >=20 независимых real validation сообщений")
     if args.max_steps < 1 or args.max_seq_length < 512:
         p.error("Некорректное число шагов или длина контекста")
+
+    # Stop before heavyweight model loading if labels will be truncated.
+    from transformers import AutoTokenizer
+    from scripts.audit_news_lora import audit as audit_lengths
+    checking_tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
+    errors = length_issues(
+        audit_lengths(args.data_dir, checking_tokenizer, args.max_seq_length)
+    )
+    del checking_tokenizer
+    if errors:
+        p.error(
+            "SFT length preflight failed: " + json.dumps(errors, ensure_ascii=False)
+            + ". Use a separate length-compatible validation for diagnostics or "
+              "a sufficiently large GPU-compatible context. Original data unchanged."
+        )
 
     # Import Unsloth first, per supported local fine-tuning setup.
     from unsloth import FastLanguageModel
@@ -118,20 +152,46 @@ def main() -> None:
     ds = load_dataset("json", data_files={
         "train": str(train_path), "validation": str(val_path),
     })
-    def to_text(batch):
-        # Same chat layout as inference; no fabricated chain-of-thought.
-        messages = batch["messages"]
-        return {"text": tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=False,
-            enable_thinking=False,
-        )}
-    ds = ds.map(to_text)
-    ds = ds.remove_columns([k for k in ds["train"].column_names if k != "text"])
+    if args.assistant_loss_only:
+        def to_prompt_completion(batch):
+            messages = batch["messages"]
+            prefix = tokenizer.apply_chat_template(
+                messages[:-1], tokenize=False, add_generation_prompt=True,
+                enable_thinking=False,
+            )
+            complete = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=False,
+                enable_thinking=False,
+            )
+            if not complete.startswith(prefix):
+                raise ValueError("Prompt is not prefix of rendered assistant chat")
+            return {"prompt": prefix, "completion": complete[len(prefix):]}
+        ds = ds.map(to_prompt_completion)
+        ds = ds.remove_columns([
+            column for column in ds["train"].column_names
+            if column not in ("prompt", "completion")
+        ])
+    else:
+        def to_text(batch):
+            # Legacy full-dialogue loss includes prompt tokens too.
+            messages = batch["messages"]
+            return {"text": tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=False,
+                enable_thinking=False,
+            )}
+        ds = ds.map(to_text)
+        ds = ds.remove_columns([
+            column for column in ds["train"].column_names if column != "text"
+        ])
 
     # TRL 1.x uses processing_class/max_length; some Unsloth builds still
     # patch in tokenizer/max_seq_length. Detect the actual installed API.
     tokenizer_arg, length_arg = trl_api_compat(SFTTrainer, SFTConfig)
     sft_config_kwargs = {length_arg: args.max_seq_length}
+    if args.assistant_loss_only:
+        if "completion_only_loss" not in signature(SFTConfig).parameters:
+            p.error("Installed TRL has no completion_only_loss")
+        sft_config_kwargs["completion_only_loss"] = True
     trainer = SFTTrainer(
         model=model, **{tokenizer_arg: tokenizer},
         train_dataset=ds["train"], eval_dataset=ds["validation"],

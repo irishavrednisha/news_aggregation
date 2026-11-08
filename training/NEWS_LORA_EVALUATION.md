@@ -55,3 +55,23 @@ BatchEncoding (2), а не длину input_ids. Результаты прежн
 токенизирует строку и проверяет совпадение префикса. Число
 no_reply_tokens достоверно только для aligned_records; случаи
 possible_template_mismatch отдельно выделяются и не включаются в него.
+
+## 2026-11-08 — length audit and new safeguards
+
+Original 1024-token SFT run: train=6700/6700 fit, validation=33/67
+truncated (29 with zero answer tokens), test=25/60 truncated
+(21 with zero answer tokens). Validation loss from the first run is
+not a reliable indicator of real article tagging.
+
+New training runs now fail their preflight if any train or validation
+example is truncated, even if the data format is otherwise valid.
+For technical experiments with 1024, generate a separate biased
+short-validation dataset (original train, validation, test untouched):
+
+    python -m scripts.prepare_news_lora_short_validation --data-dir training/news_sft --output-dir training/news_sft_short_1024 --max-length 1024
+
+For experimental assistant-reply-only loss, add --assistant-loss-only
+to train_news_lora.py (requires modern TRL prompt-completion support).
+Before using it for a full run, perform a 10-step CUDA smoke test.
+Short-validation metrics MUST NOT be compared directly against the old
+67-example full-validation metrics. Test remains held out.

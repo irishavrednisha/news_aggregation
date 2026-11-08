@@ -1,7 +1,7 @@
 """Offline checks for TRL compatibility: no GPU/model download needed."""
 import unittest
 
-from scripts.train_news_lora import trl_api_compat
+from scripts.train_news_lora import trl_api_compat, length_issues
 
 
 class TRLApiTests(unittest.TestCase):
@@ -24,6 +24,20 @@ class TRLApiTests(unittest.TestCase):
                 pass
         self.assertEqual(trl_api_compat(LegacyTrainer, LegacyConfig),
                          ("tokenizer", "max_seq_length"))
+
+    def test_detect_truncated_validation(self):
+        report = {
+            "train": {"fact_tagging": {
+                "full_truncated": 0, "possible_template_mismatch": 0,
+                "no_reply_tokens": 0}},
+            "validation": {"fact_tagging": {
+                "full_truncated": 33, "possible_template_mismatch": 0,
+                "no_reply_tokens": 29}},
+        }
+        self.assertEqual(length_issues(report), {
+            "validation": {"truncated": 33, "unaligned": 0,
+                           "no_reply_tokens": 29},
+        })
 
     def test_missing_compat_fails_early(self):
         class BadTrainer:
