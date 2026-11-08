@@ -65,6 +65,20 @@ def count_records(path: Path) -> int:
         return sum(bool(line.strip()) for line in stream)
 
 
+def small_validation_allowed(train_path: Path, val_path: Path) -> bool:
+    """Only allow a small validation for an explicit tagging-only experiment."""
+    tasks = set()
+    for path in (train_path, val_path):
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                if line.strip():
+                    task = json.loads(line).get("task")
+                    if task != "fact_tagging":
+                        return False
+                    tasks.add(task)
+    return tasks == {"fact_tagging"}
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Явно запустить bf16 LoRA для автономных новостей")
     p.add_argument("--data-dir", type=Path, default=Path("training/news_sft"))
@@ -75,6 +89,8 @@ def main() -> None:
     p.add_argument("--max-seq-length", type=int, default=1024)
     p.add_argument("--assistant-loss-only", action="store_true",
                    help="Opt in to prompt/completion loss only on assistant JSON")
+    p.add_argument("--allow-small-validation", action="store_true",
+                   help="Only for tagging-only diagnostic validation with >=10 real examples")
     p.add_argument("--run", action="store_true",
                    help="Без него обучение НЕ запускается")
     args = p.parse_args()
@@ -88,8 +104,25 @@ def main() -> None:
     if not args.run:
         print("DRY RUN: обучение не запускалось. Для запуска добавь --run.")
         return
-    if train_count < 100 or val_count < 20:
-        p.error("Нужно >=100 качественных train и >=20 независимых real validation сообщений")
+    if train_count < 100:
+        p.error("Нужно >=100 качественных train сообщений")
+    if val_count < 20:
+        if not (
+            args.allow_small_validation
+            and args.assistant_loss_only
+            and val_count >= 10
+            and small_validation_allowed(train_path, val_path)
+        ):
+            p.error(
+                "Нужно >=20 real validation сообщений; разрешение на 10–19 "
+                "только для явно указанного --allow-small-validation + "
+                "--assistant-loss-only и tagging-only dataset"
+            )
+        print(
+            "WARNING: Only", val_count,
+            "length-biased, AI-reviewed tagging validation records! "
+            "Metric is highly uncertain and is not a gold benchmark."
+        )
     if args.max_steps < 1 or args.max_seq_length < 512:
         p.error("Некорректное число шагов или длина контекста")
 

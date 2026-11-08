@@ -1,7 +1,7 @@
 """Offline checks for TRL compatibility: no GPU/model download needed."""
 import unittest
 
-from scripts.train_news_lora import trl_api_compat, length_issues
+from scripts.train_news_lora import trl_api_compat, length_issues, small_validation_allowed
 
 
 class TRLApiTests(unittest.TestCase):
@@ -38,6 +38,23 @@ class TRLApiTests(unittest.TestCase):
             "validation": {"truncated": 33, "unaligned": 0,
                            "no_reply_tokens": 29},
         })
+
+    def test_tagging_only_small_validation_is_recognized(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            train = Path(folder) / "train.jsonl"
+            validation = Path(folder) / "validation.jsonl"
+            row = {"task": "fact_tagging", "messages": []}
+            train.write_text(json.dumps(row) + "\n", encoding="utf-8")
+            validation.write_text(json.dumps(row) + "\n", encoding="utf-8")
+            self.assertTrue(small_validation_allowed(train, validation))
+            validation.write_text(
+                json.dumps({"task": "abstractive_summary"}) + "\n",
+                encoding="utf-8",
+            )
+            self.assertFalse(small_validation_allowed(train, validation))
 
     def test_missing_compat_fails_early(self):
         class BadTrainer:

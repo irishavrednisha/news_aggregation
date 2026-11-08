@@ -75,3 +75,26 @@ to train_news_lora.py (requires modern TRL prompt-completion support).
 Before using it for a full run, perform a 10-step CUDA smoke test.
 Short-validation metrics MUST NOT be compared directly against the old
 67-example full-validation metrics. Test remains held out.
+
+## 2026-11-08 — отдельный эксперимент с тегированием
+
+Из 4000 исходных fact_tagging train: 2520 с одним тегом, 180 с двумя,
+1300 нерелевантных. Это 67.5% положительных и только 6.7% двухтеговых
+среди положительных. 18 кратких реальных validation имеют смещение
+по длине; ИИ-разметка не является независимой проверкой.
+
+Для предварительного исследования без модификации исходных файлов
+подготовьте отдельную tagging-only выборку:
+
+    python -m scripts.prepare_news_lora_tagging_only --data-dir training/news_sft_short_1024 --output-dir training/news_sft_tagging_only --negative-repeats 2 --multi-repeats 3
+
+Систематическое повторение историй в train — только изменение веса
+существующих размеченных примеров, НЕ создание новых уникальных событий
+и НЕ устранение смещения синтетики. Проверочная validation не меняется,
+тест не читается. Не считать такой эксперимент подтверждением улучшения.
+
+Tagging-only validation состоит из 18 историй, поэтому запуск
+train_news_lora.py требует явные флаги --allow-small-validation и
+--assistant-loss-only. Отдельная модель предназначена только для
+тегирования. Для сводок пока использовать базовую модель с проверкой
+источников — прошлый мультизадачный LoRA 250 выдумывал предприятия.
