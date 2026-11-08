@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from check_local_news_llm import load_gemma_report, eligible_gemma_draft
+from check_local_news_llm import load_gemma_report, eligible_gemma_draft, choose_gemma_focus
 from processing.local_news_llm import (
     TAGS, FACT_FORMAT, SUMMARY_FORMAT, FACT_SYSTEM, SUMMARY_SYSTEM,
     extract_messages, summary_messages,
@@ -115,6 +115,59 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(
             eligible_gemma_draft(None, TITLE)[1],
             "missing_gemma_draft",
+        )
+
+    def test_rejected_gemma_can_use_original_textrank_only_when_opted_in(self):
+        row = {
+            "title": TITLE, "editorial_outcome": "rejected",
+            "extractive": EVIDENCE[0], "text": EVIDENCE[0],
+            "model_candidate": "Выдуманный факт о рынке технологий.",
+            "warnings": ["introduced_currency"],
+            "source_quality_warnings": [],
+            "review_required": True, "publication_performed": False,
+        }
+        self.assertEqual(
+            choose_gemma_focus(row, TITLE),
+            (None, "none", "gemma_edit_rejected"),
+        )
+        self.assertEqual(
+            choose_gemma_focus(row, TITLE, fallback_extractive=True),
+            (EVIDENCE[0], "textrank_fallback", ""),
+        )
+        for changes in (
+            {"source_quality_warnings": ["source_mismatch"]},
+            {"extractive": ""},
+            {"text": "Не соответствует TextRank"},
+            {"warnings": []},
+            {"review_required": False},
+            {"publication_performed": True},
+            {"title": "Иная статья"},
+        ):
+            with self.subTest(changes=changes):
+                invalid = {**row, **changes}
+                text, basis, reason = choose_gemma_focus(
+                    invalid, TITLE, fallback_extractive=True,
+                )
+                self.assertIsNone(text)
+                self.assertEqual(basis, "none")
+                self.assertTrue(reason)
+        self.assertEqual(
+            choose_gemma_focus(None, TITLE, fallback_extractive=True),
+            (None, "none", "missing_gemma_draft"),
+        )
+
+    def test_approved_gemma_keeps_priority_over_extractive(self):
+        row = {
+            "title": TITLE, "editorial_outcome": "edited",
+            "text": "Предприятие изготовило новые трансформаторы.",
+            "extractive": EVIDENCE[0], "warnings": [],
+            "source_quality_warnings": [],
+            "review_required": True, "publication_performed": False,
+        }
+        self.assertEqual(
+            choose_gemma_focus(row, TITLE, fallback_extractive=True),
+            ("Предприятие изготовило новые трансформаторы.",
+             "gemma_edited", ""),
         )
 
     def test_report_must_have_unique_urls_and_review_contract(self):
