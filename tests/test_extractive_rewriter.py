@@ -252,6 +252,37 @@ class RewriteTests(unittest.TestCase):
         candidate = "Компания «Завод ЗИС» запустила производство техники."
         self.assertIn("missing_acronym:ООО", check_paraphrase(src, candidate))
 
+    def test_whole_no_change_is_successful_editorial_review(self):
+        from processing.extractive_rewriter import rewrite_extractive_whole
+        source = (
+            "Завод «Север» запустил новую линию производства деталей. "
+            "Предприятие установило 40 станков для выполнения заказов."
+        )
+        result = rewrite_extractive_whole(
+            source, request=lambda *a, **kw: {"summary": source}
+        )
+        self.assertFalse(result.rewritten)
+        self.assertEqual(result.text, source)
+        self.assertEqual(result.warnings, [])
+        self.assertTrue(result.review_required)
+        self.assertFalse(result.publication_performed)
+
+    def test_aligned_no_change_is_not_error(self):
+        source = (
+            "Завод «Север» запустил новую линию производства деталей. "
+            "Предприятие установило 40 станков для выполнения заказов."
+        )
+        result = rewrite_extractive(
+            source, request=lambda *a, **kw: {"sentences": [
+                "Завод «Север» запустил новую линию производства деталей.",
+                "Предприятие установило 40 станков для выполнения заказов.",
+            ]}
+        )
+        self.assertFalse(result.rewritten)
+        self.assertEqual(result.warnings, [])
+        self.assertEqual(result.text, source)
+        self.assertTrue(result.review_required)
+
     def test_malformed_model_output_falls_back(self):
         text = "Компания построила новый завод."
         for reply in ({"summary": text}, {"sentences": ["OK", "EXTRA"]}):
