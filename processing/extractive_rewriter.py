@@ -85,6 +85,25 @@ DIRECTIONAL_CONTRASTS = (
      re.compile(r"\b(?:одобр\w*|утверд\w*|согласова\w*)", re.I),
      re.compile(r"\b(?:отклони\w*|отказ\w*|не\s+одобр\w*)", re.I)),
 )
+# Same event being moved between future and past is a factual alteration.
+# Match common Russian industrial-news verbs conservatively; not a grammar model.
+TENSE_CONTRASTS = (
+    ("investment_or_quantity", re.compile(r"\bсостав(?:ит|ят)\b", re.I),
+     re.compile(r"\bсостав(?:ил|ила|ило|или)\b", re.I)),
+    ("launch", re.compile(r"\bзапуст(?:ит|ят)\b", re.I),
+     re.compile(r"\bзапуст(?:ил|ила|ило|или)\b", re.I)),
+    ("release", re.compile(r"\bвыпуст(?:ит|ят)\b", re.I),
+     re.compile(r"\bвыпуст(?:ил|ила|ило|или)\b", re.I)),
+    ("construction", re.compile(r"\bпостро(?:ит|ят)\b", re.I),
+     re.compile(r"\bпостро(?:ил|ила|ило|или)\b", re.I)),
+    ("growth", re.compile(r"\bувелич(?:ит|ат)\b", re.I),
+     re.compile(r"\bувелич(?:ил|ила|ило|или)\b", re.I)),
+    ("completion", re.compile(r"\bзаверш(?:ит|ат)\b", re.I),
+     re.compile(r"\bзаверш(?:ил|ила|ило|или)\b", re.I)),
+)
+INTRODUCED_COMPARISON_TARGET_RE = re.compile(
+    r"\b(?:чем\s+у|чем\s+в|по\s+сравнению\s+с|относительно\s+других)\b", re.I
+)
 PROTECTED_ABBREVIATIONS = re.compile(
     r"\b(?:гг?|им|млн|млрд|тыс|кв|руб|т|д|п|е)\.",
     re.IGNORECASE,
@@ -170,6 +189,14 @@ def check_paraphrase(source: str, rewritten: str) -> list[str]:
             source_negative and not source_positive and rewritten_positive
         ):
             warnings.append("changed_direction:" + label)
+    for label, future, past in TENSE_CONTRASTS:
+        if (future.search(source) and not past.search(source) and past.search(rewritten)):
+            warnings.append("changed_tense_future_to_past:" + label)
+        if (past.search(source) and not future.search(source) and future.search(rewritten)):
+            warnings.append("changed_tense_past_to_future:" + label)
+    if (INTRODUCED_COMPARISON_TARGET_RE.search(rewritten)
+            and not INTRODUCED_COMPARISON_TARGET_RE.search(source)):
+        warnings.append("introduced_comparison_target")
     if _quoted_terms(source) != _quoted_terms(rewritten):
         warnings.append("changed_quoted_names")
     original_normalized = _normalize(source)
