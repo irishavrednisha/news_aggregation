@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from processing.extractive_rewriter import rewrite_extractive
+from processing.extractive_rewriter import rewrite_extractive, rewrite_extractive_whole
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ class SummaryDraft:
 def rewrite_summary_draft(
     extractive: str, *, backend: str = "gemma", model: str = "gemma3:4b",
     request: Callable | None = None,
+    rewrite_mode: str = "whole",
 ) -> SummaryDraft:
     backend = backend.strip().casefold()
     if backend not in {"gemma", "textrank"}:
@@ -34,7 +35,10 @@ def rewrite_summary_draft(
         return SummaryDraft(text, text, False, False)
     if not model.startswith(("gemma3:", "gemma2:")) or "cloud" in model.casefold():
         raise ValueError("NEWS_GEMMA_MODEL: допускаются только локальные gemma3:/gemma2:")
-    result = rewrite_extractive(text, model=model, request=request)
+    if rewrite_mode not in ("whole", "aligned"):
+        raise ValueError("NEWS_GEMMA_REWRITE_MODE должен быть whole или aligned")
+    rewrite = rewrite_extractive_whole if rewrite_mode == "whole" else rewrite_extractive
+    result = rewrite(text, model=model, request=request)
     # Mechanical guards cannot prove semantic equivalence.
     return SummaryDraft(
         extractive=result.extractive,
