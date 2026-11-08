@@ -49,6 +49,49 @@ class LocalLLMTests(unittest.TestCase):
                 "uncertain": False,
             }, source_payload(TITLE, BODY))
 
+    def test_evidence_typographic_variants_anchor_to_article_exactly(self):
+        title = "Обновление завода в Новосибирске"
+        body = (
+            "Компания «Индустрия» модернизировала цех — установила "
+            "три станка. Проект рассчитан на 12 месяцев."
+        )
+        source = source_payload(title, body)
+        variant = "Компания “Индустрия” модернизировала цех - установила три станка."
+        self.assertEqual(
+            validate_evidence(source, [variant]),
+            ["Компания «Индустрия» модернизировала цех — установила три станка."],
+        )
+        # The returned string is a true exact span, not the model's text.
+        self.assertIn(validate_evidence(source, [variant])[0], body)
+
+    def test_evidence_only_in_title_is_not_source_evidence(self):
+        title = "Завод изготовил первый сверхпроводящий двигатель"
+        body = "На предприятии состоялась рабочая встреча сотрудников."
+        with self.assertRaisesRegex(ValueError, "исказила цитату"):
+            validate_evidence(source_payload(title, body), [title])
+
+    def test_evidence_rejects_changed_numbers_and_negations(self):
+        title = "Завод испытал новую установку"
+        body = (
+            "Компания не производит батареи, а лишь испытывает их."
+            " Мощность испытательной установки составляет 18 МВт."
+        )
+        source = source_payload(title, body)
+        for fake in (
+            "Компания производит батареи, а лишь испытывает их.",
+            "Мощность испытательной установки составляет 180 МВт.",
+        ):
+            with self.subTest(fake=fake), self.assertRaisesRegex(
+                ValueError, "исказила цитату"
+            ):
+                validate_evidence(source, [fake])
+
+    def test_tags_only_requests_short_evidence_and_mentions_plans(self):
+        messages = extract_messages(TITLE, BODY, tags_only=True)
+        self.assertIn("1–2", messages[0]["content"])
+        self.assertIn("будущие события производства", FACT_SYSTEM)
+        self.assertIn("неподтверждённое намерение", FACT_SYSTEM)
+
     def test_numerical_hallucinations_raise_review_warning(self):
         self.assertEqual(validate_summary(
             "Выпущены 150 новых трансформаторов.", EVIDENCE
