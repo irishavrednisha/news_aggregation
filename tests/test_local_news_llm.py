@@ -78,6 +78,53 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1][1], SUMMARY_FORMAT)
 
+    def test_flexible_summary_length_limit_is_550_characters(self):
+        # 250–400 is a soft target; short summaries aren't padded.
+        self.assertEqual(validate_summary("Завод обновил оборудование.", EVIDENCE), [])
+        self.assertEqual(validate_summary("а" * 550, EVIDENCE), [])
+        self.assertIn(
+            "summary_empty_or_too_long",
+            validate_summary("а" * 551, EVIDENCE),
+        )
+
+    def test_overlong_summary_gets_single_rewrite(self):
+        replies = [
+            {"relevant": True, "tags": ["электротехническое направление"],
+             "evidence": EVIDENCE, "uncertain": False},
+            {"summary": "Завод изготовил оборудование. " * 30},
+            {"summary": "Компания выпустила трансформаторы для сетей. "
+                        "Изоляция прошла испытания."},
+        ]
+        calls = []
+
+        def fake_request(messages, schema, **kwargs):
+            calls.append(messages)
+            return replies[len(calls) - 1]
+
+        result = analyze_news(TITLE, BODY, request=fake_request)
+        self.assertEqual(len(calls), 3)
+        self.assertLessEqual(len(result.summary), 550)
+        self.assertNotIn("summary_empty_or_too_long", result.warnings)
+
+    def test_still_overlong_after_rewrite_is_discarded(self):
+        replies = [
+            {"relevant": True, "tags": ["электротехническое направление"],
+             "evidence": EVIDENCE, "uncertain": False},
+            {"summary": "Завод изготовил оборудование. " * 30},
+            {"summary": "Предприятие испытало новые агрегаты. " * 30},
+        ]
+        calls = []
+
+        def fake_request(messages, schema, **kwargs):
+            calls.append(messages)
+            return replies[len(calls) - 1]
+
+        result = analyze_news(TITLE, BODY, request=fake_request)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(result.summary, "")
+        self.assertIn("summary_discarded_too_long", result.warnings)
+        self.assertTrue(result.review_required)
+
     def test_exact_source_copy_is_flagged(self):
         quote = (
             "Предприятие освоило новую технологическую линию производства "
