@@ -122,6 +122,42 @@ class RewriteTests(unittest.TestCase):
         bad = "Предприятие установило 40 предприятий для новых заказов."
         self.assertIn("changed_number_context", check_paraphrase(src, bad))
 
+    def test_gemma5_rusal_co2_direction_reversal_is_rejected(self):
+        src = ("При производстве одного килограмма оксида скандия "
+               "будет поглощаться примерно 1,8 тонны CO2.")
+        hallucination = ("В процессе производства одного килограмма "
+                         "оксида скандия будет выбрасываться примерно "
+                         "1,8 тонны углекислого газа.")
+        self.assertIn(
+            "changed_direction:co2_absorption_emission",
+            check_paraphrase(src, hallucination),
+        )
+
+    def test_gemma5_opposite_growth_direction_is_rejected(self):
+        src = "Компания увеличила производственные мощности на 40 процентов."
+        other = "Компания сократила производственные мощности на 40 процентов."
+        self.assertIn(
+            "changed_direction:increase_decrease",
+            check_paraphrase(src, other),
+        )
+
+    def test_no_false_positive_for_absorption_rewording(self):
+        src = "При производстве поглощается 1,8 тонны углекислого газа."
+        other = "В процессе производства улавливается 1,8 тонны углекислого газа."
+        self.assertNotIn(
+            "changed_direction:co2_absorption_emission",
+            check_paraphrase(src, other),
+        )
+
+    def test_thousands_abbreviation_is_not_a_sentence_boundary(self):
+        src = ("Предприятие расширило выпуск до 580 тыс. изделий в год. "
+               "В 2026 году открыли дополнительную линию.")
+        self.assertEqual(
+            split_extractive_sentences(src),
+            ["Предприятие расширило выпуск до 580 тыс. изделий в год.",
+             "В 2026 году открыли дополнительную линию."],
+        )
+
     def test_malformed_model_output_falls_back(self):
         text = "Компания построила новый завод."
         for reply in ({"summary": text}, {"sentences": ["OK", "EXTRA"]}):
