@@ -1,0 +1,103 @@
+"""LLM prototype contract tests without Ollama/model download/DB/MAX."""
+import unittest
+
+from processing.local_news_llm import (
+    TAGS, FACT_FORMAT, SUMMARY_FORMAT,
+    source_payload, validate_evidence,
+    validate_fact_decision, validate_summary, analyze_news,
+)
+
+TITLE = "Завод выпустил новый силовой трансформатор"
+BODY = (
+    "Электротехническое предприятие изготовило новую серию силовых "
+    "трансформаторов для распределительных сетей. "
+    "Компания сообщила, что на испытательном стенде оборудование "
+    "успешно прошло проверку изоляции. "
+    "Производственная мощность линии составляет 40 изделий в месяц."
+)
+EVIDENCE = [
+    "Электротехническое предприятие изготовило новую серию силовых "
+    "трансформаторов для распределительных сетей.",
+    "Компания сообщила, что на испытательном стенде оборудование "
+    "успешно прошло проверку изоляции.",
+]
+
+
+class LocalLLMTests(unittest.TestCase):
+    def test_categories_are_fixed_and_local_api_does_not_require_model_at_import(self):
+        self.assertEqual(len(TAGS), 18)
+        self.assertEqual(len(set(TAGS)), 18)
+        self.assertEqual(FACT_FORMAT["properties"]["tags"]["items"]["enum"], list(TAGS))
+
+    def test_evidence_must_appear_in_source(self):
+        source = source_payload(TITLE, BODY)
+        self.assertEqual(validate_evidence(source, EVIDENCE), EVIDENCE)
+        with self.assertRaisesRegex(ValueError, "исказила цитату"):
+            validate_evidence(source, ["Компания построила станцию на Марсе."])
+
+    def test_invalid_tag_refused(self):
+        with self.assertRaisesRegex(ValueError, "несуществующий"):
+            validate_fact_decision({
+                "relevant": True,
+                "tags": ["космическая промышленность"],
+                "evidence": EVIDENCE,
+                "uncertain": False,
+            }, source_payload(TITLE, BODY))
+
+    def test_numerical_hallucinations_raise_review_warning(self):
+        self.assertEqual(validate_summary(
+            "Выпущены 150 новых трансформаторов.", EVIDENCE
+        ), ["numbers_not_in_evidence:150"])
+        self.assertEqual(validate_summary(
+            "Предприятие изготовило серию трансформаторов.", EVIDENCE
+        ), [])
+
+    def test_abstractive_two_stage_processing(self):
+        responses = [
+            {"relevant": True,
+             "tags": ["электротехническое направление"],
+             "evidence": EVIDENCE,
+             "uncertain": False},
+            {"summary": ("Предприятие выпустило линейку трансформаторов "
+                         "для распределительных сетей. "
+                         "Оборудование выдержало проверку изоляции.")},
+        ]
+        calls = []
+
+        def fake_request(messages, schema, **kwargs):
+            calls.append((messages, schema, kwargs))
+            return responses[len(calls)-1]
+
+        decision = analyze_news(TITLE, BODY, request=fake_request)
+        self.assertTrue(decision.relevant)
+        self.assertEqual(decision.tags, ["электротехническое направление"])
+        self.assertIn("Оборудование выдержало", decision.summary)
+        self.assertEqual(decision.evidence, EVIDENCE)
+        self.assertTrue(decision.review_required)
+        self.assertEqual(decision.warnings, [])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][1], SUMMARY_FORMAT)
+
+    def test_unrelated_news_does_not_generate_summary(self):
+        calls = []
+        def fake_request(messages, schema, **kwargs):
+            calls.append(messages)
+            return {"relevant": False, "tags": [],
+                    "evidence": [], "uncertain": False}
+        decision = analyze_news("ОСК провела фестиваль", BODY, request=fake_request)
+        self.assertFalse(decision.relevant)
+        self.assertEqual(decision.tags, [])
+        self.assertEqual(decision.summary, "")
+        self.assertEqual(len(calls), 1)
+
+    def test_fail_closed_if_model_invents_evidence(self):
+        def fake_request(messages, schema, **kwargs):
+            return {"relevant": True, "tags": ["машиностроение"],
+                    "evidence": ["Вдуманный завод открылся вчера в Париже."],
+                    "uncertain": False}
+        with self.assertRaisesRegex(ValueError, "исказила цитату"):
+            analyze_news(TITLE, BODY, request=fake_request)
+
+
+if __name__ == "__main__":
+    unittest.main()
