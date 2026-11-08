@@ -448,7 +448,8 @@ def analyze_news(
         relevant, tags, evidence, uncertain = validate_fact_decision(revised, source)
         if revised.get("relevant") != raw.get("relevant"):
             raise ValueError(
-                "Модель изменила релевантность при перепроверке цитат"
+                "Модель отказалась от релевантной новости при перепроверке цитат "
+                "или иначе изменила решение"
             )
         if revised.get("tags") != raw.get("tags"):
             raise ValueError(
