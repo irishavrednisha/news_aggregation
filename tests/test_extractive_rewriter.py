@@ -283,6 +283,54 @@ class RewriteTests(unittest.TestCase):
         self.assertEqual(result.text, source)
         self.assertTrue(result.review_required)
 
+    def test_gemma_minimal_mazda_only_pikups_cannot_be_dropped(self):
+        source = "Поначалу там собирали только китайские пикапы."
+        changed = "Поначалу там собирали китайские пикапы."
+        self.assertIn("lost_exclusivity", check_paraphrase(source, changed))
+
+    def test_exclusivity_paraphrase_can_use_equivalent_marker(self):
+        source = "Поначалу там собирали только китайские пикапы."
+        changed = "Поначалу там собирали исключительно китайские пикапы."
+        self.assertNotIn("lost_exclusivity", check_paraphrase(source, changed))
+
+    def test_introduced_exclusivity_is_rejected(self):
+        source = "Поначалу там собирали китайские пикапы."
+        changed = "Поначалу там собирали только китайские пикапы."
+        self.assertIn("introduced_exclusivity", check_paraphrase(source, changed))
+
+    def test_gemma_minimal_geoportal_not_broadened_to_system(self):
+        source = ("В этом году мы с Высшей школой экономики "
+                  "разработали геоинформационный портал.")
+        changed = ("В этом году с Высшей школой экономики "
+                   "разработана геоинформационная система.")
+        self.assertIn(
+            "changed_technical_object:portal",
+            check_paraphrase(source, changed),
+        )
+
+    def test_alias_can_be_dropped_when_preserved_in_official_name(self):
+        source = (
+            "Новый завод запустила компания ООО «Завод инновационной "
+            "спецтехники (ЗИС)». Предприятие «ЗИС» в 2024 году "
+            "выпустило предсерийный образец коммунальной техники."
+        )
+        edited = (
+            "Компания ООО «Завод инновационной спецтехники (ЗИС)» "
+            "запустила новый завод. В 2024 году предприятие "
+            "выпустило предсерийный образец коммунальной техники."
+        )
+        self.assertNotIn(
+            "changed_quoted_names", check_paraphrase(source, edited)
+        )
+
+    def test_genuinely_missing_company_name_remains_blocked(self):
+        source = (
+            "Компания ООО «Завод инновационной спецтехники (ЗИС)» "
+            "запустила новый завод. Предприятие «ЗИС» представило образец."
+        )
+        edited = "Компания ООО запустила новый завод и представила образец."
+        self.assertIn("changed_quoted_names", check_paraphrase(source, edited))
+
     def test_malformed_model_output_falls_back(self):
         text = "Компания построила новый завод."
         for reply in ({"summary": text}, {"sentences": ["OK", "EXTRA"]}):
