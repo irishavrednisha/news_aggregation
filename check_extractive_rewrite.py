@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-from processing.extractive_rewriter import rewrite_extractive
+from processing.extractive_rewriter import rewrite_extractive, rewrite_extractive_whole
+from processing.summary_quality import audit_source_alignment
 
 
 def main() -> None:
@@ -22,6 +23,10 @@ def main() -> None:
     parser.add_argument("news_json", type=Path, help="JSON file containing articles")
     parser.add_argument("--limit", type=int, default=3)
     parser.add_argument("--model", default="gemma3:4b")
+    parser.add_argument(
+        "--rewrite-mode", choices=("whole", "aligned"), default="whole",
+        help="whole: единая связная сводка; aligned: каждое предложение отдельно",
+    )
     parser.add_argument("--sentence-count", type=int, default=3)
     parser.add_argument("--max-extractive-chars", type=int, default=700)
     parser.add_argument(
@@ -50,8 +55,10 @@ def main() -> None:
             source, title=title, sentence_count=args.sentence_count,
             max_chars=args.max_extractive_chars,
         ) if source else ""
-        result = rewrite_extractive(extractive, model=args.model)
+        rewrite = rewrite_extractive_whole if args.rewrite_mode == "whole" else rewrite_extractive
+        result = rewrite(extractive, model=args.model)
         row = {
+            "source_quality_warnings": audit_source_alignment(title, extractive),
             "title": title, "url": item.get("url"),
             "source": item.get("source"),
             "tags": item.get("tags"),  # never generate or modify tags here
@@ -67,6 +74,7 @@ def main() -> None:
     report = {
         "mode": "extractive_then_paraphrase_only",
         "model": args.model,
+        "rewrite_mode": args.rewrite_mode,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "training_performed": False,
         "publishing_performed": False,
