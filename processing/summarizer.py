@@ -116,6 +116,8 @@ def split_into_sentences(text: str) -> list[str]:
         "руб.": "руб<dot>",
         "млн.": "млн<dot>",
         "млрд.": "млрд<dot>",
+        "тыс.": "тыс<dot>",
+        "кв.": "кв<dot>",
     }
 
     for old, new in abbreviations.items():
