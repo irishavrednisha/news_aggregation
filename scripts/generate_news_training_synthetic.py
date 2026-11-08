@@ -4,8 +4,10 @@ Example (offline, may need many inferences):
   python -m scripts.generate_news_training_synthetic --per-tag 10 --negatives 40
 
 Every item is marked origin='synthetic', split='train',
-review_status='draft'. The generator NEVER produces verified labels.
-Review/check facts and quality BEFORE promotion into SFT training.
+review_status='auto_checked' only after mechanical quote/number checks.
+The generator NEVER produces human-verified labels. Use
+--allow-auto-checked-synthetic explicitly when building an SFT dataset.
+Check a random sample manually; automatic checks cannot prove semantics.
 No internet, news APIs, DB or MAX are used.
 """
 from __future__ import annotations
@@ -153,7 +155,7 @@ def main() -> None:
                 "story_id": key,
                 "origin": "synthetic",
                 "split": "train",
-                "review_status": "draft",
+                "review_status": "auto_checked",
                 "relevant": bool(tag),
                 "tags": [tag] if tag else [],
                 **checked,
@@ -168,7 +170,8 @@ def main() -> None:
             failed += 1
             print(f"ПРОПУЩЕНО {key}: {type(exc).__name__}: {exc}")
     print(f"Готово кандидатов: {len(items)}; ошибок генерации: {failed}")
-    print("ЭТО ЧЕРНОВИК! Ошибки смысла не исключены, в SFT автоматически не передаётся.")
+    print("ТОЛЬКО АВТОПРОВЕРКА цитат/чисел! Смысловые ошибки возможны.")
+    print("В SFT эти записи попадут лишь по явному --allow-auto-checked-synthetic.")
 
 
 if __name__ == "__main__":
