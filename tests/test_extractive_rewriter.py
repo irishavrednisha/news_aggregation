@@ -105,6 +105,23 @@ class RewriteTests(unittest.TestCase):
         self.assertEqual(result.text, src)
         self.assertEqual(result.model_candidate, raw)
 
+    def test_negation_flip_falls_back(self):
+        src = "Компания не выпустила новую линейку оборудования."
+        bad = "Компания уже выпустила новую линейку оборудования."
+        self.assertIn("changed_negation", check_paraphrase(src, bad))
+
+    def test_plan_cannot_become_completed_action(self):
+        src = "Компания планирует запустить новую линию оборудования."
+        bad = "Компания запустила новую линию оборудования."
+        warnings = check_paraphrase(src, bad)
+        self.assertIn("lost_plan_marker", warnings)
+        self.assertIn("introduced_completed_event", warnings)
+
+    def test_number_context_change_is_rejected(self):
+        src = "Предприятие установило 40 станков для новых заказов."
+        bad = "Предприятие установило 40 предприятий для новых заказов."
+        self.assertIn("changed_number_context", check_paraphrase(src, bad))
+
     def test_malformed_model_output_falls_back(self):
         text = "Компания построила новый завод."
         for reply in ({"summary": text}, {"sentences": ["OK", "EXTRA"]}):
