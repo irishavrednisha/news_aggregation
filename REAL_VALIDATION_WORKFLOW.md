@@ -30,6 +30,17 @@ collector_test_results\news_fixed_YYYYMMDD_HHMMSS.json.
     $latest = Get-ChildItem .\collector_test_results\news_fixed_*.json | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
     .\.venv\Scripts\python.exe -m scripts.real_news_review prepare --news "$latest" --out training\real_review --max 120 --per-source 15
 
+**Важно:** повторный `prepare` в ту же папку теперь остановится,
+чтобы не стереть заполненный `review_sheet.csv`. Для нескольких свежих
+сборов *до начала разметки* передайте все JSON одной командой:
+
+    $allNews = @(Get-ChildItem .\\collector_test_results\\news_fixed_*.json | Sort-Object LastWriteTime -Descending | Select-Object -ExpandProperty FullName)
+    .\\.venv\\Scripts\\python.exe -m scripts.real_news_review prepare --news $allNews --out training\\real_review --max 120 --per-source 15
+
+Если разметка уже началась, сохраните текущую папку и для новой партии
+укажите другой `--out`. Не запускайте `finalize` для нескольких папок
+поочерёдно в один `--output-dir`: он перезаписывает validation/test.
+
 Если в рабочей папке есть обе старые выборки, добавьте:
     --exclude tagging_benchmark_100.json --exclude tagging_fresh_25.json
 

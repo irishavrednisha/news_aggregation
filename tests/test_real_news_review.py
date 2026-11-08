@@ -134,6 +134,22 @@ class IndependentReviewTests(unittest.TestCase):
                 outcome["validation_messages"] + outcome["test_messages"], 3
             )
 
+    def test_prepare_never_overwrites_existing_review(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "new.json"
+            news_file(source)
+            folder = root / "review"
+            prepare([source], [], folder)
+            sheet = folder / "review_sheet.csv"
+            index = folder / "source_index.json"
+            saved_sheet = sheet.read_bytes()
+            saved_index = index.read_bytes()
+            with self.assertRaisesRegex(FileExistsError, "уже есть данные разметки"):
+                prepare([source], [], folder)
+            self.assertEqual(sheet.read_bytes(), saved_sheet)
+            self.assertEqual(index.read_bytes(), saved_index)
+
     def test_drafts_never_become_gold(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

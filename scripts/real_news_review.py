@@ -203,9 +203,18 @@ def prepare(
         news, excluded, old_titles,
         max_articles=max_articles, per_source=per_source,
     )
-    outdir.mkdir(parents=True, exist_ok=True)
     index_path = outdir / "source_index.json"
     csv_path = outdir / "review_sheet.csv"
+    # A new collection must never erase human-reviewed labels from a prior run.
+    # To combine multiple collections, pass all JSON paths to --news at once.
+    if index_path.exists() or csv_path.exists():
+        raise FileExistsError(
+            f"В {outdir} уже есть данные разметки. "
+            "Новый prepare может стереть ручные правки. "
+            "Сохраните текущую разметку и укажите новый --out "
+            "или передайте все новости одной командой до первой разметки."
+        )
+    outdir.mkdir(parents=True, exist_ok=True)
     index_path.write_text(json.dumps({
         "read_only": True,
         "human_verified_count": 0,
