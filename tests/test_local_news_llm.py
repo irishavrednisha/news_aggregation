@@ -1,6 +1,10 @@
 """LLM prototype contract tests without Ollama/model download/DB/MAX."""
 import unittest
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from check_local_news_llm import load_gemma_report, eligible_gemma_draft
 from processing.local_news_llm import (
     TAGS, FACT_FORMAT, SUMMARY_FORMAT, FACT_SYSTEM, SUMMARY_SYSTEM,
     extract_messages, summary_messages,
@@ -78,6 +82,64 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(decision.warnings, [])
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1][1], SUMMARY_FORMAT)
+
+    def test_gemma_report_skips_rejected_and_mismatched_news(self):
+        good = {
+            "url": "https://example.test/news-1", "title": TITLE,
+            "editorial_outcome": "edited", "text": "Завод обновил линию.",
+            "warnings": [], "review_required": True,
+            "publication_performed": False,
+        }
+        accepted, reason = eligible_gemma_draft(good, TITLE)
+        self.assertEqual(accepted, "Завод обновил линию.")
+        self.assertEqual(reason, "")
+        for changes in (
+            {"editorial_outcome": "rejected"},
+            {"review_required": False},
+            {"warnings": ["lost_exclusivity"]},
+            {"text": ""},
+            {"publication_performed": True},
+        ):
+            with self.subTest(changes=changes):
+                row = {**good, **changes}
+                text, warning = eligible_gemma_draft(row, TITLE)
+                self.assertIsNone(text)
+                self.assertTrue(warning)
+        self.assertEqual(
+            eligible_gemma_draft(good, "Другая статья")[1],
+            "gemma_title_mismatch",
+        )
+        self.assertEqual(
+            eligible_gemma_draft(None, TITLE)[1],
+            "missing_gemma_draft",
+        )
+
+    def test_report_must_have_unique_urls_and_review_contract(self):
+        item = {
+            "url": "https://example.test/one", "title": TITLE,
+            "editorial_outcome": "unchanged", "text": BODY,
+            "review_required": True, "publication_performed": False,
+            "warnings": [],
+        }
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "gemma.json"
+            payload = {
+                "all_require_review": True,
+                "publishing_performed": False, "results": [item],
+            }
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(
+                load_gemma_report(path)[item["url"]]["text"], BODY
+            )
+            payload["results"] = [item, item]
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "повторяется URL"):
+                load_gemma_report(path)
+            payload["results"] = [item]
+            payload["all_require_review"] = False
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "read-only"):
+                load_gemma_report(path)
 
     def test_focus_summary_orders_tags_and_verifies_with_original(self):
         edited = "Завод начал выпуск новой серии трансформаторов для сетей."
