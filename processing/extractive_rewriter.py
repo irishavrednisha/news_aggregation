@@ -130,6 +130,22 @@ TENSE_CONTRASTS = (
 INTRODUCED_COMPARISON_TARGET_RE = re.compile(
     r"\b(?:чем\s+у|чем\s+в|по\s+сравнению\s+с|относительно\s+других)\b", re.I
 )
+# High-risk subject substitutions observed in real industrial news.
+# "Метан" is a gas; "метанол" is a different chemical.
+TECHNICAL_SUBSTANCE_CONTRASTS = (
+    ("methane_methanol",
+     re.compile(r"\bметан(?!ол)[а-яё]*\b", re.I),
+     re.compile(r"\bметанол[а-яё]*\b", re.I)),
+)
+CURRENCY_RE = re.compile(
+    r"\b(?:рубл[ьяеймюи]*|руб|доллар[а-яё]*|евро|юан[а-яё]*)\b", re.I
+)
+ACRONYM_RE = re.compile(r"(?<!\w)[А-ЯЁA-Z]{2,}(?!\w)")
+DISCOURSE_SENTENCE_STARTERS = frozenset({
+    "этот", "эта", "это", "эти", "те", "тем", "таким",
+    "изначально", "главным", "главная", "главное", "также",
+    "далее", "кроме", "затем", "однако",
+})
 PROTECTED_ABBREVIATIONS = re.compile(
     r"\b(?:гг?|им|млн|млрд|тыс|кв|руб|т|д|п|е)\.",
     re.IGNORECASE,
@@ -223,6 +239,17 @@ def check_paraphrase(source: str, rewritten: str) -> list[str]:
     if (INTRODUCED_COMPARISON_TARGET_RE.search(rewritten)
             and not INTRODUCED_COMPARISON_TARGET_RE.search(source)):
         warnings.append("introduced_comparison_target")
+    for label, left, right in TECHNICAL_SUBSTANCE_CONTRASTS:
+        source_left, source_right = bool(left.search(source)), bool(right.search(source))
+        candidate_left, candidate_right = bool(left.search(rewritten)), bool(right.search(rewritten))
+        if ((candidate_left and not source_left) or
+                (candidate_right and not source_right)):
+            warnings.append("introduced_technical_substance:" + label)
+    if CURRENCY_RE.search(rewritten) and not CURRENCY_RE.search(source):
+        warnings.append("introduced_currency")
+    missing_acronyms = set(ACRONYM_RE.findall(source)) - set(ACRONYM_RE.findall(rewritten))
+    if missing_acronyms:
+        warnings.append("missing_acronym:" + sorted(missing_acronyms)[0])
     if _quoted_terms(source) != _quoted_terms(rewritten):
         warnings.append("changed_quoted_names")
     original_normalized = _normalize(source)
@@ -230,8 +257,12 @@ def check_paraphrase(source: str, rewritten: str) -> list[str]:
         token = match.group()
         # Ignore a common capitalized sentence opener, but not all-caps names,
         # multi-part proper names, or a new name in the middle of a sentence.
-        if match.start() == 0 and token[0].isupper() and token[1:].islower():
-            continue
+        if token[0].isupper() and token[1:].islower():
+            if match.start() == 0:
+                continue
+            if (_normalize(token) in DISCOURSE_SENTENCE_STARTERS
+                    and re.search(r"[.!?]\s+$", rewritten[:match.start()])):
+                continue
         if _normalize(token) not in original_normalized:
             warnings.append("new_capitalized_token:" + token)
             break
@@ -369,11 +400,9 @@ def rewrite_extractive_whole(
         return RewriteResult(original_text, original_text, False, ["summary_not_string"])
     candidate = candidate.strip()
     warnings = check_paraphrase(original_text, candidate)
-    # In whole-text mode multiple original sentences may be merged,
-    # but the result may not introduce whole additional statements.
-    output_sentences = split_extractive_sentences(candidate)
-    if len(output_sentences) > len(originals):
-        warnings.append("introduced_additional_sentences")
+    # Sentence counts can change in coherent-paragraph mode: splitting
+    # a sentence is not itself a new fact. The factual anchor checks above,
+    # plus mandatory manual review, remain in force.
     if _normalize(candidate) == _normalize(original_text):
         warnings.append("unchanged_text")
     if warnings:
