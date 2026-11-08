@@ -54,6 +54,24 @@ class SFTDatasetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Synthetic items must never"):
             build_dataset([{**synthetic, "split": "validation"}], allow_synthetic=True)
 
+    def test_auto_checked_synthetic_requires_extra_explicit_opt_in(self):
+        auto = {**BASE, "origin": "synthetic",
+                "review_status": "auto_checked"}
+        only_synthetic = build_dataset([auto], allow_synthetic=True)
+        self.assertEqual(only_synthetic["splits"]["train"], [])
+        approved = build_dataset(
+            [auto], allow_synthetic=True,
+            allow_auto_checked_synthetic=True,
+        )
+        self.assertEqual(len(approved["splits"]["train"]), 2)
+
+    def test_real_auto_checked_labels_never_go_to_validation(self):
+        auto = {**BASE, "split": "validation",
+                "review_status": "auto_checked"}
+        output = build_dataset([auto], allow_synthetic=True,
+                               allow_auto_checked_synthetic=True)
+        self.assertEqual(output["splits"]["validation"], [])
+
     def test_same_event_cannot_leak_across_splits(self):
         with self.assertRaisesRegex(ValueError, "Leakage"):
             build_dataset([
