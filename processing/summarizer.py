@@ -200,7 +200,7 @@ def is_bad_summary_sentence(sentence: str) -> bool:
         "данный ", "данная ", "данные ",
     ]
 
-    if any(key.startswith(start.strip()) for start in bad_pronoun_starts):
+    if any(key == start.strip() or key.startswith(start) for start in bad_pronoun_starts):
         return True
 
     return False
