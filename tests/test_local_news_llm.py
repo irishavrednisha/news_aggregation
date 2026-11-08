@@ -205,6 +205,58 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(decision.summary, "")
         self.assertEqual(len(calls), 1)
 
+    def test_malformed_quote_gets_one_exact_copy_retry(self):
+        copied = "Компания создала новую несуществующую технологию производства."
+        answers = [
+            {"relevant": True, "tags": ["машиностроение"],
+             "evidence": [copied], "uncertain": False},
+            {"relevant": True, "tags": ["электротехническое направление"],
+             "evidence": EVIDENCE, "uncertain": False},
+            {"summary": "Компания выпустила трансформаторы для электросетей. "
+                        "Оборудование прошло испытания."},
+        ]
+        calls = []
+        def fake_request(messages, schema, **kwargs):
+            calls.append(messages)
+            return answers[len(calls) - 1]
+        result = analyze_news(TITLE, BODY, request=fake_request)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(result.tags, ["электротехническое направление"])
+        self.assertEqual(result.evidence, EVIDENCE)
+        self.assertEqual(result.warnings, [])
+        self.assertTrue(result.review_required)
+
+    def test_bad_quote_retry_does_not_silently_approve(self):
+        wrong = "Компания создала новую несуществующую технологию производства."
+        replies = [
+            {"relevant": True, "tags": ["машиностроение"],
+             "evidence": [wrong], "uncertain": False},
+            {"relevant": True, "tags": ["машиностроение"],
+             "evidence": [wrong], "uncertain": False},
+        ]
+        calls = []
+        def fake_request(messages, schema, **kwargs):
+            calls.append(messages)
+            return replies[len(calls) - 1]
+        with self.assertRaisesRegex(ValueError, "исказила цитату"):
+            analyze_news(TITLE, BODY, request=fake_request)
+        self.assertEqual(len(calls), 2)
+
+    def test_quote_retry_cannot_silently_downgrade_to_unrelated(self):
+        replies = [
+            {"relevant": True, "tags": ["машиностроение"],
+             "evidence": ["Несуществующая цитата о предприятии и станках."],
+             "uncertain": False},
+            {"relevant": False, "tags": [], "evidence": [], "uncertain": False},
+        ]
+        calls = []
+        def fake_request(messages, schema, **kwargs):
+            calls.append(messages)
+            return replies[len(calls) - 1]
+        with self.assertRaisesRegex(ValueError, "отказалась от релевантной"):
+            analyze_news(TITLE, BODY, request=fake_request)
+        self.assertEqual(len(calls), 2)
+
     def test_fail_closed_if_model_invents_evidence(self):
         def fake_request(messages, schema, **kwargs):
             return {"relevant": True, "tags": ["машиностроение"],
