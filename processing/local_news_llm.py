@@ -9,6 +9,7 @@ review_required must prevent unattended publication until separately validated.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from difflib import SequenceMatcher
 import json
 import os
 import re
@@ -146,6 +147,30 @@ def validate_fact_decision(output: dict, source: str) -> tuple[bool, list[str], 
     return True, tags, evidence, uncertain
 
 
+def _clean_sentence(text: str) -> str:
+    """Ignore punctuation/case when detecting near-verbatim extraction."""
+    return re.sub(r"[^a-zа-я0-9]+", " ", (text or "").casefold().replace("ё", "е")).strip()
+
+
+def near_verbatim_sentences(summary: str, evidence: list[str]) -> list[str]:
+    """Find long summary sentences that largely copy an evidence span.
+
+    A rough lexical-quality check only. It is not a factuality validator.
+    """
+    source = [_clean_sentence(span) for span in evidence]
+    copied = []
+    for sentence in re.split(r"(?<=[.!?])\s+", summary.strip()):
+        clean = _clean_sentence(sentence)
+        if len(clean) < 65:
+            continue
+        if any(
+            clean in span or SequenceMatcher(None, clean, span, autojunk=False).ratio() >= 0.93
+            for span in source
+        ):
+            copied.append(sentence)
+    return copied
+
+
 def validate_summary(summary: str, evidence: list[str]) -> list[str]:
     if not isinstance(summary, str):
         raise ValueError("Саммари должно быть строкой")
@@ -157,6 +182,8 @@ def validate_summary(summary: str, evidence: list[str]) -> list[str]:
     invented_numbers = _numbers(summary) - evidence_numbers
     if invented_numbers:
         problems.append("numbers_not_in_evidence:" + ",".join(sorted(invented_numbers)))
+    if near_verbatim_sentences(summary, evidence):
+        problems.append("summary_near_verbatim")
     # No heuristics can guarantee that paraphrased names/claims are supported.
     # Keep human review on by default in this initial prototype.
     return problems
@@ -233,6 +260,31 @@ def analyze_news(
     second = call(summary_messages(evidence), SUMMARY_FORMAT, model=model)
     summary = second.get("summary")
     warnings = validate_summary(summary, evidence)
+    if "summary_near_verbatim" in warnings:
+        # A single bounded revision request; don't run recursive retries.
+        # The first draft is retained for diagnosis when the rewrite fails.
+        retry_messages = summary_messages(evidence) + [{
+            "role": "user",
+            "content": (
+                "Предыдущая сводка почти дословно повторяла исходные цитаты. "
+                "Переформулируй утверждения собственными короткими предложениями "
+                "без копирования предложений источника. "
+                "Не меняй смысла, причин, авторства, названий и чисел. "
+                "Если перефразировать корректно нельзя, верни пустую сводку. "
+                "Верни JSON."
+            ),
+        }]
+        try:
+            retry = call(retry_messages, SUMMARY_FORMAT, model=model)
+            new_summary = retry.get("summary", "")
+            revised_warnings = validate_summary(new_summary, evidence)
+            if not revised_warnings:
+                summary = new_summary
+                warnings = []
+            else:
+                warnings = list(dict.fromkeys(warnings + revised_warnings))
+        except (ValueError, TypeError, KeyError, RuntimeError):
+            warnings = list(dict.fromkeys(warnings + ["summary_rewrite_failed"]))
     return NewsDecision(
         relevant, tags, (summary or "").strip(), evidence,
         True,  # Review remains mandatory until independent real-news validation.
