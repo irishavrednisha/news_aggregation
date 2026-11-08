@@ -86,7 +86,7 @@ DIRECTIONAL_CONTRASTS = (
      re.compile(r"\b(?:отклони\w*|отказ\w*|не\s+одобр\w*)", re.I)),
 )
 PROTECTED_ABBREVIATIONS = re.compile(
-    r"\b(?:гг?|им|млн|млрд|руб|т|д|п|е)\.",
+    r"\b(?:гг?|им|млн|млрд|тыс|кв|руб|т|д|п|е)\.",
     re.IGNORECASE,
 )
 
