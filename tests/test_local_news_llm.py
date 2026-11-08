@@ -79,6 +79,68 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1][1], SUMMARY_FORMAT)
 
+    def test_focus_summary_orders_tags_and_verifies_with_original(self):
+        edited = "Завод начал выпуск новой серии трансформаторов для сетей."
+        messages = extract_messages(TITLE, BODY, focus_summary=edited)
+        self.assertIn(edited, messages[1]["content"])
+        self.assertIn(BODY, messages[1]["content"])
+        self.assertIn("исходной статьи", messages[0]["content"].lower())
+        self.assertLess(
+            messages[1]["content"].index(edited),
+            messages[1]["content"].index(BODY),
+        )
+        calls = []
+        def fake(msg, schema, **kw):
+            calls.append((msg, schema))
+            return {
+                "relevant": True,
+                "tags": ["электротехническое направление"],
+                "evidence": [EVIDENCE[0]],
+                "uncertain": False,
+            }
+        result = analyze_news(
+            TITLE, BODY, request=fake, tags_only=True,
+            focus_summary=edited,
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result.tags, ["электротехническое направление"])
+        self.assertTrue(result.review_required)
+        self.assertEqual(result.evidence, [EVIDENCE[0]])
+        self.assertEqual(result.summary, "")
+
+    def test_focus_summary_cannot_supply_source_evidence(self):
+        invented = "Завод якобы построил 900 новых реакторов на Марсе."
+        def fake(*args, **kwargs):
+            return {
+                "relevant": True,
+                "tags": ["электротехническое направление"],
+                "evidence": [invented],
+                "uncertain": False,
+            }
+        with self.assertRaisesRegex(ValueError, "исказила цитату"):
+            analyze_news(
+                TITLE, BODY, request=fake, tags_only=True,
+                focus_summary=invented,
+            )
+
+    def test_focus_summary_negative_still_requires_human_review(self):
+        def fake(*args, **kwargs):
+            return {
+                "relevant": False, "tags": [], "evidence": [],
+                "uncertain": False,
+            }
+        result = analyze_news(
+            TITLE, BODY, request=fake, tags_only=True,
+            focus_summary="Корпоративный праздник на заводе.",
+        )
+        self.assertFalse(result.relevant)
+        self.assertEqual(result.tags, [])
+        self.assertTrue(result.review_required)
+
+    def test_focus_summary_empty_is_invalid(self):
+        with self.assertRaises(ValueError):
+            extract_messages(TITLE, BODY, focus_summary=" ")
+
     def test_tags_only_runs_one_fact_request_without_summary(self):
         calls = []
         def fake(messages, schema, **kwargs):
