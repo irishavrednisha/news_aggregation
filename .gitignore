@@ -1,0 +1,29 @@
+# Local credentials, Python environments and caches
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Generated collector, audit and local model outputs
+collector_test_results/
+max_browser_profile/
+models/
+*.gguf
+*.safetensors
+
+# Full texts and human-labelled datasets stay LOCAL, not in public GitHub
+training/synthetic/
+training/news_sft/
+training/real_review/
+training/synthetic_candidates.json
+training/news_examples.json
+training/real_gold_verified.json
+
+# Local temporary artifacts
+*.merge-backup.py
+.DS_Store
