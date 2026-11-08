@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.audit_news_lora import surviving_reply_tokens
+from scripts.audit_news_lora import surviving_reply_tokens, rendered_token_ids, audit
 from scripts.evaluate_news_lora import select_rows, summarize, f1
 
 
@@ -13,6 +13,67 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(surviving_reply_tokens(1000, 1060, 1024), 24)
         self.assertEqual(surviving_reply_tokens(1100, 1160, 1024), 0)
         self.assertEqual(surviving_reply_tokens(500, 600, 1024), 100)
+
+    def test_qwen_mapping_would_have_two_keys_not_two_tokens(self):
+        class FakeQwenTokenizer:
+            def apply_chat_template(self, messages, *, tokenize,
+                                    add_generation_prompt, enable_thinking):
+                self_tokenized = self
+                self_tokenized.last_tokenize = tokenize
+                prefix = "SYSTEM: " + messages[0]["content"]
+                if len(messages) > 1:
+                    prefix += " USER: " + messages[1]["content"]
+                prefix += " ASSISTANT: "
+                if add_generation_prompt:
+                    return prefix
+                return prefix + messages[-1]["content"] + " END"
+            def __call__(self, text, *, add_special_tokens):
+                # A real tokenization can return a BatchEncoding mapping.
+                return {"input_ids": [ord(c) for c in text],
+                        "attention_mask": [1] * len(text)}
+
+        tok = FakeQwenTokenizer()
+        messages = [
+            {"role": "system", "content": "You are an industrial editor."},
+            {"role": "user", "content": "Factory launched a new engine."},
+            {"role": "assistant", "content": '{"relevant": true}'},
+        ]
+        ids = rendered_token_ids(tok, messages, add_generation_prompt=False)
+        self.assertGreater(len(ids), 50)
+        self.assertFalse(tok.last_tokenize)
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder / "train.jsonl").write_text(
+                json.dumps({"messages": messages, "task": "fact_tagging"})
+                + "\n", encoding="utf-8",
+            )
+            result = audit(folder, tok, max_length=90)
+        data = result["train"]["fact_tagging"]
+        self.assertEqual(data["records"], 1)
+        self.assertGreater(data["full_tokens_total"], 50)
+        self.assertGreater(data["reply_tokens_total"], 0)
+        self.assertEqual(data["possible_template_mismatch"], 0)
+        self.assertEqual(data["aligned_records"], 1)
+
+    def test_unaligned_chat_template_does_not_claim_missing_replies(self):
+        class MismatchedTokenizer:
+            def apply_chat_template(self, messages, *, tokenize,
+                                    add_generation_prompt, enable_thinking):
+                return "PREFIX-B" if add_generation_prompt else "PREFIX-A_RESPONSE"
+            def __call__(self, text, *, add_special_tokens):
+                return {"input_ids": [ord(c) for c in text]}
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            messages = [{"role": "user", "content": "a"},
+                        {"role": "assistant", "content": "b"}]
+            (folder / "validation.jsonl").write_text(
+                json.dumps({"messages": messages, "task": "fact_tagging"})
+                + "\n", encoding="utf-8",
+            )
+            data = audit(folder, MismatchedTokenizer(), 1024)["validation"]["fact_tagging"]
+        self.assertEqual(data["possible_template_mismatch"], 1)
+        self.assertEqual(data["aligned_records"], 0)
+        self.assertEqual(data["no_reply_tokens"], 0)
 
     def test_stratified_limit_reproducible(self):
         rows = [

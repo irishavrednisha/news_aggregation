@@ -16,7 +16,7 @@
     cd ~/projects/news_aggregation
     git pull --ff-only origin fix/site-specific-news-collection-2026-11-06
     source ~/qwen-env/bin/activate
-    python -m scripts.audit_news_lora --data-dir training/news_sft --max-length 1024 --output reports/token_audit.json
+    python -m scripts.audit_news_lora --data-dir training/news_sft --max-length 1024 --output reports/token_audit_v2.json
 
 После аудита сравните исходную модель и реально сохранившиеся адаптеры.
 Старый запуск использовал save_total_limit=2 без load_best_model_at_end,
@@ -47,3 +47,11 @@ gold test. Не оценивать test при подборе параметро
 validation loss контрольную точку даже при save_total_limit=2 и загружает
 её перед сохранением lora_adapter. Это не меняет уже законченный запуск;
 метрика AI validation по-прежнему не является независимой оценкой.
+
+Исправление аудита: прежний скрипт считал число ключей словаря
+BatchEncoding (2), а не длину input_ids. Результаты прежнего отчёта
+с prompt_tokens_total=8000 и full_tokens_total=8000 при 4000 статьях
+НЕВЕРНЫ. Новый скрипт рендерит text-column как при обучении, затем
+токенизирует строку и проверяет совпадение префикса. Число
+no_reply_tokens достоверно только для aligned_records; случаи
+possible_template_mismatch отдельно выделяются и не включаются в него.
