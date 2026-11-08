@@ -339,7 +339,8 @@ Qwen как эталонные метки.
 Строки отчётов Gemma сопоставляются **по URL и идентичному
 заголовку**, а не по порядку строк. В Qwen попадают только
 `editorial_outcome=edited` либо `unchanged`, без
-предупреждений и с `review_required=true`. Для
+предупреждений, без `source_quality_warnings` и с
+`review_required=true`. Для
 `rejected` или отсутствующей Gemma-сводки будет
 `skipped:...` и модель Qwen для этой строки не вызывается.
 `model_candidate` (отклонённый текст Gemma)
