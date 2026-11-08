@@ -38,7 +38,7 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertIs(text_only_tokenizer(text_tokenizer), text_tokenizer)
 
     def test_complete_fenced_json_is_parsed_but_missing_fields_fail(self):
-        raw = '```json\\n{"relevant":false,"tags":[],"evidence":[]}\\n```'
+        raw = '```json\n{"relevant":false,"tags":[],"evidence":[]}\n```'
         parsed, wrapped = decode_json_response(raw)
         self.assertTrue(wrapped)
         self.assertFalse(parsed["relevant"])
@@ -46,7 +46,7 @@ class DiagnosticsTests(unittest.TestCase):
             "fact_tagging",
             {"relevant": False, "tags": [], "evidence": []},
             raw,
-            "Заголовок: Демонстрация\\nСтатья: Тестовая новость.",
+            "Заголовок: Демонстрация\nСтатья: Тестовая новость.",
         )
         self.assertTrue(result["valid_json"])
         self.assertTrue(result["markdown_wrapped"])
@@ -59,7 +59,7 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertFalse(result["valid_json"])
         self.assertFalse(result["valid_contract"])
         with self.assertRaises(ValueError):
-            decode_json_response('```json\\n{"relevant":false}')
+            decode_json_response('```json\n{"relevant":false}')
 
     def test_valid_contract_without_fence(self):
         raw = ('{"relevant":false,"tags":[],"evidence":[],'

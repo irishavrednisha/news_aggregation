@@ -47,18 +47,17 @@ def decode_json_response(prediction: str) -> tuple[dict, bool]:
     Never attempt to repair an incomplete/truncated model answer or silently
     convert an answer with a different schema into the requested schema.
     """
-    import re
-
     cleaned = prediction.strip()
     wrapped = cleaned.startswith("```")
     if wrapped:
-        matched = re.fullmatch(
-            r"```(?:json|JSON)?[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n?```",
-            cleaned,
-        )
-        if matched is None:
+        lines = cleaned.splitlines()
+        if (
+            len(lines) < 3
+            or lines[0].strip().lower() not in ("```", "```json")
+            or lines[-1].strip() != "```"
+        ):
             raise ValueError("Incomplete or malformed Markdown JSON fence")
-        cleaned = matched.group(1).strip()
+        cleaned = "\n".join(lines[1:-1]).strip()
     value = json.loads(cleaned)
     if not isinstance(value, dict):
         raise ValueError("Not a JSON object")
