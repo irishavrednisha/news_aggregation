@@ -78,7 +78,7 @@ def seed_sources(session: Session):
         },
         {
             "name": "Производства.рф",
-            "url": "https://производства.рф/",
+            "url": "https://производства.рф/articles/",
             "rss_url": None,
             "source_type": "html",
             "is_active": True,
@@ -181,7 +181,7 @@ def seed_sources(session: Session):
         {
             "name": "РИА Новости",
             "url": "https://ria.ru",
-            "rss_url": "https://ria.ru/export/rss2/index.xml",
+            "rss_url": "https://ria.ru/export/rss2/archive/index.xml",
             "source_type": "rss",
             "is_active": True,
         },

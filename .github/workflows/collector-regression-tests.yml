@@ -1,0 +1,69 @@
+name: Collector regression tests
+on:
+  push:
+    branches:
+      - fix/site-specific-news-collection-2026-11-06
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  collector-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install beautifulsoup4 requests feedparser playwright sqlalchemy psycopg2-binary python-dotenv
+      - name: Compile source files
+        run: |
+          python -m py_compile collectors/data_collector.py processing/topic_filter.py processing/tagger.py processing/ai_tagger.py publishing/publisher.py tests/test_ai_tagger.py tests/test_ai_tagging_audit.py check_ai_tagging.py tests/test_topic_filter.py tests/test_tagging_filter_contract.py tests/test_collector_regressions.py tests/test_text_extraction_all_sources.py tests/test_reactivated_sources.py check_news_collection.py check_news_filter.py compare_ai_tagging.py tests/test_compare_ai_tagging.py tests/test_focused_tagging.py check_focused_tagging.py tests/test_tagging_evaluation.py evaluate_tagging.py tests/test_tagging_event_guard.py processing/tagging_event_guard.py tests/test_tag_role_challenger.py processing/tag_role_challenger.py check_tag_role_challenger.py tests/test_hybrid_tagging_integration.py tests/test_synthetic_tagging_data.py processing/local_news_llm.py check_local_news_llm.py scripts/build_news_sft.py scripts/train_news_lora.py scripts/generate_news_training_synthetic.py tests/test_local_news_llm.py tests/test_news_sft_data.py scripts/real_news_review.py tests/test_real_news_review.py
+      - name: Run collector regression tests
+        run: python -m unittest discover -s tests -p 'test_collector_regressions.py' -v
+      - name: Run checks for eight reactivated sources
+        run: python -m unittest discover -s tests -p 'test_reactivated_sources.py' -v
+      - name: Run all-source text extraction tests
+        run: python -m unittest discover -s tests -p 'test_text_extraction_all_sources.py' -v
+      - name: Run industrial news filter regression tests
+        run: python -m unittest discover -s tests -p 'test_topic_filter.py' -v
+      - name: Run tagger filtering contract tests without ML dependencies
+        run: python -m unittest discover -s tests -p 'test_tagging_filter_contract.py' -v
+      - name: Run focused SBERT tagging scorer offline tests
+        run: python -m unittest discover -s tests -p 'test_focused_tagging.py' -v
+      - name: Run offline tagging metrics and calibration tests
+        run: python -m unittest discover -s tests -p 'test_tagging_evaluation.py' -v
+      - name: Check non-industrial headline event guard
+        run: python -m unittest discover -s tests -p 'test_tagging_event_guard.py' -v
+      - name: Test offline tag role challenger
+        run: python -m unittest discover -s tests -p 'test_tag_role_challenger.py' -v
+      - name: Verify synthetic benchmark separation and coverage
+        run: python -m unittest discover -s tests -p 'test_synthetic_tagging_data.py' -v
+      - name: Validate opt-in hybrid production tagging
+        run: python -m unittest discover -s tests -p 'test_hybrid_tagging_integration.py' -v
+      - name: Verify local LLM source grounding and draft-only policy
+        run: python -m unittest discover -s tests -p 'test_local_news_llm.py' -v
+      - name: Validate source-grounded SFT data splits
+        run: python -m unittest discover -s tests -p 'test_news_sft_data.py' -v
+      - name: Test independent real news review and holdout generation
+        run: python -m unittest discover -s tests -p 'test_real_news_review.py' -v
+      - name: Verify TRL compatibility without GPU
+        run: python -m unittest discover -s tests -p 'test_news_lora_compat.py' -v
+      - name: Run LoRA diagnostics unit tests without GPU
+        run: python -m unittest discover -s tests -p 'test_news_lora_diagnostics.py' -v
+      - name: Test short diagnostic validation split safety
+        run: python -m unittest discover -s tests -p 'test_news_lora_short_validation.py' -v
+      - name: Verify tagging-only SFT sampling and holdout safety
+        run: python -m unittest discover -s tests -p 'test_news_lora_tagging_only.py' -v
+      - name: Test conservative extractive-to-paraphrase rewrite offline
+        run: python -m unittest discover -s tests -p 'test_extractive_rewriter.py' -v
+      - name: Run AI zero-shot tagging contract tests without model download
+        run: python -m unittest discover -s tests -p 'test_ai_tagger.py' -v
+      - name: Run AI audit summary parity tests without model download
+        run: python -m unittest discover -s tests -p 'test_ai_tagging_audit.py' -v
+      - name: Run zero-shot model A/B comparison tests
+        run: python -m unittest discover -s tests -p 'test_compare_ai_tagging.py' -v

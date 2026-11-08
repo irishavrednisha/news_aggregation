@@ -1,0 +1,71 @@
+name: RSS and article access probe
+
+on:
+  push:
+    branches:
+      - fix/site-specific-news-collection-2026-11-06
+    paths:
+      - .github/workflows/rss-and-article-probe.yml
+  workflow_dispatch:
+
+jobs:
+  access-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install requests feedparser beautifulsoup4 playwright
+      - name: Probe official feeds and URLs read-only
+        shell: bash
+        run: |
+          python - <<'PY'
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          import requests, feedparser
+          from bs4 import BeautifulSoup
+          from collectors.data_collector import matches_industrial_rss
+          urls = {
+            "ria_index": "https://ria.ru/export/rss2/index.xml",
+            "ria_archive": "https://ria.ru/export/rss2/archive/index.xml",
+            "ria_economy": "https://ria.ru/export/rss2/economy/index.xml",
+            "ria_science": "https://ria.ru/export/rss2/science/index.xml",
+            "ria_defense": "https://ria.ru/export/rss2/defense_safety/index.xml",
+            "tass_rss": "https://tass.ru/rss/v2.xml",
+            "tass_article": "https://tass.ru/ekonomika/28295367",
+            "tass_article_amp_end": "https://tass.ru/ekonomika/28295367/amp",
+            "tass_article_amp_prefix": "https://tass.ru/amp/ekonomika/28295367",
+            "gazprom_www": "https://www.gazprom.ru/press/news/",
+            "gazprom_no_www": "https://gazprom.ru/press/news/",
+            "gazprom_rss": "https://www.gazprom.ru/rss",
+          }
+          def probe(pair):
+            name, url = pair
+            try:
+              resp = requests.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; NewsAggregatorDiagnostic/1.0)"},
+                timeout=(5, 12),
+              )
+              info = f"{name}: status={resp.status_code}, bytes={len(resp.content)}, final={resp.url}"
+              if resp.status_code != 200:
+                return info
+              if "rss" in name or "ria_" in name:
+                feed = feedparser.parse(resp.content)
+                matches = [
+                  (e.get("title", "")[:100], len(e.get("summary", "")))
+                  for e in feed.entries
+                  if matches_industrial_rss(e.get("title", ""), e.get("summary", ""))
+                ]
+                return info + f"; entries={len(feed.entries)}, industry_matches={len(matches)}, first={matches[:4]!r}, bozo={bool(feed.bozo)}"
+              soup = BeautifulSoup(resp.text, "html.parser")
+              heading = soup.find("h1")
+              return info + f"; h1={(heading.get_text(' ', strip=True)[:90] if heading else None)!r}, body_chars={len(soup.get_text(' ', strip=True))}, title={(soup.title.get_text(' ',strip=True)[:90] if soup.title else None)!r}"
+            except Exception as ex:
+              return f"{name}: {type(ex).__name__}: {str(ex)[:160]}"
+          with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(probe, pair) for pair in urls.items()]
+            for future in as_completed(futures):
+              print(future.result(), flush=True)
+          PY

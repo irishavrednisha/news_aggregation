@@ -6,6 +6,7 @@ sys.path.append(str(ROOT_DIR))
 
 import numpy as np
 import re
+import os
 from sklearn.metrics.pairwise import cosine_similarity
 
 from database.models import Cluster, News
@@ -1556,36 +1557,16 @@ def cut_text(text: str, max_chars: int) -> str:
 
 
 def get_cluster_text_for_tagging(session, cluster: Cluster) -> str:
+    """Текст для тэгов: один заголовок, одно summary и реальные статьи.
+
+    Первые две строки — опорный контекст для score_tags_detailed().
+    Не повторяем их искусственно: в SBERT лишние повторы вытесняют
+    важные сведения из статьи при ограничении длины входа.
     """
-    Формирует текст для тематического тегирования кластера.
-
-    Используем не только summary, но и полный текст статей:
-    - заголовок кластера имеет самый большой вес;
-    - summary тоже усиливается, потому что отражает основное событие;
-    - полный текст основной новости даёт отраслевые термины;
-    - остальные новости кластера добавляются как дополнительный контекст.
-
-    Повторение заголовка и summary — простой способ повысить их вес
-    без изменения всей логики score_tags_detailed().
-    """
-
-    parts = []
-
-    if cluster.title:
-        title = cut_text(cluster.title, 500)
-
-        # Заголовок самый важный, поэтому добавляем несколько раз
-        parts.append(title)
-        parts.append(title)
-        parts.append(title)
-
-    if cluster.summary_text:
-        summary = cut_text(cluster.summary_text, 1500)
-
-        # Summary важнее обычного полного текста
-        parts.append(summary)
-        parts.append(summary)
-
+    parts = [
+        cut_text(cluster.title or "", 400),
+        cut_text(cluster.summary_text or "", 900),
+    ]
     news_items = (
         session.query(News)
         .filter(News.cluster_id == cluster.id)
@@ -1596,25 +1577,15 @@ def get_cluster_text_for_tagging(session, cluster: Cluster) -> str:
         )
         .all()
     )
-
     for index, news in enumerate(news_items[:5]):
         if news.title:
-            news_title = cut_text(news.title, 500)
-
-            # Заголовки новостей внутри кластера тоже полезны
-            parts.append(news_title)
-            parts.append(news_title)
-
+            parts.append(cut_text(news.title, 250))
         if news.text:
-            if index == 0 or news.is_primary:
-                # Основную новость берём почти полностью
-                parts.append(cut_text(news.text, 5000))
-            else:
-                # Остальные новости добавляем короче,
-                # чтобы не забить текст повторами и служебными фрагментами
-                parts.append(cut_text(news.text, 2500))
+            parts.append(cut_text(news.text, 2200 if index == 0 else 900))
+    # Заголовок и summary не могут содержать переводов строк: cut_text
+    # нормализует whitespace. Сохраняем две начальные строки даже пустыми.
+    return "\n".join(parts)
 
-    return "\n".join(part for part in parts if part)
 
 def score_tags(text: str) -> list[tuple[str, float]]:
     """
@@ -1678,6 +1649,7 @@ def tag_cluster(
         cluster.tags = None
         cluster.status = "not_for_publication"
         session.commit()
+        return []
 
     if is_not_related_to_russia(session, cluster, debug=debug):
         cluster.tags = None
@@ -1693,8 +1665,6 @@ def tag_cluster(
 
         return []
 
-    text = get_cluster_text_for_tagging(session, cluster)
-
     if not cluster_has_content(session, cluster.id):
         cluster.tags = None
         cluster.status = "not_for_publication"
@@ -1709,7 +1679,79 @@ def tag_cluster(
 
         return []
 
-    if is_not_publication_by_keywords(text):
+    # Отрасль может присутствовать только как фон (ОСК провела
+    # фестиваль, акции металлургической компании и т. п.).
+    # Не назначаем тематические теги событию другого типа.
+    # Это проверка главного события только по заголовку;
+    # новости не удаляются, этап сбора не меняется.
+    from processing.tagging_event_guard import nonindustrial_event_reason
+    event_reason = nonindustrial_event_reason(cluster.title or "")
+    if event_reason:
+        cluster.tags = None
+        cluster.status = "not_for_publication"
+        session.commit()
+        if debug:
+            print(f"Кластер #{cluster.id}: теги не назначены; "
+                  f"основное событие не промышленное ({event_reason})")
+        return []
+
+    # Экспериментальная NLI-классификация: AI оценивает смысл
+    # заголовка + summary и затем независимо 18 тематик.
+    # Без подтверждённых тегов публикации нет.
+    backend = os.getenv("NEWS_TAGGER_BACKEND", "legacy").strip().lower()
+    if backend == "nli":
+        from processing.ai_tagger import predict_tags
+        try:
+            primary = (
+                session.query(News)
+                .filter(News.cluster_id == cluster.id)
+                .order_by(
+                    News.is_primary.desc(),
+                    News.published_at.asc().nullslast(),
+                    News.collected_at.asc(),
+                )
+                .first()
+            )
+            lead = (primary.text or "")[:330] if primary else ""
+            prediction = predict_tags(
+                title=cluster.title or "",
+                summary=cluster.summary_text or "",
+                lead=lead,
+                max_tags=max_tags,
+            )
+        except Exception as exc:
+            # Сбой загрузки модели / inference НЕ является признаком
+            # нерелевантности. Оставляем кластер новым для повтора
+            # и ни в коем случае не переводим его в ready.
+            cluster.tags = None
+            cluster.status = "new"
+            session.commit()
+            print(f"AI-тегирование кластера #{cluster.id} не выполнено: "
+                  f"{type(exc).__name__}: {exc}")
+            return []
+
+        cluster.tags = ", ".join(prediction.tags) if prediction.tags else None
+        cluster.status = "ready" if prediction.tags else "not_for_publication"
+        session.commit()
+        if debug:
+            print("-" * 100)
+            print(f"AI-тегирование кластера #{cluster.id}: {cluster.status}")
+            print(f"Причина: {prediction.reason}")
+            print(f"Оценка промышленной тематики: {prediction.relevance_score:.3f}")
+            print(f"Теги: {cluster.tags or 'нет'}")
+            for tag, score in prediction.ranked_tags[:5]:
+                print(f"  {tag}: {score:.3f}")
+        return prediction.tags
+
+    if backend not in ("legacy", "hybrid"):
+        raise ValueError("NEWS_TAGGER_BACKEND должен быть legacy, hybrid или nli")
+
+    text = get_cluster_text_for_tagging(session, cluster)
+
+    # Не ищем стоп-слова во всём тексте кластера. Техническая
+    # новость может упоминать выставку, музей, акционеров или вакансии.
+    # Явно непрофильные заголовки уже проверяет общий фильтр.
+    if is_not_publication_by_keywords(cluster.title or ""):
         cluster.tags = None
         cluster.status = "not_for_publication"
         session.commit()
@@ -1723,7 +1765,8 @@ def tag_cluster(
 
         return []
 
-    scored_tags = score_tags_detailed(text)
+    focus_text = f"{cluster.title or ''}\n{cluster.summary_text or ''}"
+    scored_tags = score_tags_detailed(text, focus_text=focus_text)
 
     selected_tags = select_tags_by_score_gap(
         scored_tags=scored_tags,
@@ -1731,17 +1774,35 @@ def tag_cluster(
         max_tags=max_tags,
         max_gap_from_best=0.05
     )
-    if selected_tags:
-        if is_not_related_to_russia(session, cluster, debug=debug):
-            cluster.tags = None
-            cluster.status = "not_for_publication"
-        else:
-            cluster.tags = ", ".join(selected_tags)
-            cluster.status = "ready"
-    else:
-        cluster.tags = None
-        cluster.status = "not_for_publication"
 
+    # Гибрид: Sentence-BERT остаётся источником всех 18 оценок.
+    # Экспериментальный второй этап проверяет, соответствует ли
+    # отрасль конкретному событию и объекту заголовка/summary.
+    # Режим включается явно через NEWS_TAGGER_BACKEND=hybrid;
+    # legacy и NLI сохраняют прежнее поведение. Модель не обучается.
+    if backend == "hybrid":
+        from processing.tag_role_challenger import candidate_tags
+        legacy_tags = list(selected_tags)
+        decision = candidate_tags(
+            {
+                "title": cluster.title or "",
+                "summary_used": cluster.summary_text or "",
+                "tags": legacy_tags,
+                "ranked": scored_tags,
+            },
+            min_score=min_score,
+            gap=0.05,
+            max_tags=max_tags,
+        )
+        selected_tags = decision["tags"]
+        if debug:
+            print(f"Hybrid: SBERT={legacy_tags}; "
+                  f"после проверки события={selected_tags}; "
+                  f"отклонены={decision['rejected_categories']}; "
+                  f"производство={decision['production_process']}")
+
+    # Проверка связи с РФ уже выполнена выше и завершает функцию.
+    # Не перезаписываем статус повторным блоком.
     if selected_tags:
         cluster.tags = ", ".join(selected_tags)
         cluster.status = "ready"
@@ -1779,16 +1840,15 @@ def tag_new_clusters(
     debug: bool = True
 ):
     """
-    Тегирует кластеры, у которых уже есть summary.
-    Если кластер уже был not_for_publication, можно перетегировать.
+    Тегирует новые кластеры с готовым summary.
+    Уже отклонённые и опубликованные кластеры не прогоняем на
+    каждой итерации; явная ручная перепроверка доступна отдельно.
     """
     clusters = (
         session.query(Cluster)
         .filter(Cluster.summary_text.isnot(None))
-        .filter(
-            (Cluster.tags.is_(None)) |
-            (Cluster.status == "not_for_publication")
-        )
+        .filter(Cluster.tags.is_(None))
+        .filter(Cluster.status == "new")
         .all()
     )
 
@@ -1874,33 +1934,117 @@ def keyword_boost_for_tag(text: str, tag: str) -> float:
 
     return min(0.03 * matches, 0.09)
 
-def score_tags_detailed(text: str) -> list[dict]:
-    if not text:
+def score_tags_detailed(
+    text: str,
+    focus_text: str | None = None,
+) -> list[dict]:
+    """Тэги по смыслу главного события и подтверждению в статье.
+
+    У модели SBERT длина входа ограничена; один embedding для
+    многокилобайтной строки почти не учитывает её конец. Поэтому
+    заголовок + summary и тело оцениваются ОТДЕЛЬНО. Ключевые слова
+    во вступлении значимее случайных упоминаний в длинной статье.
+    Если focus_text не передан, сохраняется совместимый старый API.
+    """
+    if not text and not focus_text:
         return []
 
-    text_embedding = build_embedding(text)
-    tag_embeddings = get_tag_embeddings()
+    if focus_text:
+        focus = cut_text(focus_text, 1050)
+        lines = (text or "").split("\n")
+        # get_cluster_text_for_tagging() располагает title/summary
+        # в первых двух строках. Остальные строки — тексты новостей.
+        body = cut_text("\n".join(lines[2:]), 2300) if len(lines) >= 3 else ""
+        if not body:
+            body = cut_text(text, 1800)
+    else:
+        focus = cut_text(text, 1050)
+        body = ""
 
-    result = []
+    if not focus:
+        return []
+    focus_vector = build_embedding(focus)
+    body_vector = build_embedding(body) if body else None
+    tag_embeddings = get_tag_embeddings()
+    results = []
+
+    # Лемматизацию проводим один раз на каждый сегмент, а не внутри
+    # 18 * N списков ключевых слов для каждого тега.
+    normalized_focus = lemmatize_text(focus)
+    normalized_body = lemmatize_text(body) if body else ""
 
     for tag, tag_embedding in tag_embeddings.items():
-        embedding_score = cosine_sim(text_embedding, tag_embedding)
-        boost = keyword_boost_for_tag(text, tag)
-        penalty = keyword_penalty_for_tag(text, tag)
+        focus_similarity = cosine_sim(focus_vector, tag_embedding)
+        body_similarity = (
+            cosine_sim(body_vector, tag_embedding)
+            if body_vector is not None else focus_similarity
+        )
+        embedding_score = (
+            0.78 * focus_similarity + 0.22 * body_similarity
+            if body_vector is not None else focus_similarity
+        )
 
+        positive = TAG_KEYWORDS.get(tag, [])
+        negative = TAG_NEGATIVE_KEYWORDS.get(tag, [])
+        focus_evidence = _matching_prepared_keywords(normalized_focus, positive)
+        body_evidence = _matching_prepared_keywords(normalized_body, positive)
+        focus_matches = len(focus_evidence)
+        body_matches = len(body_evidence)
+        focus_negative = _count_prepared_keywords(normalized_focus, negative)
+        body_negative = _count_prepared_keywords(normalized_body, negative)
+
+        boost = min(0.026 * focus_matches, 0.078) + min(0.006 * body_matches, 0.018)
+        penalty = min(0.035 * focus_negative, 0.105) + min(0.006 * body_negative, 0.018)
         final_score = embedding_score + boost - penalty
 
-        result.append({
+        results.append({
             "tag": tag,
             "embedding_score": embedding_score,
+            "focus_similarity": focus_similarity,
+            "body_similarity": body_similarity,
             "keyword_boost": boost,
             "keyword_penalty": penalty,
+            "focus_matches": focus_matches,
+            "body_matches": body_matches,
+            "focus_keywords": focus_evidence[:8],
+            "body_keywords": body_evidence[:8],
             "final_score": final_score,
         })
 
-    result.sort(key=lambda item: item["final_score"], reverse=True)
+    results.sort(key=lambda item: item["final_score"], reverse=True)
+    return results
 
-    return result
+
+def _matching_prepared_keywords(
+    normalized_text: str, keywords: list[str],
+) -> list[str]:
+    """Фразы, действительно найденные в текущем сегменте статьи."""
+    if not normalized_text:
+        return []
+    found = []
+    for keyword in keywords:
+        normalized = _normalize_tag_keyword(keyword)
+        if not normalized:
+            continue
+        if re.search(
+            r"(?<![а-яa-z0-9])" + re.escape(normalized) + r"(?![а-яa-z0-9])",
+            normalized_text,
+        ):
+            found.append(keyword)
+    return found
+
+
+def _count_prepared_keywords(normalized_text: str, keywords: list[str]) -> int:
+    return len(_matching_prepared_keywords(normalized_text, keywords))
+
+
+from functools import lru_cache
+
+
+@lru_cache(maxsize=4096)
+def _normalize_tag_keyword(keyword: str) -> str:
+    return lemmatize_text(keyword)
+
 
 def select_tags_by_score_gap(
         scored_tags: list[dict],
@@ -2153,15 +2297,13 @@ def keyword_penalty_for_tag(text: str, tag: str) -> float:
     return min(0.05 * matches, 0.15)
 
 def is_not_publication_by_keywords(text: str) -> bool:
-    normalized_text = lemmatize_text(text)
+    """Консервативная проверка заголовка, не всей статьи.
 
-    for keyword in NOT_PUBLICATION_KEYWORDS:
-        normalized_keyword = lemmatize_text(keyword)
-
-        if normalized_keyword in normalized_text:
-            return True
-
-    return False
+    Старый поиск любого NOT_PUBLICATION_KEYWORDS по полному тексту
+    отбрасывал модернизацию оборудования из-за слова «выставка».
+    """
+    from processing.topic_filter import has_bad_title
+    return has_bad_title(text)
 
 def cluster_has_content(session, cluster_id: int) -> bool:
     news_items = (

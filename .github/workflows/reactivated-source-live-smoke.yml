@@ -1,0 +1,69 @@
+name: Reactivated sources live smoke
+
+on:
+  push:
+    branches:
+      - fix/site-specific-news-collection-2026-11-06
+    paths:
+      - .github/workflows/reactivated-source-live-smoke.yml
+      - check_reactivated_sources_live.py
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install collector dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install beautifulsoup4 requests feedparser playwright sqlalchemy psycopg2-binary python-dotenv
+          python -m playwright install --with-deps chromium
+      - name: Check live sources (no database writes and no publishing)
+        run: python check_reactivated_sources_live.py --limit 2
+      - name: Diagnose MilPress and TASS article containers
+        run: |
+          python - <<'PY'
+          from bs4 import BeautifulSoup
+          from collectors.data_collector import fetch_html, _jsonld_article
+          samples = (
+              ("flotprom", "https://flotprom.ru/2026/%D0%AF%D0%BD%D1%82%D0%B0%D1%80%D1%8C5/"),
+              ("tass", "https://tass.ru/ekonomika/28295367"),
+          )
+          for name, url in samples:
+              html = fetch_html(url)
+              print("DOM DIAG", name, "html_length", len(html), flush=True)
+              if not html:
+                  continue
+              soup = BeautifulSoup(html, "html.parser")
+              data = _jsonld_article(soup)
+              print("JSONLD", len(str(data.get("articleBody", ""))), flush=True)
+              for selector in (
+                  "article", "[itemprop='articleBody']", ".article_text",
+                  ".news_text", ".text", ".news-body", ".article-content",
+                  ".article__content", "#content", "#text", "main",
+                  ".b-material-body", ".text-block",
+              ):
+                  blocks = soup.select(selector)
+                  if blocks:
+                      sizes = [len(block.get_text(" ", strip=True)) for block in blocks[:3]]
+                      print("BLOCK", repr(selector), sizes, flush=True)
+              for node in soup.select("p")[:7]:
+                  parent = node.parent
+                  print(
+                      "PARA", len(node.get_text(" ", strip=True)),
+                      parent.name, parent.get("class"),
+                      node.get_text(" ", strip=True)[:90], flush=True,
+                  )
+          PY
+      - name: Upload JSON diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reactivated-sources-live-result
+          path: collector_test_results/reactivated_sources_live.json
+          if-no-files-found: warn
