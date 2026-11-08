@@ -8,7 +8,7 @@ from check_local_news_llm import load_gemma_report, eligible_gemma_draft, choose
 from processing.local_news_llm import (
     TAGS, FACT_FORMAT, SUMMARY_FORMAT, FACT_SYSTEM, SUMMARY_SYSTEM,
     extract_messages, summary_messages,
-    source_payload, validate_evidence,
+    source_payload, validate_evidence, possible_production_plan,
     validate_fact_decision, validate_summary, analyze_news,
 )
 
@@ -475,7 +475,7 @@ class LocalLLMTests(unittest.TestCase):
     def test_malformed_quote_gets_one_exact_copy_retry(self):
         copied = "Компания создала новую несуществующую технологию производства."
         answers = [
-            {"relevant": True, "tags": ["машиностроение"],
+            {"relevant": True, "tags": ["электротехническое направление"],
              "evidence": [copied], "uncertain": False},
             {"relevant": True, "tags": ["электротехническое направление"],
              "evidence": EVIDENCE, "uncertain": False},
@@ -491,6 +491,48 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(result.tags, ["электротехническое направление"])
         self.assertEqual(result.evidence, EVIDENCE)
         self.assertEqual(result.warnings, [])
+        self.assertTrue(result.review_required)
+
+    def test_evidence_retry_cannot_silently_change_tags(self):
+        invalid = "Компания создала несуществующие высоковольтные двигатели."
+        attempts = [
+            {"relevant": True, "tags": ["машиностроение"],
+             "evidence": [invalid], "uncertain": False},
+            {"relevant": True, "tags": ["электротехническое направление"],
+             "evidence": EVIDENCE, "uncertain": False},
+        ]
+        calls = []
+        def fake(*args, **kwargs):
+            calls.append(1)
+            return attempts[len(calls) - 1]
+        with self.assertRaisesRegex(ValueError, "изменила отраслевые теги"):
+            analyze_news(TITLE, BODY, request=fake, tags_only=True)
+        self.assertEqual(len(calls), 2)
+
+    def test_concrete_plans_are_not_silent_negative_predictions(self):
+        plan = "На бывшем предприятии хотят перезапустить производство двигателей"
+        self.assertTrue(possible_production_plan(plan))
+        self.assertFalse(possible_production_plan(
+            "Бывший завод продаёт оборудование в связи с банкротством"
+        ))
+        def unrelated(*args, **kwargs):
+            return {"relevant": False, "tags": [], "evidence": [],
+                    "uncertain": False}
+        result = analyze_news(plan, BODY, request=unrelated, tags_only=True)
+        self.assertIsNone(result.relevant)
+        self.assertTrue(result.review_required)
+        self.assertIn("industrial_plan_requires_editorial_review", result.warnings)
+        self.assertEqual(result.tags, [])
+
+    def test_planned_production_with_source_evidence_keeps_tags_and_review(self):
+        plan = "Компания планирует запустить производство новых двигателей"
+        def confirmed(*args, **kwargs):
+            return {"relevant": True, "tags": ["машиностроение"],
+                    "evidence": EVIDENCE, "uncertain": False}
+        result = analyze_news(plan, BODY, request=confirmed, tags_only=True)
+        self.assertTrue(result.relevant)
+        self.assertEqual(result.tags, ["машиностроение"])
+        self.assertIn("model_uncertain", result.warnings)
         self.assertTrue(result.review_required)
 
     def test_bad_quote_retry_does_not_silently_approve(self):
