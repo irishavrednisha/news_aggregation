@@ -22,6 +22,10 @@ def main() -> None:
     p.add_argument("news_json", type=Path, help="JSON со списком articles")
     p.add_argument("--model", default="qwen3.5:4b")
     p.add_argument("--limit", type=int, default=10)
+    p.add_argument(
+        "--tags-only", action="store_true",
+        help="Только релевантность и теги с цитатами-основаниями; сводку не генерировать",
+    )
     p.add_argument("--output", type=Path,
                    default=Path("collector_test_results/local_llm_news_audit.json"))
     args = p.parse_args()
@@ -41,11 +45,13 @@ def main() -> None:
             "article_is_synthetic": bool(item.get("synthetic")),
         }
         try:
-            decision = analyze_news(title, body, model=args.model)
+            decision = analyze_news(
+                title, body, model=args.model, tags_only=args.tags_only
+            )
             row.update(decision.to_dict())
             print(f"[{i}/{min(len(articles),args.limit)}] {title[:65]} "
                   f"-> {', '.join(decision.tags) if decision.tags else 'без тегов'} "
-                  f"; сводка: {decision.summary[:90]}")
+                  + ("" if args.tags_only else f"; сводка: {decision.summary[:90]}"))
         except Exception as exc:
             row.update({
                 "relevant": None,
@@ -67,6 +73,7 @@ def main() -> None:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_file": str(args.news_json),
         "count": len(results),
+        "tags_only": args.tags_only,
         "review_required": sum(bool(r.get("review_required")) for r in results),
         "results": results,
     }
