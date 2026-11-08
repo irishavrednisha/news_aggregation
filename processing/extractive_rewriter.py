@@ -51,7 +51,7 @@ ENTITY_TOKEN_RE = re.compile(
 )
 QUALIFIERS_RE = re.compile(
     r"\b(?:планиру\w*|намерен\w*|предполага\w*|ожида\w*|"
-    r"возможн\w*|может|могут|примерно|около)\b",
+    r"возможно|возможен|возможна|возможны|может|могут|примерно|около)\b",
     re.I,
 )
 PROTECTED_ABBREVIATIONS = re.compile(
@@ -68,6 +68,9 @@ class RewriteResult:
     warnings: list[str]
     review_required: bool = True
     publication_performed: bool = False
+    # What the model actually wrote (even if the safe fallback is used).
+    # Never treat this field as verified or publishable.
+    model_candidate: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -108,6 +111,8 @@ def check_paraphrase(source: str, rewritten: str) -> list[str]:
         warnings.append("unexpected_multiline_or_dialogue")
     if not (0.85 * len(source) <= len(rewritten) <= 1.45 * len(source)):
         warnings.append("changed_length_too_much")
+    if source.endswith((".", "!", "?")) and not rewritten.endswith((".", "!", "?")):
+        warnings.append("sentence_missing_terminal_punctuation")
     if Counter(NUMBER_RE.findall(source)) != Counter(NUMBER_RE.findall(rewritten)):
         warnings.append("changed_numbers_or_dates")
     if _quoted_terms(source) != _quoted_terms(rewritten):
@@ -186,9 +191,16 @@ def rewrite_extractive(
     if not isinstance(answer, dict) or set(answer) != {"sentences"}:
         return RewriteResult(original_text, original_text, False, ["wrong_json_schema"])
     sentences = answer["sentences"]
+    # Keep the attempted response for local diagnosis. A rejected candidate
+    # never overrides the original extractive fallback.
+    candidate = (
+        " ".join(s.strip() for s in sentences if isinstance(s, str))
+        if isinstance(sentences, list) else ""
+    )
     if not isinstance(sentences, list) or len(sentences) != len(originals):
         return RewriteResult(
-            original_text, original_text, False, ["sentence_count_changed"]
+            original_text, original_text, False, ["sentence_count_changed"],
+            model_candidate=candidate,
         )
     warnings = []
     for index, (source, rewritten) in enumerate(zip(originals, sentences), 1):
@@ -200,10 +212,12 @@ def rewrite_extractive(
             for warning in check_paraphrase(source, rewritten)
         )
     if warnings:
-        return RewriteResult(original_text, original_text, False, warnings)
-    paraphrase = " ".join(s.strip() for s in sentences)
+        return RewriteResult(original_text, original_text, False, warnings,
+                             model_candidate=candidate)
+    paraphrase = candidate
     if _normalize(paraphrase) == _normalize(original_text):
-        return RewriteResult(original_text, original_text, False, ["unchanged_text"])
+        return RewriteResult(original_text, original_text, False,
+                             ["unchanged_text"], model_candidate=candidate)
     # This is a DRAFT even with zero mechanical warnings: semantically wrong
     # statements can pass lexical guards. Do not auto-publish.
-    return RewriteResult(original_text, paraphrase, True, [])
+    return RewriteResult(original_text, paraphrase, True, [], model_candidate=candidate)

@@ -53,6 +53,7 @@ class RewriteTests(unittest.TestCase):
         result = rewrite_extractive(original, request=fake)
         self.assertFalse(result.rewritten)
         self.assertEqual(result.text, result.extractive)
+        self.assertIn("Сфера-Проект-113", result.model_candidate)
         self.assertTrue(any("changed_numbers" in warning or "changed_quoted" in warning
                             for warning in result.warnings))
 
@@ -78,6 +79,31 @@ class RewriteTests(unittest.TestCase):
         source = "Компания планирует выпустить новую серию трансформаторов."
         other = "Компания уже выпустила новую серию трансформаторов."
         self.assertIn("lost_uncertainty_or_plan_marker", check_paraphrase(source, other))
+
+    def test_technical_opportunities_is_not_uncertainty(self):
+        # Regression: "возможности" is not a hedge, it means capability.
+        source = (
+            "Разработка открывает широкие возможности для предприятий отрасли."
+        )
+        paraphrase = (
+            "Эта разработка создаёт новые перспективы для предприятий отрасли."
+        )
+        self.assertNotIn(
+            "lost_uncertainty_or_plan_marker",
+            check_paraphrase(source, paraphrase),
+        )
+
+    def test_missing_final_period_causes_safe_fallback_and_keeps_candidate(self):
+        src = "Государственная Дума приняла новый закон об аттракционах."
+        raw = "Государственная Дума утвердила новый закон об аттракционах,"
+        result = rewrite_extractive(
+            src, request=lambda *args, **kwargs: {"sentences": [raw]}
+        )
+        self.assertFalse(result.rewritten)
+        self.assertIn("sentence_1:sentence_missing_terminal_punctuation",
+                      result.warnings)
+        self.assertEqual(result.text, src)
+        self.assertEqual(result.model_candidate, raw)
 
     def test_malformed_model_output_falls_back(self):
         text = "Компания построила новый завод."
