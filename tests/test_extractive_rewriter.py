@@ -195,6 +195,63 @@ class RewriteTests(unittest.TestCase):
             check_paraphrase(source, candidate),
         )
 
+    def test_report_aligned_methane_is_not_methanol(self):
+        source = ("Одно из подразделений Ростеха разработало "
+                  "взрывозащищенный датчик температуры для реакторов "
+                  "получения метанола.")
+        candidate = ("Одно из подразделений Ростеха разработало "
+                     "взрывозащищенный датчик температуры для реакторов "
+                     "получения метана.")
+        self.assertIn(
+            "introduced_technical_substance:methane_methanol",
+            check_paraphrase(source, candidate),
+        )
+        result = rewrite_extractive(
+            source, request=lambda *a, **kw: {"sentences": [candidate]}
+        )
+        self.assertFalse(result.rewritten)
+        self.assertEqual(result.text, source)
+
+    def test_report_whole_added_rubles_without_source(self):
+        source = ("Завод получил поддержку фонда в размере 200 млн. "
+                  "Эти средства были направлены на производство оборудования.")
+        candidate = ("Завод получил поддержку фонда в размере 200 млн. рублей. "
+                     "Эти средства направили на производство оборудования.")
+        self.assertIn("introduced_currency", check_paraphrase(source, candidate))
+
+    def test_genuine_currency_rewording_is_not_blocked(self):
+        source = "Объём инвестиций составит 200 млн рублей."
+        candidate = "Инвестиции составят 200 млн рублей."
+        self.assertNotIn("introduced_currency", check_paraphrase(source, candidate))
+
+    def test_explicit_methane_remains_distinct_from_methanol(self):
+        source = "На заводе получают метан и метанол в отдельных цехах."
+        candidate = "На заводе вырабатывают метан и метанол в разных цехах."
+        self.assertNotIn(
+            "introduced_technical_substance:methane_methanol",
+            check_paraphrase(source, candidate),
+        )
+
+    def test_whole_report_false_positive_sentence_openers(self):
+        source = ("Производство модернизировали на действующей площадке. "
+                  "Разработка открывает возможности для заводов.")
+        candidate = ("Производство модернизировали на действующей площадке. "
+                     "Эти изменения открывают возможности для заводов.")
+        warnings = check_paraphrase(source, candidate)
+        self.assertNotIn("new_capitalized_token:Эти", warnings)
+
+    def test_new_company_after_full_stop_is_still_rejected(self):
+        source = "Производство модернизировали на действующей площадке."
+        candidate = ("Производство модернизировали на действующей площадке. "
+                     "Германия сообщила об инвестициях.")
+        warnings = check_paraphrase(source, candidate)
+        self.assertIn("new_capitalized_token:Германия", warnings)
+
+    def test_existing_acronym_must_not_disappear(self):
+        src = "Компания ООО «Завод ЗИС» запустила производство техники."
+        candidate = "Компания «Завод ЗИС» запустила производство техники."
+        self.assertIn("missing_acronym:ООО", check_paraphrase(src, candidate))
+
     def test_malformed_model_output_falls_back(self):
         text = "Компания построила новый завод."
         for reply in ({"summary": text}, {"sentences": ["OK", "EXTRA"]}):
