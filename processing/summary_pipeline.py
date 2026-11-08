@@ -40,7 +40,7 @@ def rewrite_summary_draft(
         extractive=result.extractive,
         text=result.text,
         rewritten=result.rewritten,
-        review_required=result.rewritten,
+        review_required=True,  # all Gemma attempts require source review, even on fallback
         warnings=tuple(result.warnings),
     )
 
