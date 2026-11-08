@@ -43,7 +43,7 @@ class SummaryPipelineTests(unittest.TestCase):
             },
         )
         self.assertFalse(result.rewritten)
-        self.assertFalse(result.review_required)
+        self.assertTrue(result.review_required)
         self.assertEqual(result.text, SOURCE)
         self.assertTrue(result.warnings)
 
@@ -52,7 +52,7 @@ class SummaryPipelineTests(unittest.TestCase):
             raise RuntimeError("Ollama offline")
         result = rewrite_summary_draft(SOURCE, request=fail)
         self.assertEqual(result.text, SOURCE)
-        self.assertFalse(result.review_required)
+        self.assertTrue(result.review_required)
         self.assertIn("model_error:", result.warnings[0])
 
     def test_reject_unrecognized_backend_and_cloud_model(self):
