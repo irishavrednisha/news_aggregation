@@ -59,6 +59,8 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_news_lora_short_validation.py' -v
       - name: Verify tagging-only SFT sampling and holdout safety
         run: python -m unittest discover -s tests -p 'test_news_lora_tagging_only.py' -v
+      - name: Test conservative extractive-to-paraphrase rewrite offline
+        run: python -m unittest discover -s tests -p 'test_extractive_rewriter.py' -v
       - name: Run AI zero-shot tagging contract tests without model download
         run: python -m unittest discover -s tests -p 'test_ai_tagger.py' -v
       - name: Run AI audit summary parity tests without model download
