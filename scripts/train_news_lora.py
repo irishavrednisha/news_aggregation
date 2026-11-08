@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from inspect import signature
 
 
 VRAM_GB = {
@@ -21,6 +22,25 @@ VRAM_GB = {
     "unsloth/Qwen3.5-4B": 10,
     "unsloth/Qwen3.5-9B": 22,
 }
+
+
+def trl_api_compat(trainer_type, config_type) -> tuple[str, str]:
+    """Identify API names used by installed TRL or Unsloth's patched TRL."""
+    trainer_params = signature(trainer_type).parameters
+    config_params = signature(config_type).parameters
+    if "processing_class" in trainer_params:
+        tokenizer_arg = "processing_class"
+    elif "tokenizer" in trainer_params:
+        tokenizer_arg = "tokenizer"
+    else:
+        raise RuntimeError("Unsupported TRL SFTTrainer: missing tokenizer/processing_class")
+    if "max_length" in config_params:
+        length_arg = "max_length"
+    elif "max_seq_length" in config_params:
+        length_arg = "max_seq_length"
+    else:
+        raise RuntimeError("Unsupported TRL SFTConfig: missing max_length/max_seq_length")
+    return tokenizer_arg, length_arg
 
 
 def count_records(path: Path) -> int:
@@ -44,7 +64,8 @@ def main() -> None:
     if not train_path.is_file() or not val_path.is_file():
         p.error("Сначала запусти python -m scripts.build_news_sft ...")
     train_count, val_count = count_records(train_path), count_records(val_path)
-    print(f"Train messages: {train_count}; validated real validation: {val_count}")
+    print(f"Train messages: {train_count}; validation messages: {val_count}")
+    print("NOTICE: validation is AI-reviewed, not independently human-verified gold.")
     if not args.run:
         print("DRY RUN: обучение не запускалось. Для запуска добавь --run.")
         return
@@ -107,24 +128,25 @@ def main() -> None:
     ds = ds.map(to_text)
     ds = ds.remove_columns([k for k in ds["train"].column_names if k != "text"])
 
-    # Unsloth's version-pinned training recipes use max_seq_length and
-    # tokenizer. If a future TRL major version changes these APIs,
-    # follow Unsloth's matching versioned documentation.
+    # TRL 1.x uses processing_class/max_length; some Unsloth builds still
+    # patch in tokenizer/max_seq_length. Detect the actual installed API.
+    tokenizer_arg, length_arg = trl_api_compat(SFTTrainer, SFTConfig)
+    sft_config_kwargs = {length_arg: args.max_seq_length}
     trainer = SFTTrainer(
-        model=model, tokenizer=tokenizer,
+        model=model, **{tokenizer_arg: tokenizer},
         train_dataset=ds["train"], eval_dataset=ds["validation"],
         args=SFTConfig(
             output_dir=str(args.output_dir),
-            max_seq_length=args.max_seq_length,
+            **sft_config_kwargs,
             per_device_train_batch_size=1,
             gradient_accumulation_steps=4,
             learning_rate=1e-4,
-            warmup_steps=20,
+            warmup_steps=min(20, max(1, args.max_steps // 10)),
             max_steps=args.max_steps,
-            logging_steps=10,
+            logging_steps=min(10, args.max_steps),
             eval_strategy="steps",
-            eval_steps=50,
-            save_steps=50,
+            eval_steps=min(50, args.max_steps),
+            save_steps=min(50, args.max_steps),
             save_total_limit=2,
             optim="adamw_8bit",
             bf16=torch.cuda.is_bf16_supported(),

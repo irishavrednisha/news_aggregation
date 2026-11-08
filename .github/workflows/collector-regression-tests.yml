@@ -51,6 +51,8 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_news_sft_data.py' -v
       - name: Test independent real news review and holdout generation
         run: python -m unittest discover -s tests -p 'test_real_news_review.py' -v
+      - name: Verify TRL compatibility without GPU
+        run: python -m unittest discover -s tests -p 'test_news_lora_compat.py' -v
       - name: Run AI zero-shot tagging contract tests without model download
         run: python -m unittest discover -s tests -p 'test_ai_tagger.py' -v
       - name: Run AI audit summary parity tests without model download
