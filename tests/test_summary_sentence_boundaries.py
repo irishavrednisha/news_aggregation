@@ -13,7 +13,11 @@ def load_split_into_sentences():
                and node.name == "split_into_sentences"]
     if len(matches) != 1:
         raise AssertionError("split_into_sentences not found")
-    namespace = {"re": re, "normalize_article_text": lambda text: text}
+    namespace = {
+        "re": re,
+        "normalize_article_text": lambda text: text,
+        "BAD_SUMMARY_PHRASES": [],
+    }
     exec(compile(ast.fix_missing_locations(ast.Module(body=matches, type_ignores=[])),
                  str(SOURCE), "exec"), namespace)
     return namespace["split_into_sentences"]
