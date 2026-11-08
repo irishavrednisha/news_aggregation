@@ -79,6 +79,50 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1][1], SUMMARY_FORMAT)
 
+    def test_tags_only_runs_one_fact_request_without_summary(self):
+        calls = []
+        def fake(messages, schema, **kwargs):
+            calls.append((messages, schema))
+            return {
+                "relevant": True,
+                "tags": ["электротехническое направление"],
+                "evidence": [EVIDENCE[0]],
+                "uncertain": False,
+            }
+        result = analyze_news(TITLE, BODY, request=fake, tags_only=True)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1], FACT_FORMAT)
+        self.assertEqual(result.tags, ["электротехническое направление"])
+        self.assertEqual(result.summary, "")
+        self.assertEqual(result.evidence, [EVIDENCE[0]])
+        self.assertTrue(result.review_required)
+        self.assertFalse(result.warnings)
+
+    def test_tags_only_preserves_uncertainty_flag(self):
+        def fake(messages, schema, **kwargs):
+            return {
+                "relevant": True,
+                "tags": ["электротехническое направление"],
+                "evidence": EVIDENCE,
+                "uncertain": True,
+            }
+        result = analyze_news(TITLE, BODY, request=fake, tags_only=True)
+        self.assertTrue(result.review_required)
+        self.assertIn("model_uncertain", result.warnings)
+
+    def test_tags_only_irrelevant_news_no_tags(self):
+        calls = []
+        def fake(messages, schema, **kwargs):
+            calls.append(1)
+            return {
+                "relevant": False, "tags": [],
+                "evidence": [], "uncertain": False,
+            }
+        result = analyze_news(TITLE, BODY, request=fake, tags_only=True)
+        self.assertFalse(result.relevant)
+        self.assertFalse(result.tags)
+        self.assertEqual(len(calls), 1)
+
     def test_flexible_summary_length_limit_is_550_characters(self):
         # 250–400 is a soft target; short summaries aren't padded.
         self.assertEqual(validate_summary("Завод обновил оборудование.", EVIDENCE), [])
