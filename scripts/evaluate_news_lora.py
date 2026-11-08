@@ -28,6 +28,15 @@ def select_rows(path: Path, limit_per_task: int) -> list[dict]:
     return rows
 
 
+def text_only_tokenizer(processor):
+    """Return the underlying tokenizer, not Qwen3.5's multimodal processor.
+
+    Positional processor(prompt) can be interpreted as an image argument and
+    trigger torchvision.decode_image on a string instead of tokenizing text.
+    """
+    return getattr(processor, "tokenizer", processor)
+
+
 def f1(precision: float, recall: float) -> float:
     return 2 * precision * recall / (precision + recall) if precision + recall else 0.0
 
@@ -141,6 +150,7 @@ def main() -> None:
     )
     FastLanguageModel.for_inference(model)
     model.eval()
+    only_text_tokenizer = text_only_tokenizer(tokenizer)
     results = []
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("x", encoding="utf-8") as destination:
@@ -151,7 +161,7 @@ def main() -> None:
                 messages[:-1], tokenize=False, add_generation_prompt=True,
                 enable_thinking=False,
             )
-            tokens = tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
+            tokens = only_text_tokenizer(text=prompt, return_tensors="pt", add_special_tokens=False)
             prompt_len = tokens["input_ids"].shape[1]
             row = {
                 "task": task, "story_id": item.get("story_id"),
@@ -166,9 +176,9 @@ def main() -> None:
                     generated = model.generate(
                         **inputs, max_new_tokens=args.max_new_tokens,
                         do_sample=False, use_cache=True,
-                        pad_token_id=tokenizer.eos_token_id,
+                        pad_token_id=only_text_tokenizer.eos_token_id,
                     )
-                completion = tokenizer.decode(
+                completion = only_text_tokenizer.decode(
                     generated[0, prompt_len:], skip_special_tokens=True
                 ).strip()
                 row["prediction"] = completion

@@ -5,10 +5,38 @@ import unittest
 from pathlib import Path
 
 from scripts.audit_news_lora import surviving_reply_tokens, rendered_token_ids, audit
-from scripts.evaluate_news_lora import select_rows, summarize, f1
+from scripts.evaluate_news_lora import select_rows, summarize, f1, text_only_tokenizer
 
 
 class DiagnosticsTests(unittest.TestCase):
+    def test_text_only_tokenizer_skips_multimodal_image_decode(self):
+        class FakePlainTokenizer:
+            eos_token_id = 12
+            def __call__(self, *, text, return_tensors, add_special_tokens):
+                self.last_input = text
+                assert return_tensors == "pt"
+                assert add_special_tokens is False
+                return {"input_ids": [1, 2, 3], "attention_mask": [1, 1, 1]}
+            def decode(self, ids, *, skip_special_tokens):
+                return "decoded"
+
+        class FakeVisionProcessor:
+            def __init__(self):
+                self.tokenizer = FakePlainTokenizer()
+            def __call__(self, *args, **kwargs):
+                raise RuntimeError("Unsupported image file")
+
+        processor = FakeVisionProcessor()
+        text_tokenizer = text_only_tokenizer(processor)
+        self.assertIs(text_tokenizer, processor.tokenizer)
+        self.assertEqual(
+            text_tokenizer(text="TEST NEWS", return_tensors="pt",
+                           add_special_tokens=False)["input_ids"],
+            [1, 2, 3],
+        )
+        self.assertEqual(text_tokenizer.last_input, "TEST NEWS")
+        self.assertIs(text_only_tokenizer(text_tokenizer), text_tokenizer)
+
     def test_reply_survival(self):
         self.assertEqual(surviving_reply_tokens(1000, 1060, 1024), 24)
         self.assertEqual(surviving_reply_tokens(1100, 1160, 1024), 0)
