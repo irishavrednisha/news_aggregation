@@ -11,6 +11,8 @@ Input JSON format:
  ]}
 No model queries, no training, no databases, no MAX.
 Synthetic items can only go to TRAIN and require --allow-synthetic.
+Synthetic auto_checked items additionally need --allow-auto-checked-synthetic
+to avoid silently turning model-generated answers into gold labels.
 REAL validated test items are stored separately and NEVER put in train.
 """
 from __future__ import annotations
@@ -63,7 +65,10 @@ def example_to_messages(item: dict) -> list[dict]:
     return messages
 
 
-def build_dataset(examples: list[dict], allow_synthetic: bool = False) -> dict[str, list]:
+def build_dataset(
+    examples: list[dict], allow_synthetic: bool = False,
+    allow_auto_checked_synthetic: bool = False,
+) -> dict[str, list]:
     datasets = {"train": [], "validation": [], "test": []}
     seen = {}
     dropped = Counter()
@@ -90,7 +95,11 @@ def build_dataset(examples: list[dict], allow_synthetic: bool = False) -> dict[s
             if not allow_synthetic:
                 dropped["synthetic_not_enabled"] += 1
                 continue
-        if status != "verified":
+        accepted_status = (status == "verified") or (
+            origin == "synthetic" and status == "auto_checked"
+            and allow_synthetic and allow_auto_checked_synthetic
+        )
+        if not accepted_status:
             dropped["not_verified"] += 1
             continue
         messages = example_to_messages(item)
@@ -109,6 +118,11 @@ def main() -> None:
     p.add_argument("input", type=Path,
                    help="JSON: {examples:[...]} с validated source spans & summary")
     p.add_argument("--allow-synthetic", action="store_true")
+    p.add_argument(
+        "--allow-auto-checked-synthetic", action="store_true",
+        help="Явное разрешение SFT на автоматически проверенных искусственных"
+             " новостях, только для TRAIN, без подтверждения качества",
+    )
     p.add_argument("--output-dir", type=Path,
                    default=Path("training/news_sft"))
     args = p.parse_args()
@@ -116,7 +130,10 @@ def main() -> None:
     data = json.loads(args.input.read_text(encoding="utf-8"))
     if not isinstance(data.get("examples"), list):
         p.error("Ожидался объект JSON с examples")
-    prepared = build_dataset(data["examples"], args.allow_synthetic)
+    prepared = build_dataset(
+        data["examples"], args.allow_synthetic,
+        args.allow_auto_checked_synthetic,
+    )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for split, rows in prepared["splits"].items():
         outfile = args.output_dir / f"{split}.jsonl"
