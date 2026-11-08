@@ -158,6 +158,43 @@ class RewriteTests(unittest.TestCase):
              "В 2026 году открыли дополнительную линию."],
         )
 
+    def test_gemma10_rusal_future_investment_not_completed(self):
+        source = "Общий объем инвестиций в проект составит около 500 миллионов рублей."
+        candidate = "Общий объем инвестиций в проект составил около 500 миллионов рублей."
+        self.assertIn(
+            "changed_tense_future_to_past:investment_or_quantity",
+            check_paraphrase(source, candidate),
+        )
+        result = rewrite_extractive(source, request=lambda *a, **kw: {
+            "sentences": [candidate],
+        })
+        self.assertFalse(result.rewritten)
+        self.assertEqual(result.text, source)
+
+    def test_completed_investment_cannot_become_future(self):
+        source = "Общий объем инвестиций в проект составил около 500 миллионов рублей."
+        candidate = "Общий объем инвестиций в проект составит около 500 миллионов рублей."
+        self.assertIn(
+            "changed_tense_past_to_future:investment_or_quantity",
+            check_paraphrase(source, candidate),
+        )
+
+    def test_same_tense_is_allowed(self):
+        source = "Общий объем инвестиций в проект составит около 500 миллионов рублей."
+        candidate = "Инвестиции в проект составят около 500 миллионов рублей."
+        self.assertNotIn(
+            "changed_tense_future_to_past:investment_or_quantity",
+            check_paraphrase(source, candidate),
+        )
+
+    def test_gemma10_reject_unsubstantiated_comparison_target(self):
+        source = "Стоимость отечественного изделия в 1,5 раза ниже."
+        candidate = "Стоимость отечественного изделия в 1,5 раза ниже, чем у зарубежных аналогов."
+        self.assertIn(
+            "introduced_comparison_target",
+            check_paraphrase(source, candidate),
+        )
+
     def test_malformed_model_output_falls_back(self):
         text = "Компания построила новый завод."
         for reply in ({"summary": text}, {"sentences": ["OK", "EXTRA"]}):
