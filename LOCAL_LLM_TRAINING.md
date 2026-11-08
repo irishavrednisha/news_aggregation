@@ -69,6 +69,35 @@ auto_checked требуется ЯВНО включить оба парамет�
 эталоном. Файл synthetic_candidates.json может быть частью
 news_examples.json, но он НЕ содержит реальные validation/test.
 
+## Рекомендация для RTX 5060 Ti 8 ГБ / RAM 16 ГБ (08.11.2026)
+
+- Для локального inference используй qwen3.5:4b (примерно 3.3–4.0 ГБ
+  квантованных весов плюс дополнительная память под контекст).
+- Для обучения здесь выбрана **Qwen3.5-2B bf16 LoRA**. В Unsloth
+  ориентир — около 5 ГБ VRAM, у Qwen3.5-4B ~10 ГБ.
+  Из 8 ГБ сейчас ~1.2 ГБ занято Windows/графическими процессами,
+  поэтому 4B bf16 LoRA на этой GPU не рекомендуется.
+- Скрипт train_news_lora.py по умолчанию теперь выбирает
+  unsloth/Qwen3.5-2B, max_seq_length=1024,
+  batch_size=1, gradient_accumulation_steps=4. Обучение запускается
+  ТОЛЬКО с --run и при наличии verified real validation.
+- Нельзя запускать обучаемую модель и Ollama одновременно, если
+  обе размещаются на GPU. Закрой игры, проверь nvidia-smi.
+- Рекомендуемый путь обучения — WSL2 Ubuntu с отдельным Python
+  окружением. Команды в PowerShell для проверки наличия WSL2:
+
+      wsl --status
+      wsl -l -v
+
+  Если WSL ещё не установлен, сначала проверь доступное место
+  и сделай резервную копию важных данных. Для установки обычно
+  используют `wsl --install -d Ubuntu` из PowerShell
+  администратора; может потребоваться перезапуск.
+  Windows-драйвер NVIDIA остаётся установленным в Windows.
+- Уменьшение max_seq_length до 768 и закрытие GPU-приложений может
+  помочь при нехватке VRAM. Нельзя сокращать реальную статью так,
+  чтобы пропала суть события: отмечай обрезанные примеры.
+
 ## Дообучение LoRA
 
 Qwen3.5 лучше обучать в bf16 LoRA: Unsloth предупреждает о
@@ -84,8 +113,8 @@ transformers v5, trl и datasets. Не устанавливать обучающ
 100 train и 20 реальных validation-сообщений и не запускается
 без явного параметра --run:
 
-    python -m scripts.train_news_lora --model unsloth/Qwen3.5-4B --data-dir training/news_sft
-    python -m scripts.train_news_lora --model unsloth/Qwen3.5-4B --data-dir training/news_sft --max-steps 250 --run
+    python -m scripts.train_news_lora --model unsloth/Qwen3.5-2B --max-seq-length 1024 --data-dir training/news_sft
+    python -m scripts.train_news_lora --model unsloth/Qwen3.5-2B --max-seq-length 1024 --data-dir training/news_sft --max-steps 250 --run
 
 После обучения LoRA сохраняется локально. Её нужно отдельно
 проверить на полностью новых реальных статьях, экспортировать
