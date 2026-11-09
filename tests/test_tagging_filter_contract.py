@@ -64,7 +64,7 @@ class TaggerFilteringContractTests(unittest.TestCase):
         self.assertEqual(selected, ["машиностроение"])
         self.assertEqual(cluster.status, "ready")
         self.assertEqual(cluster.tags, "машиностроение")
-        ns["score_tags_detailed"].assert_called_once()
+        ns["score_tags_detailed"].assert_not_called()
 
     def test_grounded_tagging_abstains_instead_of_guessing_by_embedding(self):
         ns, cluster, session = self.prepare(
@@ -74,7 +74,7 @@ class TaggerFilteringContractTests(unittest.TestCase):
         self.assertEqual(selected, [])
         self.assertEqual(cluster.tags, None)
         self.assertEqual(cluster.status, "tagging_review")
-        ns["score_tags_detailed"].assert_called_once()
+        ns["score_tags_detailed"].assert_not_called()
 
     def test_grounded_tagging_survives_sbert_inference_failure(self):
         ns, cluster, session = self.prepare(
