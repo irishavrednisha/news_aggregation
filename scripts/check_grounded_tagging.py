@@ -2,7 +2,8 @@
 
 python -m scripts.check_grounded_tagging collector_test_results/news_fixed_20261109_031438.json --limit 230
 
-Uses the same offline selector as production, with article lead disambiguation.
+Uses the same offline classifier as production, with existing summary and
+subject-linked evidence from the full text when available.
 This is an isolated tagging diagnostic, not an end-to-end test.
 """
 from __future__ import annotations
@@ -46,6 +47,10 @@ def audit(payload: dict, *, limit: int, max_tags: int = 2) -> dict:
         if title:
             decision = select_tags(
                 title,
+                summary=str(
+                    article.get("summary") or
+                    article.get("summary_text") or ""
+                ),
                 text=str(article.get("text") or ""),
                 max_tags=max_tags,
             )
@@ -65,10 +70,11 @@ def audit(payload: dict, *, limit: int, max_tags: int = 2) -> dict:
         "read_only": True,
         "database_modified": False,
         "publishing_performed": False,
-        "mode": "grounded_title_and_article_lead_no_sbert",
-        "note": "Заголовок + начало исходной статьи без SBERT. В основном "
-                "конвейере также доступна сводка кластера. Это не "
-                "accuracy, precision, recall или F1.",
+        "mode": "grounded_title_summary_and_full_article_no_sbert",
+        "note": "Заголовок + готовая сводка (если она есть в JSON) + "
+                "относящиеся к главному событию фрагменты исходного текста "
+                "(до 50 тыс. символов). Это не измерение качества тегов "
+                "и не проверка публикации в MAX.",
         "counts": {
             "articles": len(results),
             "tagged": sum(r["outcome"] == "tagged" for r in results),
@@ -120,7 +126,7 @@ def main() -> None:
     print(json.dumps(result["counts"], ensure_ascii=False, indent=2))
     print("JSON:", args.output)
     print("CSV:", csv_path)
-    print("Проверка по заголовку/тексту, без БД и MAX. Это не метрика качества.")
+    print("Проверка по заголовку/готовой сводке/тексту без БД и MAX. Это не метрика качества.")
 
 
 if __name__ == "__main__":
