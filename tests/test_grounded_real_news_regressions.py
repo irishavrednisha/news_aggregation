@@ -11,8 +11,22 @@ from processing.grounded_tagger import CATEGORY, select_tags
 
 class RealNewsEventRegressionTests(unittest.TestCase):
     def test_industry_labels_match_the_production_taxonomy(self):
-        from processing.tagger import TAG_KEYWORDS
-        self.assertEqual({name for name, _ in CATEGORY}, set(TAG_KEYWORDS))
+        import ast
+        from pathlib import Path
+        tree = ast.parse(
+            (Path(__file__).resolve().parents[1] / "processing" / "tagger.py")
+            .read_text(encoding="utf-8")
+        )
+        assigned = next(
+            node.value for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "TAG_KEYWORDS"
+                for target in node.targets
+            )
+        )
+        tag_names = {node.value for node in assigned.keys}
+        self.assertEqual({name for name, _ in CATEGORY}, tag_names)
 
     def test_recovered_industrial_examples(self):
         examples = [
