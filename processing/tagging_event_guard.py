@@ -34,7 +34,7 @@ _EVENT_PATTERNS = (
         "corporate_finance_or_retail_promotion",
         re.compile(
             r"\b(?:дивиденд\w*|акционер\w*|акци\w*|котировк\w*|"
-            r"рейтин\w*|ипотек\w*|банкротств\w*)\b"
+            r"рейтин\w*|ипотек\w*|банкротств\w*|страхов\w*\s+взнос\w*)\b"
         ),
     ),
     (
