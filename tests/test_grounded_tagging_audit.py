@@ -19,6 +19,33 @@ class GroundedAuditTests(unittest.TestCase):
         self.assertFalse(report["publishing_performed"])
         self.assertFalse(report["database_modified"])
 
+    def test_audit_summary_has_priority_and_body_is_not_read(self):
+        row = {
+            "title": "На заводе запустили производство промышленных насосов",
+            "summary": "На заводе запустили производство трансформаторов.",
+            "url": "https://a/summary",
+        }
+        report = audit({"articles": [
+            {**row, "text": "На верфи построили корабль." * 300}
+        ]}, limit=230)
+        without_body = audit({"articles": [row]}, limit=230)
+        self.assertEqual(report["results"], without_body["results"])
+        self.assertEqual(report["counts"]["summaries_present"], 1)
+        self.assertEqual(
+            report["results"][0]["tags"][0], "электротехническое направление"
+        )
+        self.assertTrue(report["results"][0]["summary_present"])
+
+    def test_headline_only_audit_reports_missing_summaries(self):
+        report = audit({"articles": [{
+            "title": "Предприятие запустило новую линию",
+            "text": "Компания выпустила самолет и корабль.",
+            "url": "https://a/no-summary",
+        }]}, limit=230)
+        self.assertEqual(report["counts"]["summaries_present"], 0)
+        self.assertFalse(report["results"][0]["summary_present"])
+        self.assertNotIn("авиация", report["results"][0]["tags"])
+
     def test_rejects_unsupported_schema_and_duplicate_urls(self):
         with self.assertRaises(ValueError):
             load_articles({"results": {}})
