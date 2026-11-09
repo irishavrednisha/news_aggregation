@@ -87,6 +87,7 @@ def enrich_summaries(
             row["summary"] = existing
             row.setdefault("extractive_summary", "")
             row.setdefault("summary_method", "provided")
+            row.setdefault("summary_model", "")
             row.setdefault("summary_warnings", [])
             row.setdefault("source_quality_warnings", [])
             row.setdefault("summary_rewritten", False)
@@ -95,6 +96,7 @@ def enrich_summaries(
             row.update({
                 "summary": "", "extractive_summary": "",
                 "summary_method": "missing_source_text",
+                "summary_model": "",
                 "summary_warnings": ["missing_text_for_summary"],
                 "source_quality_warnings": [],
                 "summary_rewritten": False, "summary_review_required": True,
@@ -113,17 +115,26 @@ def enrich_summaries(
             title = str(row.get("title") or "")
             text = str(row["text"])
             # TextRank is an extractive step, not a generative LLM.
-            extractive = summarizer(
-                text, title=title, sentence_count=sentence_count,
-                max_chars=max_extractive_chars,
-            )
-            extractive = str(extractive or "").strip()
+            try:
+                extractive = summarizer(
+                    text, title=title, sentence_count=sentence_count,
+                    max_chars=max_extractive_chars,
+                )
+                extractive = str(extractive or "").strip()
+                summary_warnings = []
+            except Exception as exc:
+                extractive = ""
+                summary_warnings = [
+                    "textrank_error:" + type(exc).__name__ + ":"
+                    + str(exc)[:180]
+                ]
             source_warnings = list(audit_alignment(title, extractive))
             if not extractive:
                 row.update({
                     "summary": "", "extractive_summary": "",
                     "summary_method": "empty_extractive",
-                    "summary_warnings": ["empty_extractive"],
+                    "summary_model": "",
+                    "summary_warnings": summary_warnings or ["empty_extractive"],
                     "source_quality_warnings": source_warnings,
                     "summary_rewritten": False, "summary_review_required": True,
                 })
@@ -164,6 +175,7 @@ def enrich_summaries(
                     "summary": finished,
                     "extractive_summary": extractive,
                     "summary_method": method,
+                    "summary_model": model if backend == "gemma" else "",
                     "summary_warnings": warnings,
                     "source_quality_warnings": source_warnings,
                     "summary_rewritten": rewritten,
@@ -219,6 +231,7 @@ def audit(payload: dict, *, limit: int, max_tags: int = 2) -> dict:
             ),
             "summary_method": article.get("summary_method")
             or ("provided" if summary else "not_generated"),
+            "summary_model": article.get("summary_model") or "",
             "summary_warnings": list(article.get("summary_warnings") or []),
             "source_quality_warnings": list(
                 article.get("source_quality_warnings") or []
@@ -275,7 +288,7 @@ def save_report(result: dict, output: Path) -> Path:
             file,
             fieldnames=(
                 "index", "source", "title", "url", "summary",
-                "extractive_summary", "summary_method",
+                "extractive_summary", "summary_method", "summary_model",
                 "summary_warnings", "source_quality_warnings",
                 "summary_review_required", "summary_present",
                 "outcome", "tags", "reason", "evidence",
