@@ -1556,7 +1556,7 @@ def cut_text(text: str, max_chars: int) -> str:
     return text[:max_chars].strip()
 
 
-def get_cluster_text_for_tagging(session, cluster: Cluster, *, full_text: bool = False) -> str:
+def get_cluster_text_for_tagging(session, cluster: Cluster) -> str:
     """Текст для тэгов: один заголовок, одно summary и реальные статьи.
 
     Первые две строки — опорный контекст для score_tags_detailed().
@@ -1573,13 +1573,6 @@ def get_cluster_text_for_tagging(session, cluster: Cluster, *, full_text: bool =
         )
         .all()
     )
-    if full_text:
-        # Contextual grounded classifier needs the actual source articles,
-        # not the 2200-character extract used by the legacy SBERT backend.
-        return "\n\n".join(
-            str(news.text) for news in news_items[:3] if news.text
-        )
-
     parts = [
         cut_text(cluster.title or "", 400),
         cut_text(cluster.summary_text or "", 900),
@@ -1676,7 +1669,7 @@ def tag_cluster(
 
         return []
 
-    if not cluster_has_content(session, cluster.id):
+    if backend != "grounded" and not cluster_has_content(session, cluster.id):
         cluster.tags = None
         cluster.status = "not_for_publication"
 
@@ -1756,10 +1749,6 @@ def tag_cluster(
     if backend not in ("legacy", "hybrid", "grounded"):
         raise ValueError("NEWS_TAGGER_BACKEND должен быть grounded, legacy, hybrid или nli")
 
-    text = get_cluster_text_for_tagging(
-        session, cluster, full_text=(backend == "grounded")
-    )
-
     # Не ищем стоп-слова во всём тексте кластера. Техническая
     # новость может упоминать выставку, музей, акционеров или вакансии.
     # Явно непрофильные заголовки уже проверяет общий фильтр.
@@ -1778,7 +1767,7 @@ def tag_cluster(
         return []
 
     # Default classifier: no Sentence-BERT download or Ollama request.
-    # Rank by event/object evidence in title, summary and source lead.
+    # Rank by headline event and primarily by the existing summary.
     # Uncertain articles go to tagging_review and are never ready for MAX.
     if backend == "grounded":
         from processing.grounded_tagger import select_tags
@@ -1786,7 +1775,6 @@ def tag_cluster(
         decision = select_tags(
             cluster.title or "",
             cluster.summary_text or "",
-            text=text,
             max_tags=min(max_tags, 2),
         )
         selected = list(decision.tags)
@@ -1806,6 +1794,9 @@ def tag_cluster(
                 print("Основания:", "; ".join(decision.evidence))
         return selected
 
+    # Legacy and hybrid backends still use their original clipped article
+    # representation. The default grounded backend does not read it.
+    text = get_cluster_text_for_tagging(session, cluster)
     focus_text = f"{cluster.title or ''}\n{cluster.summary_text or ''}"
     scored_tags = score_tags_detailed(text, focus_text=focus_text)
 
