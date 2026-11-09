@@ -77,6 +77,8 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_summary_context_guard.py' -v
       - name: Test deterministic grounded industry tags
         run: python -m unittest discover -s tests -p 'test_grounded_tagger.py' -v
+      - name: Test read-only grounded news audit
+        run: python -m unittest discover -s tests -p 'test_grounded_tagging_audit.py' -v
       - name: Run AI zero-shot tagging contract tests without model download
         run: python -m unittest discover -s tests -p 'test_ai_tagger.py' -v
       - name: Run AI audit summary parity tests without model download
