@@ -18,12 +18,16 @@ jobs:
           python-version: '3.11'
       - name: Compile tagger, audit, and regressions
         run: |
-          python -m py_compile processing/grounded_tagger.py processing/tagger.py scripts/check_grounded_tagging.py tests/test_grounded_tagger.py tests/test_grounded_real_news_regressions.py tests/test_grounded_tagging_audit.py tests/test_tagging_filter_contract.py tests/test_hybrid_tagging_integration.py
+          python -m py_compile processing/grounded_tagger.py processing/tagger.py scripts/check_grounded_tagging.py tests/test_grounded_tagger.py tests/test_grounded_real_news_regressions.py tests/test_grounded_tagging_audit.py tests/test_tagging_filter_contract.py tests/test_hybrid_tagging_integration.py processing/extractive_rewriter.py processing/summary_pipeline.py processing/summary_quality.py tests/test_extractive_rewriter.py tests/test_summary_pipeline.py
       - name: Check classifier on real industrial/foreign headlines
         run: |
           python -m unittest discover -s tests -p 'test_grounded_tagger.py' -v
           python -m unittest discover -s tests -p 'test_grounded_real_news_regressions.py' -v
-      - name: Check read-only JSON audit
+      - name: Check TextRank-Gemma whole rewrite safeguards without Ollama
+        run: |
+          python -m unittest discover -s tests -p 'test_extractive_rewriter.py' -v
+          python -m unittest discover -s tests -p 'test_summary_pipeline.py' -v
+      - name: Check read-only JSON audit with generated summaries
         run: python -m unittest discover -s tests -p 'test_grounded_tagging_audit.py' -v
       - name: Check integration with original pipeline without DB or SBERT
         run: |
