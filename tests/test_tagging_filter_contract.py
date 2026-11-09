@@ -18,7 +18,7 @@ def load_tagger_functions():
     nodes = [
         node for node in tree.body
         if isinstance(node, ast.FunctionDef)
-        and node.name in {"tag_cluster", "is_not_publication_by_keywords"}
+        and node.name in {"tag_cluster", "is_not_publication_by_keywords", "get_cluster_text_for_tagging"}
     ]
     module = ast.Module(body=nodes, type_ignores=[])
     namespace = {
@@ -64,7 +64,44 @@ class TaggerFilteringContractTests(unittest.TestCase):
         self.assertEqual(selected, ["машиностроение"])
         self.assertEqual(cluster.status, "ready")
         self.assertEqual(cluster.tags, "машиностроение")
-        ns["score_tags_detailed"].assert_called_once()
+        ns["score_tags_detailed"].assert_not_called()
+        ns["is_not_related_to_russia"].assert_not_called()
+        ns["get_cluster_text_for_tagging"].assert_not_called()
+
+    def test_ambiguous_title_stays_out_of_publication(self):
+        ns, cluster, session = self.prepare(
+            "Сталь не вывозит",
+            "Компания рассказала об изменениях спроса."
+        )
+        tags = ns["tag_cluster"](session, 1, debug=False)
+        self.assertEqual(tags, [])
+        self.assertEqual(cluster.tags, None)
+        self.assertEqual(cluster.status, "tagging_review")
+        ns["score_tags_detailed"].assert_not_called()
+
+    def test_direct_factory_event_does_not_load_sbert(self):
+        ns, cluster, session = self.prepare(
+            "Тюменский завод ЖБИ восстанавливает работу после паводка",
+            "Производство железобетонных изделий восстанавливается."
+        )
+        ns["score_tags_detailed"].side_effect = RuntimeError("SBERT недоступен")
+        tags = ns["tag_cluster"](session, 1, debug=False)
+        self.assertEqual(tags, ["заводы"])
+        self.assertEqual(cluster.status, "ready")
+        ns["score_tags_detailed"].assert_not_called()
+
+    def test_geography_is_not_a_required_tagger_condition(self):
+        ns, cluster, session = self.prepare(
+            "В Южной Корее построили новый корабль",
+            "Построен корабль для исследовательских работ."
+        )
+        ns["is_not_related_to_russia"].side_effect = RuntimeError(
+            "This geographic check must not run in grounded"
+        )
+        selected = ns["tag_cluster"](session, 1, debug=False)
+        self.assertEqual(selected, ["судостроение"])
+        self.assertEqual(cluster.status, "ready")
+        ns["is_not_related_to_russia"].assert_not_called()
 
     def test_corporate_pr_title_filtered_in_tagger(self):
         ns, cluster, session = self.prepare(
@@ -75,6 +112,23 @@ class TaggerFilteringContractTests(unittest.TestCase):
         self.assertEqual(selected, [])
         self.assertEqual(cluster.status, "not_for_publication")
         ns["score_tags_detailed"].assert_not_called()
+
+    def test_summary_drives_tags_without_accessing_source_body(self):
+        ns, cluster, session = self.prepare(
+            "На предприятии модернизировали производственную линию",
+            "На предприятии модернизировали электрические трансформаторы."
+        )
+        ns["get_cluster_text_for_tagging"].side_effect = AssertionError(
+            "grounded must not fetch the source article text"
+        )
+        ns["cluster_has_content"].side_effect = AssertionError(
+            "grounded does not require article text to classify a ready summary"
+        )
+        tags = ns["tag_cluster"](session, 1, debug=False)
+        self.assertEqual(tags[0], "электротехническое направление")
+        self.assertEqual(cluster.status, "ready")
+        ns["get_cluster_text_for_tagging"].assert_not_called()
+        ns["cluster_has_content"].assert_not_called()
 
     def test_missing_summary_does_not_continue_to_tag(self):
         ns, cluster, session = self.prepare(

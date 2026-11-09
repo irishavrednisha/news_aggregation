@@ -105,6 +105,232 @@ class RewriteTests(unittest.TestCase):
         self.assertEqual(result.text, src)
         self.assertEqual(result.model_candidate, raw)
 
+    def test_negation_flip_falls_back(self):
+        src = "Компания не выпустила новую линейку оборудования."
+        bad = "Компания уже выпустила новую линейку оборудования."
+        self.assertIn("changed_negation", check_paraphrase(src, bad))
+
+    def test_plan_cannot_become_completed_action(self):
+        src = "Компания планирует запустить новую линию оборудования."
+        bad = "Компания запустила новую линию оборудования."
+        warnings = check_paraphrase(src, bad)
+        self.assertIn("lost_plan_marker", warnings)
+        self.assertIn("introduced_completed_event", warnings)
+
+    def test_number_context_change_is_rejected(self):
+        src = "Предприятие установило 40 станков для новых заказов."
+        bad = "Предприятие установило 40 предприятий для новых заказов."
+        self.assertIn("changed_number_context", check_paraphrase(src, bad))
+
+    def test_gemma5_rusal_co2_direction_reversal_is_rejected(self):
+        src = ("При производстве одного килограмма оксида скандия "
+               "будет поглощаться примерно 1,8 тонны CO2.")
+        hallucination = ("В процессе производства одного килограмма "
+                         "оксида скандия будет выбрасываться примерно "
+                         "1,8 тонны углекислого газа.")
+        self.assertIn(
+            "changed_direction:co2_absorption_emission",
+            check_paraphrase(src, hallucination),
+        )
+
+    def test_gemma5_opposite_growth_direction_is_rejected(self):
+        src = "Компания увеличила производственные мощности на 40 процентов."
+        other = "Компания сократила производственные мощности на 40 процентов."
+        self.assertIn(
+            "changed_direction:increase_decrease",
+            check_paraphrase(src, other),
+        )
+
+    def test_no_false_positive_for_absorption_rewording(self):
+        src = "При производстве поглощается 1,8 тонны углекислого газа."
+        other = "В процессе производства улавливается 1,8 тонны углекислого газа."
+        self.assertNotIn(
+            "changed_direction:co2_absorption_emission",
+            check_paraphrase(src, other),
+        )
+
+    def test_thousands_abbreviation_is_not_a_sentence_boundary(self):
+        src = ("Предприятие расширило выпуск до 580 тыс. изделий в год. "
+               "В 2026 году открыли дополнительную линию.")
+        self.assertEqual(
+            split_extractive_sentences(src),
+            ["Предприятие расширило выпуск до 580 тыс. изделий в год.",
+             "В 2026 году открыли дополнительную линию."],
+        )
+
+    def test_gemma10_rusal_future_investment_not_completed(self):
+        source = "Общий объем инвестиций в проект составит около 500 миллионов рублей."
+        candidate = "Общий объем инвестиций в проект составил около 500 миллионов рублей."
+        self.assertIn(
+            "changed_tense_future_to_past:investment_or_quantity",
+            check_paraphrase(source, candidate),
+        )
+        result = rewrite_extractive(source, request=lambda *a, **kw: {
+            "sentences": [candidate],
+        })
+        self.assertFalse(result.rewritten)
+        self.assertEqual(result.text, source)
+
+    def test_completed_investment_cannot_become_future(self):
+        source = "Общий объем инвестиций в проект составил около 500 миллионов рублей."
+        candidate = "Общий объем инвестиций в проект составит около 500 миллионов рублей."
+        self.assertIn(
+            "changed_tense_past_to_future:investment_or_quantity",
+            check_paraphrase(source, candidate),
+        )
+
+    def test_same_tense_is_allowed(self):
+        source = "Общий объем инвестиций в проект составит около 500 миллионов рублей."
+        candidate = "Инвестиции в проект составят около 500 миллионов рублей."
+        self.assertNotIn(
+            "changed_tense_future_to_past:investment_or_quantity",
+            check_paraphrase(source, candidate),
+        )
+
+    def test_gemma10_reject_unsubstantiated_comparison_target(self):
+        source = "Стоимость отечественного изделия в 1,5 раза ниже."
+        candidate = "Стоимость отечественного изделия в 1,5 раза ниже, чем у зарубежных аналогов."
+        self.assertIn(
+            "introduced_comparison_target",
+            check_paraphrase(source, candidate),
+        )
+
+    def test_report_aligned_methane_is_not_methanol(self):
+        source = ("Одно из подразделений Ростеха разработало "
+                  "взрывозащищенный датчик температуры для реакторов "
+                  "получения метанола.")
+        candidate = ("Одно из подразделений Ростеха разработало "
+                     "взрывозащищенный датчик температуры для реакторов "
+                     "получения метана.")
+        self.assertIn(
+            "introduced_technical_substance:methane_methanol",
+            check_paraphrase(source, candidate),
+        )
+        result = rewrite_extractive(
+            source, request=lambda *a, **kw: {"sentences": [candidate]}
+        )
+        self.assertFalse(result.rewritten)
+        self.assertEqual(result.text, source)
+
+    def test_report_whole_added_rubles_without_source(self):
+        source = ("Завод получил поддержку фонда в размере 200 млн. "
+                  "Эти средства были направлены на производство оборудования.")
+        candidate = ("Завод получил поддержку фонда в размере 200 млн. рублей. "
+                     "Эти средства направили на производство оборудования.")
+        self.assertIn("introduced_currency", check_paraphrase(source, candidate))
+
+    def test_genuine_currency_rewording_is_not_blocked(self):
+        source = "Объём инвестиций составит 200 млн рублей."
+        candidate = "Инвестиции составят 200 млн рублей."
+        self.assertNotIn("introduced_currency", check_paraphrase(source, candidate))
+
+    def test_explicit_methane_remains_distinct_from_methanol(self):
+        source = "На заводе получают метан и метанол в отдельных цехах."
+        candidate = "На заводе вырабатывают метан и метанол в разных цехах."
+        self.assertNotIn(
+            "introduced_technical_substance:methane_methanol",
+            check_paraphrase(source, candidate),
+        )
+
+    def test_whole_report_false_positive_sentence_openers(self):
+        source = ("Производство модернизировали на действующей площадке. "
+                  "Разработка открывает возможности для заводов.")
+        candidate = ("Производство модернизировали на действующей площадке. "
+                     "Эти изменения открывают возможности для заводов.")
+        warnings = check_paraphrase(source, candidate)
+        self.assertNotIn("new_capitalized_token:Эти", warnings)
+
+    def test_new_company_after_full_stop_is_still_rejected(self):
+        source = "Производство модернизировали на действующей площадке."
+        candidate = ("Производство модернизировали на действующей площадке. "
+                     "Германия сообщила об инвестициях.")
+        warnings = check_paraphrase(source, candidate)
+        self.assertIn("new_capitalized_token:Германия", warnings)
+
+    def test_existing_acronym_must_not_disappear(self):
+        src = "Компания ООО «Завод ЗИС» запустила производство техники."
+        candidate = "Компания «Завод ЗИС» запустила производство техники."
+        self.assertIn("missing_acronym:ООО", check_paraphrase(src, candidate))
+
+    def test_whole_no_change_is_successful_editorial_review(self):
+        from processing.extractive_rewriter import rewrite_extractive_whole
+        source = (
+            "Завод «Север» запустил новую линию производства деталей. "
+            "Предприятие установило 40 станков для выполнения заказов."
+        )
+        result = rewrite_extractive_whole(
+            source, request=lambda *a, **kw: {"summary": source}
+        )
+        self.assertFalse(result.rewritten)
+        self.assertEqual(result.text, source)
+        self.assertEqual(result.warnings, [])
+        self.assertTrue(result.review_required)
+        self.assertFalse(result.publication_performed)
+
+    def test_aligned_no_change_is_not_error(self):
+        source = (
+            "Завод «Север» запустил новую линию производства деталей. "
+            "Предприятие установило 40 станков для выполнения заказов."
+        )
+        result = rewrite_extractive(
+            source, request=lambda *a, **kw: {"sentences": [
+                "Завод «Север» запустил новую линию производства деталей.",
+                "Предприятие установило 40 станков для выполнения заказов.",
+            ]}
+        )
+        self.assertFalse(result.rewritten)
+        self.assertEqual(result.warnings, [])
+        self.assertEqual(result.text, source)
+        self.assertTrue(result.review_required)
+
+    def test_gemma_minimal_mazda_only_pikups_cannot_be_dropped(self):
+        source = "Поначалу там собирали только китайские пикапы."
+        changed = "Поначалу там собирали китайские пикапы."
+        self.assertIn("lost_exclusivity", check_paraphrase(source, changed))
+
+    def test_exclusivity_paraphrase_can_use_equivalent_marker(self):
+        source = "Поначалу там собирали только китайские пикапы."
+        changed = "Поначалу там собирали исключительно китайские пикапы."
+        self.assertNotIn("lost_exclusivity", check_paraphrase(source, changed))
+
+    def test_introduced_exclusivity_is_rejected(self):
+        source = "Поначалу там собирали китайские пикапы."
+        changed = "Поначалу там собирали только китайские пикапы."
+        self.assertIn("introduced_exclusivity", check_paraphrase(source, changed))
+
+    def test_gemma_minimal_geoportal_not_broadened_to_system(self):
+        source = ("В этом году мы с Высшей школой экономики "
+                  "разработали геоинформационный портал.")
+        changed = ("В этом году с Высшей школой экономики "
+                   "разработана геоинформационная система.")
+        self.assertIn(
+            "changed_technical_object:portal",
+            check_paraphrase(source, changed),
+        )
+
+    def test_alias_can_be_dropped_when_preserved_in_official_name(self):
+        source = (
+            "Новый завод запустила компания ООО «Завод инновационной "
+            "спецтехники (ЗИС)». Предприятие «ЗИС» в 2024 году "
+            "выпустило предсерийный образец коммунальной техники."
+        )
+        edited = (
+            "Компания ООО «Завод инновационной спецтехники (ЗИС)» "
+            "запустила новый завод. В 2024 году предприятие "
+            "выпустило предсерийный образец коммунальной техники."
+        )
+        self.assertNotIn(
+            "changed_quoted_names", check_paraphrase(source, edited)
+        )
+
+    def test_genuinely_missing_company_name_remains_blocked(self):
+        source = (
+            "Компания ООО «Завод инновационной спецтехники (ЗИС)» "
+            "запустила новый завод. Предприятие «ЗИС» представило образец."
+        )
+        edited = "Компания ООО запустила новый завод и представила образец."
+        self.assertIn("changed_quoted_names", check_paraphrase(source, edited))
+
     def test_malformed_model_output_falls_back(self):
         text = "Компания построила новый завод."
         for reply in ({"summary": text}, {"sentences": ["OK", "EXTRA"]}):

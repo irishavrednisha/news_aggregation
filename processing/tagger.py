@@ -1563,10 +1563,6 @@ def get_cluster_text_for_tagging(session, cluster: Cluster) -> str:
     Не повторяем их искусственно: в SBERT лишние повторы вытесняют
     важные сведения из статьи при ограничении длины входа.
     """
-    parts = [
-        cut_text(cluster.title or "", 400),
-        cut_text(cluster.summary_text or "", 900),
-    ]
     news_items = (
         session.query(News)
         .filter(News.cluster_id == cluster.id)
@@ -1577,6 +1573,10 @@ def get_cluster_text_for_tagging(session, cluster: Cluster) -> str:
         )
         .all()
     )
+    parts = [
+        cut_text(cluster.title or "", 400),
+        cut_text(cluster.summary_text or "", 900),
+    ]
     for index, news in enumerate(news_items[:5]):
         if news.title:
             parts.append(cut_text(news.title, 250))
@@ -1651,7 +1651,11 @@ def tag_cluster(
         session.commit()
         return []
 
-    if is_not_related_to_russia(session, cluster, debug=debug):
+    backend = os.getenv("NEWS_TAGGER_BACKEND", "grounded").strip().lower()
+
+    # Geographical relevance is independent of industry tagging.
+    # Preserve old semantics only for explicitly selected legacy backends.
+    if backend != "grounded" and is_not_related_to_russia(session, cluster, debug=debug):
         cluster.tags = None
         cluster.status = "not_for_publication"
         session.commit()
@@ -1665,7 +1669,7 @@ def tag_cluster(
 
         return []
 
-    if not cluster_has_content(session, cluster.id):
+    if backend != "grounded" and not cluster_has_content(session, cluster.id):
         cluster.tags = None
         cluster.status = "not_for_publication"
 
@@ -1686,7 +1690,7 @@ def tag_cluster(
     # новости не удаляются, этап сбора не меняется.
     from processing.tagging_event_guard import nonindustrial_event_reason
     event_reason = nonindustrial_event_reason(cluster.title or "")
-    if event_reason:
+    if event_reason and backend != "grounded":
         cluster.tags = None
         cluster.status = "not_for_publication"
         session.commit()
@@ -1698,7 +1702,6 @@ def tag_cluster(
     # Экспериментальная NLI-классификация: AI оценивает смысл
     # заголовка + summary и затем независимо 18 тематик.
     # Без подтверждённых тегов публикации нет.
-    backend = os.getenv("NEWS_TAGGER_BACKEND", "legacy").strip().lower()
     if backend == "nli":
         from processing.ai_tagger import predict_tags
         try:
@@ -1743,15 +1746,13 @@ def tag_cluster(
                 print(f"  {tag}: {score:.3f}")
         return prediction.tags
 
-    if backend not in ("legacy", "hybrid"):
-        raise ValueError("NEWS_TAGGER_BACKEND должен быть legacy, hybrid или nli")
-
-    text = get_cluster_text_for_tagging(session, cluster)
+    if backend not in ("legacy", "hybrid", "grounded"):
+        raise ValueError("NEWS_TAGGER_BACKEND должен быть grounded, legacy, hybrid или nli")
 
     # Не ищем стоп-слова во всём тексте кластера. Техническая
     # новость может упоминать выставку, музей, акционеров или вакансии.
     # Явно непрофильные заголовки уже проверяет общий фильтр.
-    if is_not_publication_by_keywords(cluster.title or ""):
+    if backend != "grounded" and is_not_publication_by_keywords(cluster.title or ""):
         cluster.tags = None
         cluster.status = "not_for_publication"
         session.commit()
@@ -1765,6 +1766,37 @@ def tag_cluster(
 
         return []
 
+    # Default classifier: no Sentence-BERT download or Ollama request.
+    # Rank by headline event and primarily by the existing summary.
+    # Uncertain articles go to tagging_review and are never ready for MAX.
+    if backend == "grounded":
+        from processing.grounded_tagger import select_tags
+
+        decision = select_tags(
+            cluster.title or "",
+            cluster.summary_text or "",
+            max_tags=min(max_tags, 2),
+        )
+        selected = list(decision.tags)
+        cluster.tags = ", ".join(selected) if selected else None
+        cluster.status = (
+            "ready" if decision.outcome == "tagged" else
+            "tagging_review" if decision.outcome == "review" else
+            "not_for_publication"
+        )
+        session.commit()
+        if debug:
+            print(
+                f"Grounded #{cluster.id}: {cluster.status}; "
+                f"{decision.reason}; теги: {cluster.tags or 'нет'}"
+            )
+            if decision.evidence:
+                print("Основания:", "; ".join(decision.evidence))
+        return selected
+
+    # Legacy and hybrid backends still use their original clipped article
+    # representation. The default grounded backend does not read it.
+    text = get_cluster_text_for_tagging(session, cluster)
     focus_text = f"{cluster.title or ''}\n{cluster.summary_text or ''}"
     scored_tags = score_tags_detailed(text, focus_text=focus_text)
 
