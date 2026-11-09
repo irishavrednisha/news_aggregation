@@ -406,9 +406,9 @@ def _summary_weighted_evidence(
                 votes[tag] = (score, "summary", match.group(0))
 
         # A generic process cue must never overpower a specific sector.
-        if GENERIC_PRODUCTION.search(piece) and not any(
-            tag not in generic for tag in votes
-        ):
+        if (GENERIC_PRODUCTION.search(piece)
+                and "заводы" not in title_hints
+                and not any(tag not in generic for tag in votes)):
             score = 3.5 if action else 2.8
             old = votes.get("технологическое производство", (0.0, "", ""))[0]
             if score > old:
