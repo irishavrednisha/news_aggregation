@@ -96,8 +96,15 @@ def create_batch(
         pools[True], taken_urls=taken_urls,
         taken_titles=taken_titles, limit=accepted,
     )
+    # Freshness is not a semantic-relevance judgment: Qwen receives
+    # title+text, not publication age. Do not sample stale rejections as
+    # potential "false negatives" of the content filter.
+    rejected_nonstale = [
+        item for item in pools[False]
+        if decisions_by_url[item["url"]]["filter_reason"] != "stale_article"
+    ]
     chosen_reject = _round_robin(
-        pools[False], taken_urls=taken_urls,
+        rejected_nonstale, taken_urls=taken_urls,
         taken_titles=taken_titles, limit=limit - len(chosen_accept),
     )
     # Fill underpopulated strata without duplicating articles or titles.
@@ -108,7 +115,7 @@ def create_batch(
         ))
     if len(chosen_accept) + len(chosen_reject) < limit:
         chosen_reject.extend(_round_robin(
-            pools[False], taken_urls=taken_urls, taken_titles=taken_titles,
+            rejected_nonstale, taken_urls=taken_urls, taken_titles=taken_titles,
             limit=limit - len(chosen_accept) - len(chosen_reject),
         ))
 
@@ -137,6 +144,7 @@ def create_batch(
             "selected": len(selected),
             "primary_filter_accepted": len(chosen_accept),
             "primary_filter_rejected": len(chosen_reject),
+            "stale_rejected_excluded_from_content_comparison": len(pools[False]) - len(rejected_nonstale),
             "unverified_tls": sum(r.get("unverified_tls") is True for r in selected),
             "sources": dict(sorted(Counter(
                 str(r.get("source") or "") for r in selected
