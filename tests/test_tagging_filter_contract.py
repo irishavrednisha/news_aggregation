@@ -18,7 +18,7 @@ def load_tagger_functions():
     nodes = [
         node for node in tree.body
         if isinstance(node, ast.FunctionDef)
-        and node.name in {"tag_cluster", "is_not_publication_by_keywords"}
+        and node.name in {"tag_cluster", "is_not_publication_by_keywords", "get_cluster_text_for_tagging"}
     ]
     module = ast.Module(body=nodes, type_ignores=[])
     namespace = {
@@ -114,6 +114,23 @@ class TaggerFilteringContractTests(unittest.TestCase):
         self.assertEqual(selected, [])
         self.assertEqual(cluster.status, "not_for_publication")
         ns["score_tags_detailed"].assert_not_called()
+
+    def test_full_text_mode_never_uses_legacy_2200_character_cut(self):
+        ns = load_tagger_functions()
+        ns["News"] = Mock()
+        cluster = SimpleNamespace(
+            id=101, title="Производство насосов",
+            summary_text="Специалисты модернизировали производство"
+        )
+        article = SimpleNamespace(title="Производство", text="Т" * 6000)
+        session = Mock()
+        session.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            article
+        ]
+        result = ns["get_cluster_text_for_tagging"](
+            session, cluster, full_text=True
+        )
+        self.assertEqual(result, "Т" * 6000)
 
     def test_missing_summary_does_not_continue_to_tag(self):
         ns, cluster, session = self.prepare(
