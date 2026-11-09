@@ -175,6 +175,81 @@ class RealNewsEventRegressionTests(unittest.TestCase):
         for title in cases:
             with self.subTest(title=title):
                 self.assertFalse(select_tags(title).tags)
+    def test_full_text_must_not_turn_unrelated_company_events_into_industry(self):
+        cases = [
+            (
+                "Двигатели ОДК обеспечили успешный старт ракеты «Союз» с космодрома Плесецк",
+                "ОДК изготовила двигатели. Грузовой транспортный корабль Прогресс "
+                "доставил топливо на космическую станцию.",
+            ),
+            (
+                "Препарат Ростеха одобрили для лечения детей с нарушениями иммунной системы",
+                "Ростех произвел лекарственный препарат, который запатентовали.",
+            ),
+            (
+                "ТопФактор: экспертиза в управлении результативностью и развитии человеческого капитала",
+                "Компания создала систему автоматизации кадрового документооборота.",
+            ),
+            (
+                "Михаил Алексеев: «Для меня Ил-114-300 — это не просто самолет, а дело жизни»",
+                "Конструктор рассказал, как создавался и производится самолет.",
+            ),
+            (
+                "ОСК и Судпроф: открытый разговор о главном",
+                "Представители профсоюза обсудили премии. Верфи строят суда.",
+            ),
+            (
+                "Внешнее управление введено на борисоглебском «Борхиммаше»",
+                "Завод производит оборудование и машиностроительные агрегаты.",
+            ),
+            (
+                "Atyrau Oil & Gas 2026: диалог бизнеса и государства",
+                "На форуме обсуждали нефтегазовое оборудование и добычу нефти.",
+            ),
+            (
+                "В Красноярском крае создают платформу для кооперации производителей и заказчиков",
+                "Компания создала портал для местных производителей. "
+                "В регионе развивается машиностроение.",
+            ),
+        ]
+        for title, text in cases:
+            with self.subTest(title=title):
+                result = select_tags(title, text=text)
+                self.assertFalse(result.tags, result)
+                self.assertNotEqual(result.outcome, "tagged")
+
+    def test_full_article_does_not_tag_customer_or_machine_only_used(self):
+        metal_parts = select_tags(
+            "Ростех запустил серийное производство высокоточных алюминиевых деталей для радиоэлектроники",
+            text="Производство алюминиевых деталей для радиоэлектроники запущено."
+        )
+        self.assertIn("технологическое производство", metal_parts.tags)
+        self.assertNotIn("электротехническое направление", metal_parts.tags)
+        automated_line = select_tags(
+            'На "Янтаре" автоматизируют линию резки металла',
+            text="На предприятии автоматизируют линию резки металла. "
+                 "Используют станки и промышленное оборудование."
+        )
+        self.assertIn("технологическое производство", automated_line.tags)
+        self.assertNotIn("машиностроение", automated_line.tags)
+
+    def test_real_laboratory_is_technology_not_incidental_metal(self):
+        result = select_tags(
+            "«Норникель» представил в Китае ИИ-лабораторию новых материалов",
+            text="Компания представила ИИ-лабораторию. "
+                 "В дальнейшем исследуют палладиевые материалы."
+        )
+        self.assertEqual(result.outcome, "tagged")
+        self.assertIn("технологии", result.tags)
+        self.assertNotIn("металлургия", result.tags)
+
+    def test_howto_with_colon_is_not_new_industrial_product(self):
+        result = select_tags(
+            "Автоматизация буровых работ: как заменить Excel на low-code",
+            text="В статье рассказали про автоматизацию работы и ПО."
+        )
+        self.assertFalse(result.tags)
+
     def test_cannot_invent_sector_from_extreme_sbert_similarity(self):
         ranking = [
             {"tag": "авиация", "final_score": 999.0},
