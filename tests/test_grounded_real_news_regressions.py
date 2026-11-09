@@ -83,7 +83,7 @@ class RealNewsEventRegressionTests(unittest.TestCase):
     def test_context_disambiguates_reactor_and_does_not_invent_client_sector(self):
         atomic = select_tags(
             'На "Чукотке" запустили второй реактор',
-            text='На атомном ледоколе "Чукотка" был выполнен физический пуск реактора РИТМ-200.'
+            summary='На атомном ледоколе "Чукотка" был выполнен физический пуск реактора РИТМ-200.'
         )
         self.assertIn("атомная отрасль", atomic.tags)
         sensor = select_tags(
@@ -119,21 +119,36 @@ class RealNewsEventRegressionTests(unittest.TestCase):
                 self.assertEqual(decision.tags, ())
                 self.assertIn(decision.outcome, ("reject", "review"))
 
-    def test_summary_and_full_body_are_both_used_without_secondary_topic_noise(self):
-        # The relevant equipment is identified beyond the former 550-char
-        # lead window. An unrelated aircraft paragraph is not a second tag.
-        title = "Предприятие модернизировало технологический процесс"
-        summary = "Специалисты изменили производственный процесс предприятия."
-        body = (
-            "Предприятие модернизировало технологический процесс. " +
-            "Подготовлены новые производственные инструкции. " * 25 +
-            "Предприятие модернизировало электродвигатель оборудования. " +
-            "Другая компания выпустила самолёт на своём предприятии."
-        )
-        result = select_tags(title, summary, text=body)
+    def test_summary_outweighs_specific_headline_sector(self):
+        title = "На заводе запустили производство промышленных насосов"
+        summary = "На заводе запустили производство электрических трансформаторов."
+        result = select_tags(title, summary)
         self.assertEqual(result.outcome, "tagged")
-        self.assertIn("электротехническое направление", result.tags, result)
-        self.assertNotIn("авиация", result.tags, result)
+        self.assertEqual(result.tags[0], "электротехническое направление")
+        self.assertTrue(any("summary=" in item for item in result.evidence))
+
+    def test_full_body_is_completely_ignored(self):
+        title = "На предприятии модернизировали производственную линию"
+        summary = "На предприятии модернизировали трансформаторные установки."
+        unrelated = (
+            "На другой верфи построили новый корабль. "
+            "Авиационный завод выпустил самолет. "
+            "Разработали технологию добычи нефти. "
+        ) * 300
+        first = select_tags(title, summary, text=unrelated)
+        second = select_tags(title, summary, text="")
+        self.assertEqual(first, second)
+        self.assertEqual(first.tags[0], "электротехническое направление")
+
+    def test_no_summary_cannot_infer_from_body(self):
+        title = "На предприятии запустили новое оборудование"
+        result = select_tags(
+            title,
+            text="Выпустили самолет. Построили судно. Изготовили насос."
+        )
+        self.assertNotIn("авиация", result.tags)
+        self.assertNotIn("судостроение", result.tags)
+        self.assertNotIn("машиностроение", result.tags)
 
     def test_summary_resolves_specific_product_when_title_is_generic(self):
         result = select_tags(
