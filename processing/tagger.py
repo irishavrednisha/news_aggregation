@@ -1563,10 +1563,6 @@ def get_cluster_text_for_tagging(session, cluster: Cluster, *, full_text: bool =
     Не повторяем их искусственно: в SBERT лишние повторы вытесняют
     важные сведения из статьи при ограничении длины входа.
     """
-    parts = [
-        cut_text(cluster.title or "", 400),
-        cut_text(cluster.summary_text or "", 900),
-    ]
     news_items = (
         session.query(News)
         .filter(News.cluster_id == cluster.id)
@@ -1584,6 +1580,10 @@ def get_cluster_text_for_tagging(session, cluster: Cluster, *, full_text: bool =
             str(news.text) for news in news_items[:3] if news.text
         )
 
+    parts = [
+        cut_text(cluster.title or "", 400),
+        cut_text(cluster.summary_text or "", 900),
+    ]
     for index, news in enumerate(news_items[:5]):
         if news.title:
             parts.append(cut_text(news.title, 250))
