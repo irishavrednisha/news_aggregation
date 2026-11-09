@@ -1,10 +1,14 @@
 """LLM prototype contract tests without Ollama/model download/DB/MAX."""
 import unittest
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from check_local_news_llm import load_gemma_report, eligible_gemma_draft, choose_gemma_focus
 from processing.local_news_llm import (
     TAGS, FACT_FORMAT, SUMMARY_FORMAT, FACT_SYSTEM, SUMMARY_SYSTEM,
     extract_messages, summary_messages,
-    source_payload, validate_evidence,
+    source_payload, validate_evidence, possible_production_plan,
     validate_fact_decision, validate_summary, analyze_news,
 )
 
@@ -30,6 +34,14 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(len(set(TAGS)), 18)
         self.assertEqual(FACT_FORMAT["properties"]["tags"]["items"]["enum"], list(TAGS))
 
+    def test_prompt_requires_direct_russian_industrial_connection(self):
+        # The diagnostic Qwen classifier must not treat foreign weapons
+        # development as Russian industrial news just because it is technical.
+        self.assertIn("Канал посвящён именно промышленности России", FACT_SYSTEM)
+        self.assertIn("Чисто иностранные промышленные и военные проекты", FACT_SYSTEM)
+        self.assertIn("беспилотники", FACT_SYSTEM)
+        self.assertIn("relevant=false", FACT_SYSTEM)
+
     def test_evidence_must_appear_in_source(self):
         source = source_payload(TITLE, BODY)
         self.assertEqual(validate_evidence(source, EVIDENCE), EVIDENCE)
@@ -44,6 +56,49 @@ class LocalLLMTests(unittest.TestCase):
                 "evidence": EVIDENCE,
                 "uncertain": False,
             }, source_payload(TITLE, BODY))
+
+    def test_evidence_typographic_variants_anchor_to_article_exactly(self):
+        title = "Обновление завода в Новосибирске"
+        body = (
+            "Компания «Индустрия» модернизировала цех — установила "
+            "три станка. Проект рассчитан на 12 месяцев."
+        )
+        source = source_payload(title, body)
+        variant = "Компания “Индустрия” модернизировала цех - установила три станка."
+        self.assertEqual(
+            validate_evidence(source, [variant]),
+            ["Компания «Индустрия» модернизировала цех — установила три станка."],
+        )
+        # The returned string is a true exact span, not the model's text.
+        self.assertIn(validate_evidence(source, [variant])[0], body)
+
+    def test_evidence_only_in_title_is_not_source_evidence(self):
+        title = "Завод изготовил первый сверхпроводящий двигатель"
+        body = "На предприятии состоялась рабочая встреча сотрудников."
+        with self.assertRaisesRegex(ValueError, "исказила цитату"):
+            validate_evidence(source_payload(title, body), [title])
+
+    def test_evidence_rejects_changed_numbers_and_negations(self):
+        title = "Завод испытал новую установку"
+        body = (
+            "Компания не производит батареи, а лишь испытывает их."
+            " Мощность испытательной установки составляет 18 МВт."
+        )
+        source = source_payload(title, body)
+        for fake in (
+            "Компания производит батареи, а лишь испытывает их.",
+            "Мощность испытательной установки составляет 180 МВт.",
+        ):
+            with self.subTest(fake=fake), self.assertRaisesRegex(
+                ValueError, "исказила цитату"
+            ):
+                validate_evidence(source, [fake])
+
+    def test_tags_only_requests_short_evidence_and_mentions_plans(self):
+        messages = extract_messages(TITLE, BODY, tags_only=True)
+        self.assertIn("1–2", messages[0]["content"])
+        self.assertIn("будущие события производства", FACT_SYSTEM)
+        self.assertIn("неподтверждённое намерение", FACT_SYSTEM)
 
     def test_numerical_hallucinations_raise_review_warning(self):
         self.assertEqual(validate_summary(
@@ -78,6 +133,226 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(decision.warnings, [])
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1][1], SUMMARY_FORMAT)
+
+    def test_gemma_report_skips_rejected_and_mismatched_news(self):
+        good = {
+            "url": "https://example.test/news-1", "title": TITLE,
+            "editorial_outcome": "edited", "text": "Завод обновил линию.",
+            "warnings": [], "review_required": True,
+            "publication_performed": False,
+        }
+        accepted, reason = eligible_gemma_draft(good, TITLE)
+        self.assertEqual(accepted, "Завод обновил линию.")
+        self.assertEqual(reason, "")
+        for changes in (
+            {"editorial_outcome": "rejected"},
+            {"review_required": False},
+            {"warnings": ["lost_exclusivity"]},
+            {"source_quality_warnings": [
+                "press_service_not_aligned_with_headline:review_source"
+            ]},
+            {"text": ""},
+            {"publication_performed": True},
+        ):
+            with self.subTest(changes=changes):
+                row = {**good, **changes}
+                text, warning = eligible_gemma_draft(row, TITLE)
+                self.assertIsNone(text)
+                self.assertTrue(warning)
+        self.assertEqual(
+            eligible_gemma_draft(good, "Другая статья")[1],
+            "gemma_title_mismatch",
+        )
+        self.assertEqual(
+            eligible_gemma_draft(None, TITLE)[1],
+            "missing_gemma_draft",
+        )
+
+    def test_rejected_gemma_can_use_original_textrank_only_when_opted_in(self):
+        row = {
+            "title": TITLE, "editorial_outcome": "rejected",
+            "extractive": EVIDENCE[0], "text": EVIDENCE[0],
+            "model_candidate": "Выдуманный факт о рынке технологий.",
+            "warnings": ["introduced_currency"],
+            "source_quality_warnings": [],
+            "review_required": True, "publication_performed": False,
+        }
+        self.assertEqual(
+            choose_gemma_focus(row, TITLE),
+            (None, "none", "gemma_edit_rejected"),
+        )
+        self.assertEqual(
+            choose_gemma_focus(row, TITLE, fallback_extractive=True),
+            (EVIDENCE[0], "textrank_fallback", ""),
+        )
+        for changes in (
+            {"source_quality_warnings": ["source_mismatch"]},
+            {"extractive": ""},
+            {"text": "Не соответствует TextRank"},
+            {"warnings": []},
+            {"review_required": False},
+            {"publication_performed": True},
+            {"title": "Иная статья"},
+        ):
+            with self.subTest(changes=changes):
+                invalid = {**row, **changes}
+                text, basis, reason = choose_gemma_focus(
+                    invalid, TITLE, fallback_extractive=True,
+                )
+                self.assertIsNone(text)
+                self.assertEqual(basis, "none")
+                self.assertTrue(reason)
+        self.assertEqual(
+            choose_gemma_focus(None, TITLE, fallback_extractive=True),
+            (None, "none", "missing_gemma_draft"),
+        )
+
+    def test_approved_gemma_keeps_priority_over_extractive(self):
+        row = {
+            "title": TITLE, "editorial_outcome": "edited",
+            "text": "Предприятие изготовило новые трансформаторы.",
+            "extractive": EVIDENCE[0], "warnings": [],
+            "source_quality_warnings": [],
+            "review_required": True, "publication_performed": False,
+        }
+        self.assertEqual(
+            choose_gemma_focus(row, TITLE, fallback_extractive=True),
+            ("Предприятие изготовило новые трансформаторы.",
+             "gemma_edited", ""),
+        )
+
+    def test_report_must_have_unique_urls_and_review_contract(self):
+        item = {
+            "url": "https://example.test/one", "title": TITLE,
+            "editorial_outcome": "unchanged", "text": BODY,
+            "review_required": True, "publication_performed": False,
+            "warnings": [],
+        }
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "gemma.json"
+            payload = {
+                "all_require_review": True,
+                "publishing_performed": False, "results": [item],
+            }
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(
+                load_gemma_report(path)[item["url"]]["text"], BODY
+            )
+            payload["results"] = [item, item]
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "повторяется URL"):
+                load_gemma_report(path)
+            payload["results"] = [item]
+            payload["all_require_review"] = False
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "read-only"):
+                load_gemma_report(path)
+
+    def test_focus_summary_orders_tags_and_verifies_with_original(self):
+        edited = "Завод начал выпуск новой серии трансформаторов для сетей."
+        messages = extract_messages(TITLE, BODY, focus_summary=edited)
+        self.assertIn(edited, messages[1]["content"])
+        self.assertIn(BODY, messages[1]["content"])
+        self.assertIn("исходной статьи", messages[0]["content"].lower())
+        self.assertLess(
+            messages[1]["content"].index(edited),
+            messages[1]["content"].index(BODY),
+        )
+        calls = []
+        def fake(msg, schema, **kw):
+            calls.append((msg, schema))
+            return {
+                "relevant": True,
+                "tags": ["электротехническое направление"],
+                "evidence": [EVIDENCE[0]],
+                "uncertain": False,
+            }
+        result = analyze_news(
+            TITLE, BODY, request=fake, tags_only=True,
+            focus_summary=edited,
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result.tags, ["электротехническое направление"])
+        self.assertTrue(result.review_required)
+        self.assertEqual(result.evidence, [EVIDENCE[0]])
+        self.assertEqual(result.summary, "")
+
+    def test_focus_summary_cannot_supply_source_evidence(self):
+        invented = "Завод якобы построил 900 новых реакторов на Марсе."
+        def fake(*args, **kwargs):
+            return {
+                "relevant": True,
+                "tags": ["электротехническое направление"],
+                "evidence": [invented],
+                "uncertain": False,
+            }
+        with self.assertRaisesRegex(ValueError, "исказила цитату"):
+            analyze_news(
+                TITLE, BODY, request=fake, tags_only=True,
+                focus_summary=invented,
+            )
+
+    def test_focus_summary_negative_still_requires_human_review(self):
+        def fake(*args, **kwargs):
+            return {
+                "relevant": False, "tags": [], "evidence": [],
+                "uncertain": False,
+            }
+        result = analyze_news(
+            TITLE, BODY, request=fake, tags_only=True,
+            focus_summary="Корпоративный праздник на заводе.",
+        )
+        self.assertFalse(result.relevant)
+        self.assertEqual(result.tags, [])
+        self.assertTrue(result.review_required)
+
+    def test_focus_summary_empty_is_invalid(self):
+        with self.assertRaises(ValueError):
+            extract_messages(TITLE, BODY, focus_summary=" ")
+
+    def test_tags_only_runs_one_fact_request_without_summary(self):
+        calls = []
+        def fake(messages, schema, **kwargs):
+            calls.append((messages, schema))
+            return {
+                "relevant": True,
+                "tags": ["электротехническое направление"],
+                "evidence": [EVIDENCE[0]],
+                "uncertain": False,
+            }
+        result = analyze_news(TITLE, BODY, request=fake, tags_only=True)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1], FACT_FORMAT)
+        self.assertEqual(result.tags, ["электротехническое направление"])
+        self.assertEqual(result.summary, "")
+        self.assertEqual(result.evidence, [EVIDENCE[0]])
+        self.assertTrue(result.review_required)
+        self.assertFalse(result.warnings)
+
+    def test_tags_only_preserves_uncertainty_flag(self):
+        def fake(messages, schema, **kwargs):
+            return {
+                "relevant": True,
+                "tags": ["электротехническое направление"],
+                "evidence": EVIDENCE,
+                "uncertain": True,
+            }
+        result = analyze_news(TITLE, BODY, request=fake, tags_only=True)
+        self.assertTrue(result.review_required)
+        self.assertIn("model_uncertain", result.warnings)
+
+    def test_tags_only_irrelevant_news_no_tags(self):
+        calls = []
+        def fake(messages, schema, **kwargs):
+            calls.append(1)
+            return {
+                "relevant": False, "tags": [],
+                "evidence": [], "uncertain": False,
+            }
+        result = analyze_news(TITLE, BODY, request=fake, tags_only=True)
+        self.assertFalse(result.relevant)
+        self.assertFalse(result.tags)
+        self.assertEqual(len(calls), 1)
 
     def test_flexible_summary_length_limit_is_550_characters(self):
         # 250–400 is a soft target; short summaries aren't padded.
@@ -208,7 +483,7 @@ class LocalLLMTests(unittest.TestCase):
     def test_malformed_quote_gets_one_exact_copy_retry(self):
         copied = "Компания создала новую несуществующую технологию производства."
         answers = [
-            {"relevant": True, "tags": ["машиностроение"],
+            {"relevant": True, "tags": ["электротехническое направление"],
              "evidence": [copied], "uncertain": False},
             {"relevant": True, "tags": ["электротехническое направление"],
              "evidence": EVIDENCE, "uncertain": False},
@@ -224,6 +499,48 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(result.tags, ["электротехническое направление"])
         self.assertEqual(result.evidence, EVIDENCE)
         self.assertEqual(result.warnings, [])
+        self.assertTrue(result.review_required)
+
+    def test_evidence_retry_cannot_silently_change_tags(self):
+        invalid = "Компания создала несуществующие высоковольтные двигатели."
+        attempts = [
+            {"relevant": True, "tags": ["машиностроение"],
+             "evidence": [invalid], "uncertain": False},
+            {"relevant": True, "tags": ["электротехническое направление"],
+             "evidence": EVIDENCE, "uncertain": False},
+        ]
+        calls = []
+        def fake(*args, **kwargs):
+            calls.append(1)
+            return attempts[len(calls) - 1]
+        with self.assertRaisesRegex(ValueError, "изменила отраслевые теги"):
+            analyze_news(TITLE, BODY, request=fake, tags_only=True)
+        self.assertEqual(len(calls), 2)
+
+    def test_concrete_plans_are_not_silent_negative_predictions(self):
+        plan = "На бывшем предприятии хотят перезапустить производство двигателей"
+        self.assertTrue(possible_production_plan(plan))
+        self.assertFalse(possible_production_plan(
+            "Бывший завод продаёт оборудование в связи с банкротством"
+        ))
+        def unrelated(*args, **kwargs):
+            return {"relevant": False, "tags": [], "evidence": [],
+                    "uncertain": False}
+        result = analyze_news(plan, BODY, request=unrelated, tags_only=True)
+        self.assertIsNone(result.relevant)
+        self.assertTrue(result.review_required)
+        self.assertIn("industrial_plan_requires_editorial_review", result.warnings)
+        self.assertEqual(result.tags, [])
+
+    def test_planned_production_with_source_evidence_keeps_tags_and_review(self):
+        plan = "Компания планирует запустить производство новых двигателей"
+        def confirmed(*args, **kwargs):
+            return {"relevant": True, "tags": ["машиностроение"],
+                    "evidence": EVIDENCE, "uncertain": False}
+        result = analyze_news(plan, BODY, request=confirmed, tags_only=True)
+        self.assertTrue(result.relevant)
+        self.assertEqual(result.tags, ["машиностроение"])
+        self.assertIn("model_uncertain", result.warnings)
         self.assertTrue(result.review_required)
 
     def test_bad_quote_retry_does_not_silently_approve(self):

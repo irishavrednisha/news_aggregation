@@ -25,6 +25,21 @@ def main():
         "--source", action="append", default=None,
         help="Имя источника из базы (можно указать несколько раз)"
     )
+    parser.add_argument(
+        "--exclude-source", action="append", default=[],
+        help="Не проверять указанный источник в этом локальном тесте; "
+             "запись Source в БД не изменяется (можно повторять)",
+    )
+    parser.add_argument(
+        "--include-inactive", action="store_true",
+        help="Включить в тест ВСЕ источники, уже записанные в PostgreSQL, "
+             "в том числе is_active=False; не менять флаги в БД",
+    )
+    parser.add_argument(
+        "--no-filters", action="store_true",
+        help="Только технический сбор и извлечение полного текста: "
+             "не применять тематические фильтры (apply_filters=False)",
+    )
     parser.add_argument("--limit", type=int, default=5, help="Лимит на источник")
     parser.add_argument("--dump-html", action="store_true", help="Сохранить HTML неудачных источников в ZIP")
     parser.add_argument(
@@ -45,24 +60,43 @@ def main():
 
     session = get_session()
     try:
-        query = session.query(Source).filter(Source.is_active.is_(True))
+        configured_count = session.query(Source).count()
+        active_count = session.query(Source).filter(Source.is_active.is_(True)).count()
+        query = session.query(Source)
+        if not args.include_inactive:
+            query = query.filter(Source.is_active.is_(True))
         if args.source:
             query = query.filter(Source.name.in_(args.source))
+        if args.exclude_source:
+            query = query.filter(Source.name.notin_(args.exclude_source))
+        selected = query.order_by(Source.id).all()
+        inactive_selected = [s.name for s in selected if not s.is_active]
         sources = [
             SimpleNamespace(
                 name=s.name,
                 url=s.url,
                 rss_url=s.rss_url,
                 source_type=s.source_type,
+                is_active=bool(s.is_active),
             )
-            for s in query.all()
+            for s in selected
         ]
     finally:
         session.close()
 
+    print(
+        f"Источников в БД: {configured_count}; активных: {active_count}; "
+        f"выбрано для теста: {len(sources)}"
+    )
+    if inactive_selected:
+        print("Временно добавлены неактивные источники: "
+              + ", ".join(inactive_selected))
     if not sources:
-        print("Нет активных источников для проверки.")
+        print("Источников для проверки не найдено.")
         return
+    if args.no_filters:
+        print("РЕЖИМ БЕЗ ФИЛЬТРАЦИИ: сбор полных статей для диагностики; "
+              "автопубликация и запись в БД не выполняются.")
 
     # Никакой сессии для collect_news: он не проверяет и не пишет URL в БД.
     diagnostics = {}
@@ -72,6 +106,7 @@ def main():
         session=None,
         diagnostics=diagnostics,
         allow_unverified_tls=args.allow_unverified_tls,
+        apply_filters=not args.no_filters,
     )
 
     OUTPUT_DIR.mkdir(exist_ok=True)
@@ -102,6 +137,11 @@ def main():
         json.dump({
             "collected_at": datetime.now().isoformat(),
             "source_limits": args.limit,
+            "include_inactive": args.include_inactive,
+            "filters_applied": not args.no_filters,
+            "configured_source_count": configured_count,
+            "active_source_count": active_count,
+            "inactive_sources_in_test": inactive_selected,
             "sources": [s.name for s in sources],
             "counts": counts,
             "diagnostics": diagnostics,

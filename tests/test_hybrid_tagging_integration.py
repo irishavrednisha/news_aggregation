@@ -82,6 +82,32 @@ class HybridTaggerIntegrationTests(unittest.TestCase):
         self.assertEqual(cluster.tags, "судостроение")
         self.assertEqual(cluster.status, "ready")
 
+    def test_gemma_review_status_survives_legacy_tagging(self):
+        ns = load_tag_cluster()
+        cluster, session = mock_cluster(
+            ns, "Завод выпустил новый станок", "Предприятие запустило линию.",
+            [{"tag": "машиностроение", "final_score": 0.6}],
+            ["машиностроение"],
+        )
+        cluster.status = "review_required"
+        with patch.dict(os.environ, {"NEWS_TAGGER_BACKEND": "legacy"}):
+            selected = ns["tag_cluster"](session, 17, debug=False)
+        self.assertEqual(selected, ["машиностроение"])
+        self.assertEqual(cluster.status, "review_required")
+        self.assertEqual(cluster.tags, "машиностроение")
+
+    def test_gemma_review_status_survives_hybrid_tagging(self):
+        ns = load_tag_cluster()
+        cluster, session = mock_cluster(
+            ns, "Завод выпустил новый станок", "Предприятие запустило линию.",
+            [{"tag": "машиностроение", "final_score": 0.6}],
+            ["машиностроение"],
+        )
+        cluster.status = "review_required"
+        with patch.dict(os.environ, {"NEWS_TAGGER_BACKEND": "hybrid"}):
+            ns["tag_cluster"](session, 17, debug=False)
+        self.assertEqual(cluster.status, "review_required")
+
     def test_hybrid_keeps_genuine_aircraft_manufacturing(self):
         ns = load_tag_cluster()
         ranked = [

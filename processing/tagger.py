@@ -1645,6 +1645,8 @@ def tag_cluster(
     if not cluster:
         return []
 
+    review_pending = cluster.status == "review_required"
+
     if not cluster.summary_text or not cluster.summary_text.strip():
         cluster.tags = None
         cluster.status = "not_for_publication"
@@ -1698,7 +1700,7 @@ def tag_cluster(
     # Экспериментальная NLI-классификация: AI оценивает смысл
     # заголовка + summary и затем независимо 18 тематик.
     # Без подтверждённых тегов публикации нет.
-    backend = os.getenv("NEWS_TAGGER_BACKEND", "legacy").strip().lower()
+    backend = os.getenv("NEWS_TAGGER_BACKEND", "grounded").strip().lower()
     if backend == "nli":
         from processing.ai_tagger import predict_tags
         try:
@@ -1724,14 +1726,17 @@ def tag_cluster(
             # нерелевантности. Оставляем кластер новым для повтора
             # и ни в коем случае не переводим его в ready.
             cluster.tags = None
-            cluster.status = "new"
+            cluster.status = "review_required" if review_pending else "new"
             session.commit()
             print(f"AI-тегирование кластера #{cluster.id} не выполнено: "
                   f"{type(exc).__name__}: {exc}")
             return []
 
         cluster.tags = ", ".join(prediction.tags) if prediction.tags else None
-        cluster.status = "ready" if prediction.tags else "not_for_publication"
+        from processing.summary_pipeline import tagged_summary_status
+        cluster.status = tagged_summary_status(
+            prediction.tags, review_pending=review_pending
+        )
         session.commit()
         if debug:
             print("-" * 100)
@@ -1743,8 +1748,8 @@ def tag_cluster(
                 print(f"  {tag}: {score:.3f}")
         return prediction.tags
 
-    if backend not in ("legacy", "hybrid"):
-        raise ValueError("NEWS_TAGGER_BACKEND должен быть legacy, hybrid или nli")
+    if backend not in ("legacy", "hybrid", "grounded"):
+        raise ValueError("NEWS_TAGGER_BACKEND должен быть grounded, legacy, hybrid или nli")
 
     text = get_cluster_text_for_tagging(session, cluster)
 
@@ -1764,6 +1769,40 @@ def tag_cluster(
             print("Причина: стоп-слова нерелевантной темы")
 
         return []
+
+    # Grounded is the default and must work fully offline even when the
+    # Sentence-BERT checkpoint is missing. Other backends remain unchanged.
+    # The same pure selector is used by scripts.check_grounded_tagging.
+    if backend == "grounded":
+        from processing.grounded_tagger import select_tags
+        decision = select_tags(
+            cluster.title or "",
+            cluster.summary_text or "",
+            text=text,
+            max_tags=max_tags,
+        )
+        selected_tags = list(decision.tags)
+        cluster.tags = ", ".join(selected_tags) if selected_tags else None
+        if decision.outcome == "tagged":
+            from processing.summary_pipeline import tagged_summary_status
+            cluster.status = tagged_summary_status(
+                selected_tags, review_pending=review_pending
+            )
+        elif decision.outcome == "review":
+            # Ambiguous news is not spam and should not be misclassified
+            # as not_for_publication. Hold it for an explicit manual review.
+            cluster.status = "review_required" if review_pending else "tagging_review"
+        else:
+            cluster.status = "not_for_publication"
+        session.commit()
+        if debug:
+            print(
+                f"Grounded #{cluster.id}: {cluster.status}; "
+                f"{decision.reason}; tags={cluster.tags or 'нет'}"
+            )
+            if decision.evidence:
+                print("Основания:", "; ".join(decision.evidence))
+        return selected_tags
 
     focus_text = f"{cluster.title or ''}\n{cluster.summary_text or ''}"
     scored_tags = score_tags_detailed(text, focus_text=focus_text)
@@ -1803,12 +1842,11 @@ def tag_cluster(
 
     # Проверка связи с РФ уже выполнена выше и завершает функцию.
     # Не перезаписываем статус повторным блоком.
-    if selected_tags:
-        cluster.tags = ", ".join(selected_tags)
-        cluster.status = "ready"
-    else:
-        cluster.tags = None
-        cluster.status = "not_for_publication"
+    from processing.summary_pipeline import tagged_summary_status
+    cluster.tags = ", ".join(selected_tags) if selected_tags else None
+    cluster.status = tagged_summary_status(
+        selected_tags, review_pending=review_pending
+    )
 
     session.commit()
 
@@ -1848,7 +1886,7 @@ def tag_new_clusters(
         session.query(Cluster)
         .filter(Cluster.summary_text.isnot(None))
         .filter(Cluster.tags.is_(None))
-        .filter(Cluster.status == "new")
+        .filter(Cluster.status.in_(("new", "review_required")))
         .all()
     )
 

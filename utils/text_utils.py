@@ -173,8 +173,8 @@ def remove_contacts_and_service_text(text: str) -> str:
     text = re.sub(r"\bwww\.[^\s]+", " ", text)
     text = re.sub(r"\bhttps?://[^\s]+", " ", text)
 
-    text = re.sub(r"\b\d+\s*тел\.?:?", " ", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bтел\.?:?", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b\d+\s*тел\b\.?:?", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bтел\b\.?:?", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"\be-mail:?", " ", text, flags=re.IGNORECASE)
 
     return re.sub(r"\s+", " ", text).strip()

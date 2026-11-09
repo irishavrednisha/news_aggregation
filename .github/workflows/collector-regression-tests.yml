@@ -22,7 +22,7 @@ jobs:
           python -m pip install beautifulsoup4 requests feedparser playwright sqlalchemy psycopg2-binary python-dotenv
       - name: Compile source files
         run: |
-          python -m py_compile collectors/data_collector.py processing/topic_filter.py processing/tagger.py processing/ai_tagger.py publishing/publisher.py tests/test_ai_tagger.py tests/test_ai_tagging_audit.py check_ai_tagging.py tests/test_topic_filter.py tests/test_tagging_filter_contract.py tests/test_collector_regressions.py tests/test_text_extraction_all_sources.py tests/test_reactivated_sources.py check_news_collection.py check_news_filter.py compare_ai_tagging.py tests/test_compare_ai_tagging.py tests/test_focused_tagging.py check_focused_tagging.py tests/test_tagging_evaluation.py evaluate_tagging.py tests/test_tagging_event_guard.py processing/tagging_event_guard.py tests/test_tag_role_challenger.py processing/tag_role_challenger.py check_tag_role_challenger.py tests/test_hybrid_tagging_integration.py tests/test_synthetic_tagging_data.py processing/local_news_llm.py check_local_news_llm.py scripts/build_news_sft.py scripts/train_news_lora.py scripts/generate_news_training_synthetic.py tests/test_local_news_llm.py tests/test_news_sft_data.py scripts/real_news_review.py tests/test_real_news_review.py
+          python -m py_compile collectors/data_collector.py processing/topic_filter.py processing/tagger.py processing/grounded_tagger.py tests/test_grounded_tagger.py tests/test_grounded_real_news_regressions.py scripts/check_grounded_tagging.py tests/test_grounded_tagging_audit.py processing/ai_tagger.py publishing/publisher.py tests/test_ai_tagger.py tests/test_ai_tagging_audit.py check_ai_tagging.py tests/test_topic_filter.py scripts/audit_processing.py tests/test_audit_processing.py scripts/select_processing_batch.py tests/test_select_processing_batch.py scripts/compare_model_audits.py tests/test_compare_model_audits.py tests/test_tagging_filter_contract.py tests/test_collector_regressions.py tests/test_text_extraction_all_sources.py tests/test_reactivated_sources.py check_news_collection.py check_news_filter.py compare_ai_tagging.py tests/test_compare_ai_tagging.py tests/test_focused_tagging.py check_focused_tagging.py tests/test_tagging_evaluation.py evaluate_tagging.py tests/test_tagging_event_guard.py processing/tagging_event_guard.py tests/test_tag_role_challenger.py processing/tag_role_challenger.py check_tag_role_challenger.py tests/test_hybrid_tagging_integration.py tests/test_synthetic_tagging_data.py processing/local_news_llm.py check_local_news_llm.py scripts/build_news_sft.py scripts/train_news_lora.py scripts/generate_news_training_synthetic.py tests/test_local_news_llm.py tests/test_news_sft_data.py scripts/real_news_review.py tests/test_real_news_review.py processing/summarizer.py processing/summary_pipeline.py processing/extractive_rewriter.py scripts/review_gemma_summary.py tests/test_summary_pipeline.py tests/test_extractive_rewriter.py tests/test_summary_sentence_boundaries.py tests/test_text_utils_telephone_prefix.py tests/test_summary_context_guard.py
       - name: Run collector regression tests
         run: python -m unittest discover -s tests -p 'test_collector_regressions.py' -v
       - name: Run checks for eight reactivated sources
@@ -31,6 +31,12 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_text_extraction_all_sources.py' -v
       - name: Run industrial news filter regression tests
         run: python -m unittest discover -s tests -p 'test_topic_filter.py' -v
+      - name: Audit raw real-news processing without database or models
+        run: python -m unittest discover -s tests -p 'test_audit_processing.py' -v
+      - name: Test mixed Qwen SBERT diagnostic batch
+        run: python -m unittest discover -s tests -p 'test_select_processing_batch.py' -v
+      - name: Test Qwen/SBERT comparison review queue
+        run: python -m unittest discover -s tests -p 'test_compare_model_audits.py' -v
       - name: Run tagger filtering contract tests without ML dependencies
         run: python -m unittest discover -s tests -p 'test_tagging_filter_contract.py' -v
       - name: Run focused SBERT tagging scorer offline tests
@@ -61,6 +67,20 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_news_lora_tagging_only.py' -v
       - name: Test conservative extractive-to-paraphrase rewrite offline
         run: python -m unittest discover -s tests -p 'test_extractive_rewriter.py' -v
+      - name: Test Gemma summary pipeline review gate and fallback without Ollama
+        run: python -m unittest discover -s tests -p 'test_summary_pipeline.py' -v
+      - name: Verify TextRank abbreviation boundary handling without ML dependencies
+        run: python -m unittest discover -s tests -p 'test_summary_sentence_boundaries.py' -v
+      - name: Verify contact cleanup keeps television words
+        run: python -m unittest discover -s tests -p 'test_text_utils_telephone_prefix.py' -v
+      - name: Verify TextRank rejects contextless source sentences
+        run: python -m unittest discover -s tests -p 'test_summary_context_guard.py' -v
+      - name: Test deterministic grounded industry tags
+        run: python -m unittest discover -s tests -p 'test_grounded_tagger.py' -v
+      - name: Test grounded tagging against real event examples
+        run: python -m unittest discover -s tests -p 'test_grounded_real_news_regressions.py' -v
+      - name: Test read-only grounded news audit
+        run: python -m unittest discover -s tests -p 'test_grounded_tagging_audit.py' -v
       - name: Run AI zero-shot tagging contract tests without model download
         run: python -m unittest discover -s tests -p 'test_ai_tagger.py' -v
       - name: Run AI audit summary parity tests without model download

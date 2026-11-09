@@ -72,6 +72,18 @@ OFFTOPIC_TITLE_RULES = (
                          r"заседание\s+правления\s+палаты)\b"),
     ("consumer_prices", r"\b(?:цен[аы]?|рост(?:ом|а|у)?\s+цен)\s+на\s+(?:красную\s+)?икру\b"),
 
+    # Прямые признаки бытового происшествия, режима аэропортов и
+    # потребительской повестки. Не блокируем слова "аэропорт",
+    # "обучение", "автобус" или "кредит" сами по себе: важен тип события.
+    ("traffic_incident", r"\bдтп\b.{0,110}\b(?:скорой|пострадал\w*|авари\w*)\b"),
+    ("airport_operations", r"\bаэропорт\w*\b.{0,110}\b(?:приостановил\w*\s+работ\w*|принимает\s+и\s+отправляет\s+рейсы)\b"),
+    ("personal_crime", r"\b(?:сексуальн\w*\s+преступлен\w*|криминалист\w*|деморализаци\w*\s+всу)\b"),
+    ("consumer_finance", r"\b(?:выдача\s+ипотек\w*|портфел\w+\s+автокредит\w*|грант\w*\s+на\s+свадьб\w*)\b"),
+    ("consumer_rights", r"\b(?:вернуть\s+товар\s+с\s+распродаж\w*|обменять\s+или\s+вернуть\s+товар\w*)\b"),
+    ("nonindustrial_cultural_event", r"\b(?:праздничн\w*\s+акци\w*|мультсериал\w*|историческ\w*\s+драм\w*|(?:прошл[ао]|состоял[ась]+)\s+юбилейн\w*\s+конференци\w*)\b"),
+    ("nonindustrial_publicity_event", r"\b(?:пройдет.{0,110}бизнес[\s-]*диалог|планшетн\w*\s+выставк\w*|олимпиад\w*\s+по\s+судостроени\w*)\b"),
+
+
 )
 
 # Не фильтруем по слову «Китай» в середине статьи о «Норникеле».
@@ -85,6 +97,14 @@ FOREIGN_LEAD_TITLE = re.compile(
 # Явно зарубежные действующие лица в заголовке. Учитываем
 # только отсутствие российской связи во вступлении — обычные
 # упоминания иностранных стран внутри статьи не запрещены.
+# Явная зарубежная локация/иностранный разработчик: применяется
+# ТОЛЬКО вместе с проверкой на российскую связь во вступлении.
+# Иностранные проекты российских компаний должны сохраниться.
+FOREIGN_EXPLICIT_LOCATION_OR_ACTOR = re.compile(
+    r"(?:^в\s+южной\s+корее\b|^naval\s+group\b|^saab\b|"
+    r"\bв\s+ираке\b)",
+    re.IGNORECASE,
+)
 FOREIGN_TITLE_ACTOR = re.compile(
     r"^(?:хусит\w*|финлянд\w*|саудовск\w*|израил\w*|"
     r"иран\w*|турц\w*|япон\w*|герман\w*|китай\w*|"
@@ -202,7 +222,9 @@ def classify_article(
     if off_topic is not None:
         return FilterDecision(False, "offtopic_" + off_topic)
 
-    if FOREIGN_LEAD_TITLE.search(normalized_title) or FOREIGN_TITLE_ACTOR.search(normalized_title):
+    if (FOREIGN_LEAD_TITLE.search(normalized_title)
+            or FOREIGN_TITLE_ACTOR.search(normalized_title)
+            or FOREIGN_EXPLICIT_LOCATION_OR_ACTOR.search(normalized_title)):
         context = normalize(title + " " + text[:650])
         if not RUSSIA_CONTEXT.search(context):
             return FilterDecision(False, "foreign_without_russian_connection")

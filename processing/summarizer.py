@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
+import os
 import re
 import networkx as nx
 
@@ -59,6 +60,14 @@ BAD_STARTS = [
     "после этого",
     "до этого",
     "в результате этого",
+    # Deictic phrases require context which TextRank may omit.
+    "мы",
+    "я",
+    "и это",
+    "а мы",
+    "отметим",
+    "а на следующий год",
+    "на следующий год",
 ]
 BAD_CONTEXT_PHRASES = [
     "именно тогда",
@@ -74,6 +83,9 @@ BAD_CONTEXT_PHRASES = [
     "рассказал",
     "рассказала",
     "рассказали",
+    "по ней",
+    "буквально вчера",
+    "а мы тут",
 ]
 FACT_WORDS = [
     "запустил", "запустила", "запустили",
@@ -115,6 +127,8 @@ def split_into_sentences(text: str) -> list[str]:
         "руб.": "руб<dot>",
         "млн.": "млн<dot>",
         "млрд.": "млрд<dot>",
+        "тыс.": "тыс<dot>",
+        "кв.": "кв<dot>",
     }
 
     for old, new in abbreviations.items():
@@ -186,7 +200,7 @@ def is_bad_summary_sentence(sentence: str) -> bool:
         "данный ", "данная ", "данные ",
     ]
 
-    if any(key.startswith(start.strip()) for start in bad_pronoun_starts):
+    if any(key == start.strip() or key.startswith(start) for start in bad_pronoun_starts):
         return True
 
     return False
@@ -253,8 +267,9 @@ def remove_title_like_sentences(sentences: list[str], title: str | None) -> list
 def starts_badly(sentence: str) -> bool:
     key = normalize_sentence_key(sentence)
 
+    # Match whole opening words: "он" must not accidentally block "онлайн".
     return any(
-        key.startswith(start)
+        key == start or key.startswith(start + " ")
         for start in BAD_STARTS
     )
 
@@ -381,8 +396,11 @@ def build_textrank_summary(
 
     # Если фильтр оказался слишком строгим, возвращаемся к исходным,
     # но всё равно не берём совсем плохие короткие куски.
-    if good_sentences:
-        sentences = good_sentences
+    # If every sentence needs missing context, do not manufacture a
+    # 'self-contained' summary by falling back to unsuitable snippets.
+    if not good_sentences:
+        return ""
+    sentences = good_sentences
 
     if len(sentences) == 1:
         return limit_summary(sentences[0], max_chars=max_chars)
@@ -575,7 +593,9 @@ def summarize_cluster(
     session,
     cluster_id: int,
     sentence_count: int = 4,
-    max_chars: int = 800
+    max_chars: int = 800,
+    backend: str | None = None,
+    model: str | None = None,
 ) -> str:
     cluster = session.query(Cluster).filter(Cluster.id == cluster_id).first()
 
@@ -591,19 +611,38 @@ def summarize_cluster(
 
     cluster_title = generate_cluster_title(session, cluster_id)
 
-    summary = build_textrank_summary(
+    # TextRank selects source sentences; Gemma only rephrases them.
+    from processing.summary_pipeline import rewrite_summary_draft
+
+    extractive = build_textrank_summary(
         text=text,
         title=cluster_title,
         sentence_count=sentence_count,
         max_chars=max_chars
     )
+    selected_backend = backend or os.getenv("NEWS_SUMMARY_BACKEND", "gemma")
+    selected_model = model or os.getenv("NEWS_GEMMA_MODEL", "gemma3:4b")
+    rewrite_mode = os.getenv("NEWS_GEMMA_REWRITE_MODE", "whole")
+    draft = rewrite_summary_draft(
+        extractive, backend=selected_backend, model=selected_model,
+        rewrite_mode=rewrite_mode,
+    )
+    if cluster.status == "published":
+        raise ValueError(f"Нельзя пересуммаризировать опубликованный кластер #{cluster_id}")
 
     cluster.title = cluster_title
-    cluster.summary_text = summary
-
+    cluster.summary_text = draft.text or None
+    # Old tags may describe a different summary and need recalculation.
+    cluster.tags = None
+    if cluster.status != "not_for_publication":
+        cluster.status = "review_required" if draft.review_required else "new"
     session.commit()
 
-    return summary
+    if draft.warnings:
+        print(f"Кластер #{cluster_id}: Gemma — {', '.join(draft.warnings)}")
+    if draft.review_required:
+        print(f"Кластер #{cluster_id}: ручная проверка обязательна перед MAX")
+    return draft.text
 
 
 def summarize_new_clusters(
@@ -638,9 +677,13 @@ def resummarize_all_clusters(
     sentence_count: int = 4,
     max_chars: int = 800
 ):
-    clusters = session.query(Cluster).all()
+    clusters = (
+        session.query(Cluster)
+        .filter(Cluster.status != "published")
+        .all()
+    )
 
-    print(f"Кластеров для пересуммаризации: {len(clusters)}")
+    print(f"Неопубликованных кластеров для пересуммаризации: {len(clusters)}")
 
     for cluster in clusters:
         summarize_cluster(
