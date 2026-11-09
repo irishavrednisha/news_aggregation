@@ -40,7 +40,6 @@ class GroundedTaggerTests(unittest.TestCase):
 
     def test_irrelevant_even_with_extreme_sbert_scores(self):
         cases = [
-            'Naval Group представила концепт эсминца с 96 ячейками для ракет',
             'Финляндия поставит донные мины для датского флота',
             'Производители лазеров для радиэлектронной отрасли заплатят пониженные страховые взносы',
             'Золотодобытчиков могут обязать создавать фонды для рекультивации земель',
@@ -96,6 +95,13 @@ class GroundedTaggerTests(unittest.TestCase):
         )
         self.assertEqual(result.outcome, "tagged")
         self.assertIn("судостроение", result.tags)
+
+    def test_foreign_shipbuilding_has_industry_regardless_of_geography(self):
+        decision = select_tags(
+            "Naval Group представила концепт эсминца с 96 ячейками для ракет"
+        )
+        self.assertEqual(decision.outcome, "tagged")
+        self.assertIn("судостроение", decision.tags)
 
     def test_generic_industrial_factory_without_sector_is_tagged(self):
         result = select_tags("В Челябинске запустили новую линию производства деталей")
