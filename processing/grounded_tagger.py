@@ -366,7 +366,7 @@ def _contextual_evidence(
             if source == "text":
                 # Only a sentence related to the actual main event is
                 # eligible, even if it is in the middle/end of the article.
-                if not action or (overlap < 1 and not early):
+                if not action or overlap < 1:
                     continue
             elif not action and not early:
                 continue
