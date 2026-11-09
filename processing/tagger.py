@@ -1556,7 +1556,7 @@ def cut_text(text: str, max_chars: int) -> str:
     return text[:max_chars].strip()
 
 
-def get_cluster_text_for_tagging(session, cluster: Cluster) -> str:
+def get_cluster_text_for_tagging(session, cluster: Cluster, *, full_text: bool = False) -> str:
     """Текст для тэгов: один заголовок, одно summary и реальные статьи.
 
     Первые две строки — опорный контекст для score_tags_detailed().
@@ -1577,6 +1577,13 @@ def get_cluster_text_for_tagging(session, cluster: Cluster) -> str:
         )
         .all()
     )
+    if full_text:
+        # Contextual grounded classifier needs the actual source articles,
+        # not the 2200-character extract used by the legacy SBERT backend.
+        return "\n\n".join(
+            str(news.text) for news in news_items[:3] if news.text
+        )
+
     for index, news in enumerate(news_items[:5]):
         if news.title:
             parts.append(cut_text(news.title, 250))
@@ -1651,7 +1658,11 @@ def tag_cluster(
         session.commit()
         return []
 
-    if is_not_related_to_russia(session, cluster, debug=debug):
+    backend = os.getenv("NEWS_TAGGER_BACKEND", "grounded").strip().lower()
+
+    # Geographical relevance is independent of industry tagging.
+    # Preserve old semantics only for explicitly selected legacy backends.
+    if backend != "grounded" and is_not_related_to_russia(session, cluster, debug=debug):
         cluster.tags = None
         cluster.status = "not_for_publication"
         session.commit()
@@ -1686,7 +1697,7 @@ def tag_cluster(
     # новости не удаляются, этап сбора не меняется.
     from processing.tagging_event_guard import nonindustrial_event_reason
     event_reason = nonindustrial_event_reason(cluster.title or "")
-    if event_reason:
+    if event_reason and backend != "grounded":
         cluster.tags = None
         cluster.status = "not_for_publication"
         session.commit()
@@ -1698,7 +1709,6 @@ def tag_cluster(
     # Экспериментальная NLI-классификация: AI оценивает смысл
     # заголовка + summary и затем независимо 18 тематик.
     # Без подтверждённых тегов публикации нет.
-    backend = os.getenv("NEWS_TAGGER_BACKEND", "grounded").strip().lower()
     if backend == "nli":
         from processing.ai_tagger import predict_tags
         try:
@@ -1746,12 +1756,14 @@ def tag_cluster(
     if backend not in ("legacy", "hybrid", "grounded"):
         raise ValueError("NEWS_TAGGER_BACKEND должен быть grounded, legacy, hybrid или nli")
 
-    text = get_cluster_text_for_tagging(session, cluster)
+    text = get_cluster_text_for_tagging(
+        session, cluster, full_text=(backend == "grounded")
+    )
 
     # Не ищем стоп-слова во всём тексте кластера. Техническая
     # новость может упоминать выставку, музей, акционеров или вакансии.
     # Явно непрофильные заголовки уже проверяет общий фильтр.
-    if is_not_publication_by_keywords(cluster.title or ""):
+    if backend != "grounded" and is_not_publication_by_keywords(cluster.title or ""):
         cluster.tags = None
         cluster.status = "not_for_publication"
         session.commit()
