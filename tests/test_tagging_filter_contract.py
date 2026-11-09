@@ -66,6 +66,37 @@ class TaggerFilteringContractTests(unittest.TestCase):
         self.assertEqual(cluster.tags, "машиностроение")
         ns["score_tags_detailed"].assert_called_once()
 
+    def test_grounded_tagging_abstains_instead_of_guessing_by_embedding(self):
+        ns, cluster, session = self.prepare(
+            "Сталь не вывозит", "Компания рассказала о проблемах с экспортом."
+        )
+        selected = ns["tag_cluster"](session, 1, debug=False)
+        self.assertEqual(selected, [])
+        self.assertEqual(cluster.tags, None)
+        self.assertEqual(cluster.status, "tagging_review")
+        ns["score_tags_detailed"].assert_called_once()
+
+    def test_grounded_tagging_survives_sbert_inference_failure(self):
+        ns, cluster, session = self.prepare(
+            "Тюменский завод ЖБИ восстанавливает работу после паводка",
+            "Восстанавливается производство железобетонных изделий."
+        )
+        ns["score_tags_detailed"].side_effect = RuntimeError("SBERT offline")
+        self.assertEqual(ns["tag_cluster"](session, 1, debug=False), ["заводы"])
+        self.assertEqual(cluster.status, "ready")
+        self.assertEqual(cluster.tags, "заводы")
+        session.commit.assert_called_once()
+
+    def test_grounded_keeps_gemma_manual_review_gate(self):
+        ns, cluster, session = self.prepare(
+            "Завод запустил производство новых станков",
+            "Новое оборудование предназначено для обработки металла."
+        )
+        cluster.status = "review_required"
+        selected = ns["tag_cluster"](session, 1, debug=False)
+        self.assertTrue(selected)
+        self.assertEqual(cluster.status, "review_required")
+
     def test_corporate_pr_title_filtered_in_tagger(self):
         ns, cluster, session = self.prepare(
             "Социальная деятельность компании отмечена престижными наградами",
