@@ -89,6 +89,37 @@ class ModelComparisonTests(unittest.TestCase):
             with self.subTest(case=case), self.assertRaises(ValueError):
                 compare(s, h, q, b)
 
+    def test_old_positive_new_negative_is_high_priority_even_when_sbert_empty(self):
+        # Regression discovered on a real factory-restoration article:
+        # both current Qwen and SBERT say no, but Qwen previously said yes.
+        s, h, q, batch = data()
+        previous_q = {"tags_only": True, "results": [
+            dict(row) for row in q["results"]
+        ]}
+        # URL /4 is already negative with no SBERT tags.
+        previous_q["results"][3]["relevant"] = True
+        previous_q["results"][3]["tags"] = ["заводы"]
+        prev_h = {"tagger_mode": "hybrid", "results": [
+            dict(row) for row in h["results"]
+        ]}
+        prev_h["results"][2]["tags"] = []
+        report = compare(s, h, q, batch, previous_qwen=previous_q,
+                         previous_hybrid=prev_h)
+        row = next(r for r in report["results"]
+                   if r["url"] == "https://example.org/4")
+        self.assertEqual(row["priority"], "high")
+        self.assertIn("qwen_relevance_changed_between_runs", row["reasons"])
+        self.assertEqual(row["previous_qwen_relevant"], True)
+        self.assertEqual(row["qwen_relevant"], False)
+        self.assertEqual(report["summary"]["qwen_relevance_changed_between_runs"], 1)
+        self.assertEqual(report["summary"]["hybrid_changed_between_runs"], 1)
+
+    def test_previous_files_must_cover_same_urls(self):
+        s, h, q, b = data()
+        previous = {"tags_only": True, "results": q["results"][:-1]}
+        with self.assertRaisesRegex(ValueError, "другой набор URL"):
+            compare(s, h, q, b, previous_qwen=previous)
+
     def test_unresolved_is_not_negative_and_csv_is_editable(self):
         report = compare(*data())
         with tempfile.TemporaryDirectory() as directory:
