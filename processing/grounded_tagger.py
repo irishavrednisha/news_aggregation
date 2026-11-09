@@ -44,7 +44,8 @@ STRONG_EVENT = rx(
     r"стартовал\w*|стартовало|стартовали|вышл\w*\s+в\s+серию|"
     r"вывел\w*\s+на\s+(?:обкатк\w*|рынок)|"
     r"установил\w*|оснастил\w*|"
-    r"откр\w*|переработ\w*|вывод\w*\s+на\s+рынок)\b"
+    r"откр\w*|переработ\w*|вывод\w*\s+на\s+рынок|"
+    r"представил\w*|презентовал\w*)\b"
 )
 
 # These are main-event exclusions, not bans on mentioning the words in a
@@ -208,7 +209,8 @@ CATEGORY = (
      r"ии\s+созда\w*|цифров\w*\s+технолог\w*|"
      r"видеоаналитик\w*|компьютерн\w*\s+зрен\w*|"
      r"3d-сканер\w*|3d-печат\w*|"
-     r"цифров\w*\s+планировани\w*|автоматизаци\w*|алгоритм\w*)\b"),
+     r"цифров\w*\s+планировани\w*|ии-лаборатор\w*|"
+     r"автоматизаци\w*|алгоритм\w*)\b"),
     ("инжиниринг",
      r"\b(?:инжиниринг\w*|инженерн\w*\s+"
      r"(?:проект\w*|разработк\w*)|проектировани\w*|"
@@ -233,6 +235,31 @@ FACTORY_LAUNCH = rx(
     r"постро\w*|откр\w*)\b.{0,80}"
     r"\b(?:завод\w*|фабрик\w*|предприяти\w*)\b"
 )
+
+
+# A title naming an industrial firm is not necessarily about industry.
+# These main events concern governance, workforce, consumer sales,
+# drug approvals, commentary or explanatory how-to content.
+NOT_PRODUCTION_EVENT = rx(
+    r"\b(?:внешн\w*\s+управлени\w*|"
+    r"временн\w*\s+управлени\w*|"
+    r"передан\w*\s+во\s+временн\w*\s+управлени\w*|"
+    r"разговор\s+о\s+главн\w*|"
+    r"профсоюз\w*|судпроф\b|"
+    r"управлени\w*\s+результативност\w*|"
+    r"кадров\w*\s+политик\w*|"
+    r"экспертиз\w*\s+в\s+управлени\w*|"
+    r"одобрил\w*.{0,85}(?:лечени\w*|препарат\w*)|"
+    r"препарат\w*.{0,85}одобрил\w*|"
+    r"закрепил\w*\s+барьер\w*|"
+    r"экспортн\w*\s+квот\w*|"
+    r"для\s+меня\b.{0,70}дело\s+жизни|"
+    r"коопераци\w*\s+производител\w*\s+и\s+заказчик\w*|"
+    r"платформ\w*\s+для\s+коопераци\w*|"
+    r"бирж\w*\s+поставщик\w*|"
+    r"управлени\w*\s+актив\w*)\b"
+)
+TITLE_HOWTO = rx(r"(?:^|[:—-]\s*)как\s+(?:замен\w*|созда\w*|выбрат\w*|настро\w*|провер\w*)")
 
 
 def _negative_reason(title: str) -> str | None:
@@ -374,6 +401,16 @@ def _contextual_evidence(
                 match = pattern.search(piece)
                 if not match:
                     continue
+                # A freight "space ship" is not a shipyard product.
+                if (
+                    tag == "судостроение"
+                    and re.search(
+                        r"\b(?:космическ\w*|транспортн\w*\s+корабл\w*)",
+                        piece
+                    )
+                    and not re.search(r"\b(?:морск\w*|речн\w*)", title)
+                ):
+                    continue
                 if tag not in title_hints and has_concrete_title_tag:
                     # Avoid unrelated second sectors from a company's
                     # profile or later paragraphs.
@@ -432,6 +469,10 @@ def select_tags(
     reason = _negative_reason(headline)
     if reason:
         return TagDecision((), "reject", reason)
+    if NOT_PRODUCTION_EVENT.search(headline):
+        return TagDecision((), "review", "nonindustrial_main_event")
+    if TITLE_HOWTO.search(headline):
+        return TagDecision((), "reject", "howto_or_advertisement")
 
     # A proposed industrial investment or signed memorandum is not
     # equivalent to a factory already being built or commissioned.
@@ -459,26 +500,11 @@ def select_tags(
     # a sector from boilerplate even if the company owns factories.
     action_in_title = bool(STRONG_EVENT.search(headline))
     if not action_in_title:
-        first_context = " ".join(
-            _sentences(summary, max_chars=2500)[:2]
-            or _sentences(text, max_chars=1300)[:2]
-        )
-        has_context_event = bool(STRONG_EVENT.search(first_context))
-        related = bool(_topic_stems(headline) & _topic_stems(first_context))
-        if not (has_context_event and related):
-            return TagDecision((), "review", "no_industrial_event")
-        # Do not label a pure transport/use headline as aircraft
-        # manufacturing just because a drone is mentioned in the article.
-        if re.search(
-            r"\b(?:дрон\w*|беспилотник\w*).{0,45}"
-            r"(?:следят|наблюда\w*|снима\w*|патрулиру\w*)",
-            headline,
-        ) and not re.search(
-            r"\b(?:разработан\w*|нов\w*\s+комплекс\w*|"
-            r"создан\w*\s+комплекс\w*)\b",
-            first_context,
-        ):
-            return TagDecision((), "review", "drone_operation_not_manufacturing")
+        # A production claim in a company biography, interview, export
+        # restriction, etc. must not turn that unrelated title into a
+        # manufacturing story. Full text can clarify an industrial event,
+        # but cannot manufacture one that the headline never asserts.
+        return TagDecision((), "review", "no_industrial_event")
 
     votes = _contextual_evidence(
         headline, summary, text, title_hints=title_hints
@@ -501,6 +527,16 @@ def select_tags(
         votes.pop("электротехническое направление", None)
     if re.search(r"\b(?:присад\w*|моторн\w*\s+масл\w*)\b", headline):
         votes.pop("нефтегазовая промышленность", None)
+    # Producing metal *parts for* radio electronics does not itself mean
+    # manufacturing electronic components. A machine USED to automate a
+    # production line is likewise not a newly manufactured machine.
+    if re.search(r"\bдетал\w*\b", headline) and re.search(
+        r"\bдля\s+радиоэлектрон\w*", headline + " " + norm(text)[:800]
+    ):
+        votes.pop("электротехническое направление", None)
+    if re.search(r"\bавтоматиз\w*.{0,50}\bлини\w*", headline):
+        if votes.get("машиностроение", (0, "", ""))[1] != "title":
+            votes.pop("машиностроение", None)
 
     # A "pipeline system" can be water, chemicals, heat, not only oil/gas.
     if re.search(r"\bтрубопровод\w*", headline) and not re.search(
