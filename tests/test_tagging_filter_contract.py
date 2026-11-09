@@ -66,9 +66,7 @@ class TaggerFilteringContractTests(unittest.TestCase):
         self.assertEqual(cluster.tags, "машиностроение")
         ns["score_tags_detailed"].assert_not_called()
         ns["is_not_related_to_russia"].assert_not_called()
-        ns["get_cluster_text_for_tagging"].assert_called_once_with(
-            session, cluster, full_text=True
-        )
+        ns["get_cluster_text_for_tagging"].assert_not_called()
 
     def test_ambiguous_title_stays_out_of_publication(self):
         ns, cluster, session = self.prepare(
@@ -115,22 +113,22 @@ class TaggerFilteringContractTests(unittest.TestCase):
         self.assertEqual(cluster.status, "not_for_publication")
         ns["score_tags_detailed"].assert_not_called()
 
-    def test_full_text_mode_never_uses_legacy_2200_character_cut(self):
-        ns = load_tagger_functions()
-        ns["News"] = Mock()
-        cluster = SimpleNamespace(
-            id=101, title="Производство насосов",
-            summary_text="Специалисты модернизировали производство"
+    def test_summary_drives_tags_without_accessing_source_body(self):
+        ns, cluster, session = self.prepare(
+            "На предприятии модернизировали производственную линию",
+            "На предприятии модернизировали электрические трансформаторы."
         )
-        article = SimpleNamespace(title="Производство", text="Т" * 6000)
-        session = Mock()
-        session.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
-            article
-        ]
-        result = ns["get_cluster_text_for_tagging"](
-            session, cluster, full_text=True
+        ns["get_cluster_text_for_tagging"].side_effect = AssertionError(
+            "grounded must not fetch the source article text"
         )
-        self.assertEqual(result, "Т" * 6000)
+        ns["cluster_has_content"].side_effect = AssertionError(
+            "grounded does not require article text to classify a ready summary"
+        )
+        tags = ns["tag_cluster"](session, 1, debug=False)
+        self.assertEqual(tags[0], "электротехническое направление")
+        self.assertEqual(cluster.status, "ready")
+        ns["get_cluster_text_for_tagging"].assert_not_called()
+        ns["cluster_has_content"].assert_not_called()
 
     def test_missing_summary_does_not_continue_to_tag(self):
         ns, cluster, session = self.prepare(
