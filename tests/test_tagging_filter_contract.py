@@ -65,6 +65,10 @@ class TaggerFilteringContractTests(unittest.TestCase):
         self.assertEqual(cluster.status, "ready")
         self.assertEqual(cluster.tags, "машиностроение")
         ns["score_tags_detailed"].assert_not_called()
+        ns["is_not_related_to_russia"].assert_not_called()
+        ns["get_cluster_text_for_tagging"].assert_called_once_with(
+            session, cluster, full_text=True
+        )
 
     def test_ambiguous_title_stays_out_of_publication(self):
         ns, cluster, session = self.prepare(
@@ -87,6 +91,19 @@ class TaggerFilteringContractTests(unittest.TestCase):
         self.assertEqual(tags, ["заводы"])
         self.assertEqual(cluster.status, "ready")
         ns["score_tags_detailed"].assert_not_called()
+
+    def test_geography_is_not_a_required_tagger_condition(self):
+        ns, cluster, session = self.prepare(
+            "В Южной Корее построили новый корабль",
+            "Построен корабль для исследовательских работ."
+        )
+        ns["is_not_related_to_russia"].side_effect = RuntimeError(
+            "This geographic check must not run in grounded"
+        )
+        selected = ns["tag_cluster"](session, 1, debug=False)
+        self.assertEqual(selected, ["судостроение"])
+        self.assertEqual(cluster.status, "ready")
+        ns["is_not_related_to_russia"].assert_not_called()
 
     def test_corporate_pr_title_filtered_in_tagger(self):
         ns, cluster, session = self.prepare(
