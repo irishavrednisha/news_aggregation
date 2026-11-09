@@ -43,7 +43,7 @@ OFFTOPIC = re.compile(
 FOREIGN = re.compile(
     r"(?:^naval group\b|^saab\b|^финлянди\w*\b|"
     r"^в\s+(?:южной\s+корее|бангладеш|ираке|японии|сша|франции)\b|"
-    r"\bевропейск\w*\s+(?:корвет\w*|эсмин\w*|фрегат\w*)|"
+    r"\bевропейск\w*.{0,55}(?:корвет\w*|эсмин\w*|фрегат\w*)|"
     r"\bдатск\w*\s+флот\w*)"
 )
 RUSSIA_PARTICIPANT = re.compile(
