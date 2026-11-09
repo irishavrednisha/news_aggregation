@@ -64,7 +64,29 @@ class TaggerFilteringContractTests(unittest.TestCase):
         self.assertEqual(selected, ["машиностроение"])
         self.assertEqual(cluster.status, "ready")
         self.assertEqual(cluster.tags, "машиностроение")
-        ns["score_tags_detailed"].assert_called_once()
+        ns["score_tags_detailed"].assert_not_called()
+
+    def test_ambiguous_title_stays_out_of_publication(self):
+        ns, cluster, session = self.prepare(
+            "Сталь не вывозит",
+            "Компания рассказала об изменениях спроса."
+        )
+        tags = ns["tag_cluster"](session, 1, debug=False)
+        self.assertEqual(tags, [])
+        self.assertEqual(cluster.tags, None)
+        self.assertEqual(cluster.status, "tagging_review")
+        ns["score_tags_detailed"].assert_not_called()
+
+    def test_direct_factory_event_does_not_load_sbert(self):
+        ns, cluster, session = self.prepare(
+            "Тюменский завод ЖБИ восстанавливает работу после паводка",
+            "Производство железобетонных изделий восстанавливается."
+        )
+        ns["score_tags_detailed"].side_effect = RuntimeError("SBERT недоступен")
+        tags = ns["tag_cluster"](session, 1, debug=False)
+        self.assertEqual(tags, ["заводы"])
+        self.assertEqual(cluster.status, "ready")
+        ns["score_tags_detailed"].assert_not_called()
 
     def test_corporate_pr_title_filtered_in_tagger(self):
         ns, cluster, session = self.prepare(
