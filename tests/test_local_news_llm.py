@@ -34,6 +34,14 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(len(set(TAGS)), 18)
         self.assertEqual(FACT_FORMAT["properties"]["tags"]["items"]["enum"], list(TAGS))
 
+    def test_prompt_requires_direct_russian_industrial_connection(self):
+        # The diagnostic Qwen classifier must not treat foreign weapons
+        # development as Russian industrial news just because it is technical.
+        self.assertIn("Канал посвящён именно промышленности России", FACT_SYSTEM)
+        self.assertIn("Чисто иностранные промышленные и военные проекты", FACT_SYSTEM)
+        self.assertIn("беспилотники", FACT_SYSTEM)
+        self.assertIn("relevant=false", FACT_SYSTEM)
+
     def test_evidence_must_appear_in_source(self):
         source = source_payload(TITLE, BODY)
         self.assertEqual(validate_evidence(source, EVIDENCE), EVIDENCE)
