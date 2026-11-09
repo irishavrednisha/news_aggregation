@@ -1,7 +1,7 @@
 """Event-grounded industry tagging without LLMs or network calls.
 
-The headline identifies the event and object; the summary and subject-linked
-sentences of the full article provide additional evidence. A company's name and
+The headline identifies the event; the summary is the primary evidence for
+ranking industries. The raw source article is never used for tag selection. A company's name and
 incidental sector mentions never suffice as evidence. SBERT scores may break
 ties among supported categories, but never create a category on their own.
 
@@ -321,8 +321,8 @@ def _evidence(title: str, lead: str) -> dict[str, tuple[str, str]]:
     return supported
 
 
-# Words used to match a contextual sentence to the main headline subject.
-# Never classify an industry from an arbitrary secondary paragraph.
+# Words used to match a summary sentence to the headline subject.
+# The full article is deliberately excluded from tag selection.
 _TOPIC_STOP = frozenset(
     "который которая которые этого этой после новый новые новые "
     "компания компании предприятия предприятия завод заводе "
@@ -349,7 +349,7 @@ def _topic_stems(value: str) -> set[str]:
 
 
 def _sentences(value: str, *, max_chars: int = 50000) -> list[str]:
-    # Inspect the complete normal-sized source article, not just its lead.
+    # Split only supplied summaries; never pass the source article here.
     value = str(value or "")[:max_chars].replace("\r", "\n")
     return [
         norm(chunk) for chunk in
@@ -358,93 +358,69 @@ def _sentences(value: str, *, max_chars: int = 50000) -> list[str]:
     ]
 
 
-def _contextual_evidence(
+def _summary_weighted_evidence(
     title: str,
     summary: str,
-    text: str,
     *,
     title_hints: dict[str, tuple[str, str]],
 ) -> dict[str, tuple[float, str, str]]:
-    """Rank *supported* categories from headline, summary and article.
+    """Rank headline-supported and summary-supported industries.
 
-    Summary is stronger than raw text. A raw-text sentence must be about
-    the headline subject and contain an industrial action; context mentions
-    on their own never create tags. The full article is examined, with
-    bounded input for adversarial/very long pages.
+    Concrete industry in the summary: 7.0 points.
+    Concrete industry in the title:   4.0 points.
+    Generic production/factory cues receive less weight. The headline
+    still determines whether the story is about an industrial event; an
+    unrelated company biography cannot become news through its summary.
     """
-    votes = {
-        tag: (
-            (6.0 if tag not in ("заводы", "технологическое производство")
-             else 4.0),
-            source, term
-        ) for tag, (source, term) in title_hints.items()
+    generic = {"заводы", "технологическое производство"}
+    votes: dict[str, tuple[float, str, str]] = {
+        tag: (2.5 if tag in generic else 4.0, "title", term)
+        for tag, (_, term) in title_hints.items()
     }
-    headline_topic = _topic_stems(title)
-    has_concrete_title_tag = any(
-        label not in ("заводы", "технологическое производство")
-        for label in title_hints
-    )
+    topic = _topic_stems(title)
+    # A summary is deliberately the primary source for selecting sectors,
+    # but incidental text about another company is not a primary event.
+    for index, piece in enumerate(_sentences(summary, max_chars=8000)):
+        overlap = bool(topic & _topic_stems(piece))
+        action = bool(STRONG_EVENT.search(piece))
+        if not action and not (index < 2 and overlap):
+            continue
 
-    def consider(segments: list[str], source: str) -> None:
-        for index, piece in enumerate(segments):
-            overlap = len(headline_topic & _topic_stems(piece))
-            early = index <= 1
-            action = bool(STRONG_EVENT.search(piece))
-            if source == "text":
-                # Only a sentence related to the actual main event is
-                # eligible, even if it is in the middle/end of the article.
-                if not action or overlap < 1:
-                    continue
-            elif not action and not early:
+        for tag, pattern in COMPILED:
+            match = pattern.search(piece)
+            if not match:
                 continue
-            for tag, pattern in COMPILED:
-                match = pattern.search(piece)
-                if not match:
-                    continue
-                # A freight "space ship" is not a shipyard product.
-                if (
-                    tag == "судостроение"
-                    and re.search(
-                        r"\b(?:космическ\w*|транспортн\w*\s+корабл\w*)",
-                        piece
-                    )
-                    and not re.search(r"\b(?:морск\w*|речн\w*)", title)
-                ):
-                    continue
-                if tag not in title_hints and has_concrete_title_tag:
-                    # Avoid unrelated second sectors from a company's
-                    # profile or later paragraphs.
-                    continue
-                if source == "text" and not overlap and not early:
-                    continue
-                strength = (
-                    (3.5 if action else 2.5) if source == "summary"
-                    else (2.1 if early and overlap else 1.6)
-                )
-                if overlap:
-                    strength += min(overlap, 2) * 0.3
-                if tag in votes:
-                    # Corroboration affects only the confidence of a tag,
-                    # never makes it outrank a stronger headline sector.
-                    prev, src, word = votes[tag]
-                    votes[tag] = (
-                        max(prev, strength) + min(strength * 0.06, 0.20),
-                        src, word
-                    )
-                else:
-                    votes[tag] = (strength, source, match.group(0))
             if (
-                source == "summary"
-                and not title_hints
-                and action and GENERIC_PRODUCTION.search(piece)
+                tag not in title_hints
+                and any(other not in generic for other in title_hints)
+                and not overlap
+                and index > 0
             ):
-                votes.setdefault(
-                    "технологическое производство",
-                    (2.3, "summary", "производство"),
-                )
+                # A secondary paragraph is not enough to overrule the
+                # specific subject of the main headline.
+                continue
+            score = 7.0 + (0.3 if overlap else 0.0)
+            if tag in votes:
+                score += 0.7
+            if score > votes.get(tag, (0.0, "", ""))[0]:
+                votes[tag] = (score, "summary", match.group(0))
 
-    consider(_sentences(summary, max_chars=8000), "summary")
-    consider(_sentences(text), "text")
+        # A generic process cue must never overpower a specific sector.
+        if GENERIC_PRODUCTION.search(piece) and not any(
+            tag not in generic for tag in votes
+        ):
+            score = 3.5 if action else 2.8
+            old = votes.get("технологическое производство", (0.0, "", ""))[0]
+            if score > old:
+                votes["технологическое производство"] = (
+                    score, "summary", "производство"
+                )
+        if FACTORY_LAUNCH.search(piece):
+            score = 3.5
+            old = votes.get("заводы", (0.0, "", ""))[0]
+            if score > old:
+                votes["заводы"] = (score, "summary", "завод/запуск")
+
     return votes
 
 
@@ -456,10 +432,11 @@ def select_tags(
     max_tags: int = 2,
     text: str = "",
 ) -> TagDecision:
-    """Offline tags from main event + summary + subject-related full text.
+    """Select tags from the headline and primarily the supplied summary.
 
+    `text` is retained for backwards-compatible callers but ignored.
     Geographic origin does not influence the labels. SBERT can break ties
-    only among labels that already have textual evidence.
+    only among categories supported by title or summary.
     """
     if max_tags < 1:
         raise ValueError("max_tags должен быть >= 1")
@@ -500,14 +477,12 @@ def select_tags(
     # a sector from boilerplate even if the company owns factories.
     action_in_title = bool(STRONG_EVENT.search(headline))
     if not action_in_title:
-        # A production claim in a company biography, interview, export
-        # restriction, etc. must not turn that unrelated title into a
-        # manufacturing story. Full text can clarify an industrial event,
-        # but cannot manufacture one that the headline never asserts.
+        # A production claim in a company biography or interview must not
+        # turn an unrelated title into a manufacturing story.
         return TagDecision((), "review", "no_industrial_event")
 
-    votes = _contextual_evidence(
-        headline, summary, text, title_hints=title_hints
+    votes = _summary_weighted_evidence(
+        headline, summary, title_hints=title_hints
     )
     if re.search(r"\b(?:воссозда\w*|воссозд\w*)", headline):
         votes.setdefault(
@@ -531,7 +506,7 @@ def select_tags(
     # manufacturing electronic components. A machine USED to automate a
     # production line is likewise not a newly manufactured machine.
     if re.search(r"\bдетал\w*\b", headline) and re.search(
-        r"\bдля\s+радиоэлектрон\w*", headline + " " + norm(text)[:800]
+        r"\bдля\s+радиоэлектрон\w*", headline + " " + norm(summary)[:800]
     ):
         votes.pop("электротехническое направление", None)
     if re.search(r"\bавтоматиз\w*.{0,50}\bлини\w*", headline):
@@ -550,7 +525,7 @@ def select_tags(
     if re.search(r"\bреактор\w*", headline):
         reactor = re.search(
             r"\b(?:атомн\w*|ядерн\w*|ритм-200|ледокол\w*)\b",
-            norm(summary) + " " + norm(text)[:1500],
+            norm(summary),
         )
         if reactor:
             votes["атомная отрасль"] = (
@@ -591,7 +566,7 @@ def select_tags(
     return TagDecision(
         picked,
         "tagged",
-        "evidence_from_title_summary_and_subject_text",
+        "evidence_from_title_and_weighted_summary",
         tuple(
             f"{tag}: {votes[tag][1]}={votes[tag][2]}"
             for tag in picked
