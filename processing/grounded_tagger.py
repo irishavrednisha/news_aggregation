@@ -1,7 +1,7 @@
 """Event-grounded industry tagging without LLMs or network calls.
 
-The headline identifies the event and object; a summary or the opening
-article passage may only disambiguate that event. A company's name and
+The headline identifies the event and object; the summary and subject-linked
+sentences of the full article provide additional evidence. A company's name and
 incidental sector mentions never suffice as evidence. SBERT scores may break
 ties among supported categories, but never create a category on their own.
 
@@ -294,6 +294,123 @@ def _evidence(title: str, lead: str) -> dict[str, tuple[str, str]]:
     return supported
 
 
+# Words used to match a contextual sentence to the main headline subject.
+# Never classify an industry from an arbitrary secondary paragraph.
+_TOPIC_STOP = frozenset(
+    "который которая которые этого этой после новый новые новые "
+    "компания компании предприятия предприятия завод заводе "
+    "производства производство российский российские россии "
+    "проекта проект технологии развитие рамках начала работ".split()
+)
+_SUBJECT_EQUIVALENTS = {
+    "дрон": "беспилот", "беспилот": "беспилот",
+    "самолет": "самолет", "самолетов": "самолет",
+    "ледокол": "ледокол", "ледокола": "ледокол",
+    "судно": "судн", "судна": "судн",
+}
+
+
+def _topic_stems(value: str) -> set[str]:
+    stems = set()
+    for raw in re.findall(r"[а-яa-z0-9-]{5,}", norm(value)):
+        if raw in _TOPIC_STOP:
+            continue
+        stems.add(_SUBJECT_EQUIVALENTS.get(raw, raw[:5]))
+        if raw.startswith(("дрон", "беспилот")):
+            stems.add("беспилот")
+    return stems
+
+
+def _sentences(value: str, *, max_chars: int = 50000) -> list[str]:
+    # Inspect the complete normal-sized source article, not just its lead.
+    value = str(value or "")[:max_chars].replace("\r", "\n")
+    return [
+        norm(chunk) for chunk in
+        re.split(r"(?<=[.!?])\s+|[\n;]+", value)
+        if chunk and len(chunk.strip()) >= 12
+    ]
+
+
+def _contextual_evidence(
+    title: str,
+    summary: str,
+    text: str,
+    *,
+    title_hints: dict[str, tuple[str, str]],
+) -> dict[str, tuple[float, str, str]]:
+    """Rank *supported* categories from headline, summary and article.
+
+    Summary is stronger than raw text. A raw-text sentence must be about
+    the headline subject and contain an industrial action; context mentions
+    on their own never create tags. The full article is examined, with
+    bounded input for adversarial/very long pages.
+    """
+    votes = {
+        tag: (
+            (6.0 if tag not in ("заводы", "технологическое производство")
+             else 4.0),
+            source, term
+        ) for tag, (source, term) in title_hints.items()
+    }
+    headline_topic = _topic_stems(title)
+    has_concrete_title_tag = any(
+        label not in ("заводы", "технологическое производство")
+        for label in title_hints
+    )
+
+    def consider(segments: list[str], source: str) -> None:
+        for index, piece in enumerate(segments):
+            overlap = len(headline_topic & _topic_stems(piece))
+            early = index <= 1
+            action = bool(STRONG_EVENT.search(piece))
+            if source == "text":
+                # Only a sentence related to the actual main event is
+                # eligible, even if it is in the middle/end of the article.
+                if not action or (overlap < 1 and not early):
+                    continue
+            elif not action and not early:
+                continue
+            for tag, pattern in COMPILED:
+                match = pattern.search(piece)
+                if not match:
+                    continue
+                if tag not in title_hints and has_concrete_title_tag:
+                    # Avoid unrelated second sectors from a company's
+                    # profile or later paragraphs.
+                    continue
+                if source == "text" and not overlap and not early:
+                    continue
+                strength = (
+                    (3.5 if action else 2.5) if source == "summary"
+                    else (2.1 if early and overlap else 1.6)
+                )
+                if overlap:
+                    strength += min(overlap, 2) * 0.3
+                if tag in votes:
+                    # Corroboration affects only the confidence of a tag,
+                    # never makes it outrank a stronger headline sector.
+                    prev, src, word = votes[tag]
+                    votes[tag] = (
+                        max(prev, strength) + min(strength * 0.06, 0.20),
+                        src, word
+                    )
+                else:
+                    votes[tag] = (strength, source, match.group(0))
+            if (
+                source == "summary"
+                and not has_concrete_title_tag
+                and action and GENERIC_PRODUCTION.search(piece)
+            ):
+                votes.setdefault(
+                    "технологическое производство",
+                    (2.3, "summary", "производство"),
+                )
+
+    consider(_sentences(summary, max_chars=8000), "summary")
+    consider(_sentences(text), "text")
+    return votes
+
+
 def select_tags(
     title: str,
     summary: str = "",
@@ -302,148 +419,145 @@ def select_tags(
     max_tags: int = 2,
     text: str = "",
 ) -> TagDecision:
-    """Assign at most two well-supported event/industry categories.
+    """Offline tags from main event + summary + subject-related full text.
 
-    Use the supplied summary to disambiguate an elliptical title. If there
-    is no summary, inspect only the opening 550 characters of the article.
-    No DB writes, remote inference, or external API calls occur here.
+    Geographic origin does not influence the labels. SBERT can break ties
+    only among labels that already have textual evidence.
     """
     if max_tags < 1:
         raise ValueError("max_tags должен быть >= 1")
     headline = norm(title)
     if not headline:
         return TagDecision((), "review", "empty_title")
-    if FOREIGN_ONLY.search(headline) and not RUSSIAN_ACTOR.search(headline):
-        return TagDecision((), "reject", "foreign_project_without_russia")
-    neg = _negative_reason(headline)
-    if neg:
-        return TagDecision((), "reject", neg)
-    if (
-        re.search(
-            r"\b(?:хотят|планируют|могут|предлагают|пытались)\b", headline
-        )
-        and not re.search(
-            r"\b(?:запустил|запущен|выпустил|создал|разработал)\w*\b",
-            headline,
-        )
-    ):
-        return TagDecision((), "review", "plan_not_completed")
+    reason = _negative_reason(headline)
+    if reason:
+        return TagDecision((), "reject", reason)
+
+    # A proposed industrial investment or signed memorandum is not
+    # equivalent to a factory already being built or commissioned.
     if re.search(
-        r"\b(?:меморандум|договорились|планиру\w*|намерен\w*)\b",
+        r"\b(?:подписал\w*.{0,65}соглашени\w*|"
+        r"соглашени\w*.{0,70}строительств\w*|"
+        r"меморандум\w*|договорились|планиру\w*|"
+        r"намерен\w*|хотят|могут|предлагают)\b",
         headline,
+    ) and not re.search(
+        r"\b(?:уже\s+запуст\w*|построил\w*|"
+        r"начал\w*\s+(?:промышленн\w*\s+)?добыч\w*)\b", headline
     ):
-        return TagDecision((), "review", "only_agreement_or_plan")
+        return TagDecision((), "review", "agreement_or_plan")
+
     if re.search(
         r"\b(?:порт|терминал)\w*.{0,70}"
         r"(?:запустит|поставит)\w*.{0,35}\bкран\w*",
         headline,
     ):
         return TagDecision((), "review", "port_equipment_operations")
-    if not STRONG_EVENT.search(headline):
-        return TagDecision((), "review", "no_industrial_event")
 
-    lead = norm(summary)[:550] if summary else norm(text)[:550]
-    supported = _evidence(headline, lead)
-
-    if re.search(r"\b(?:воссозда\w*|воссозд\w*)", headline):
-        supported.setdefault("технологии", ("title", "обратное проектирование"))
-
-    # Role constraints: end customers, machines USED by a plant, and
-    # coincidental company/product terms do not imply another industry.
-    if (
-        "электротехническое направление" in supported
-        and re.search(
-            r"\bдатчик\w*\b.{0,50}\bдля\s+химическ\w*\s+реактор\w*",
-            headline,
+    title_hints = _evidence(headline, "")
+    # A press release about unrelated business activity must not pick up
+    # a sector from boilerplate even if the company owns factories.
+    action_in_title = bool(STRONG_EVENT.search(headline))
+    if not action_in_title:
+        first_context = " ".join(
+            _sentences(summary, max_chars=2500)[:2]
+            or _sentences(text, max_chars=1300)[:2]
         )
+        has_context_event = bool(STRONG_EVENT.search(first_context))
+        related = bool(_topic_stems(headline) & _topic_stems(first_context))
+        if not (has_context_event and related):
+            return TagDecision((), "review", "no_industrial_event")
+        # Do not label a pure transport/use headline as aircraft
+        # manufacturing just because a drone is mentioned in the article.
+        if re.search(
+            r"\b(?:дрон\w*|беспилотник\w*).{0,45}"
+            r"(?:следят|наблюда\w*|снима\w*|патрулиру\w*)",
+            headline,
+        ) and not re.search(
+            r"\b(?:разработан\w*|нов\w*\s+комплекс\w*|"
+            r"создан\w*\s+комплекс\w*)\b",
+            first_context,
+        ):
+            return TagDecision((), "review", "drone_operation_not_manufacturing")
+
+    votes = _contextual_evidence(
+        headline, summary, text, title_hints=title_hints
+    )
+    if re.search(r"\b(?:воссозда\w*|воссозд\w*)", headline):
+        votes.setdefault(
+            "технологии", (4.1, "title", "обратное проектирование")
+        )
+
+    # Industry is the delivered technical object, not a consumer industry.
+    if re.search(
+        r"\bдатчик\w*\b.{0,50}\bдля\s+химическ\w*\s+реактор\w*",
+        headline,
     ):
-        supported.pop("химическая промышленность", None)
+        votes.pop("химическая промышленность", None)
     if re.search(
         r"\b(?:электрическ\w*|электродвигател\w*)"
-        r"\s+(?:речн\w*\s+)?судн\w*",
-        headline,
+        r"\s+(?:речн\w*\s+)?судн\w*", headline
     ):
-        supported.pop("электротехническое направление", None)
-    if re.search(
-        r"\b(?:вагоноопрокидывател\w*|погрузк\w*\s+угл\w*)\b",
-        headline,
-    ):
-        supported.pop("железнодорожное машиностроение", None)
+        votes.pop("электротехническое направление", None)
     if re.search(r"\b(?:присад\w*|моторн\w*\s+масл\w*)\b", headline):
-        supported.pop("нефтегазовая промышленность", None)
-    if re.search(
-        r"\b(?:добыч\w*\s+нефт\w*|скважин\w*|месторожд\w*\s+газа)\b",
-        headline,
-    ):
-        supported.pop("горнодобывающая промышленность", None)
-    if (
-        "электротехническое направление" in supported
-        and re.search(
-            r"\b(?:алюминиев\w*\s+детал\w*|для\s+радиоэлектрон\w*)",
-            headline,
-        )
-    ):
-        supported.pop("электротехническое направление", None)
+        votes.pop("нефтегазовая промышленность", None)
 
-    # Nuclear reactor of a ship: "Чукотка" alone is not self-explanatory.
-    if (
-        re.search(r"\bреактор\w*", headline)
-        and re.search(r"\b(?:атомн\w*|ледокол\w*|ритм-200)\b", lead)
+    # A "pipeline system" can be water, chemicals, heat, not only oil/gas.
+    if re.search(r"\bтрубопровод\w*", headline) and not re.search(
+        r"\b(?:нефт\w*|газ\w*|нефтепровод\w*|газопровод\w*|"
+        r"скважин\w*|спг\b)", headline + " " + norm(summary)[:500]
     ):
-        supported["атомная отрасль"] = ("lead", "атомный реактор")
+        votes.pop("нефтегазовая промышленность", None)
+
+    # The primary news event can be the commissioning of a reactor on an
+    # icebreaker: the ship is context, not necessarily a new-build event.
+    if re.search(r"\bреактор\w*", headline):
+        reactor = re.search(
+            r"\b(?:атомн\w*|ядерн\w*|ритм-200|ледокол\w*)\b",
+            norm(summary) + " " + norm(text)[:1500],
+        )
+        if reactor:
+            votes["атомная отрасль"] = (
+                6.4, "context", reactor.group(0)
+            )
+            votes.pop("судостроение", None)
 
     if re.search(
         r"\b(?:производств\w*\s+электробатарей|"
-        r"кластер\s+электробатарей)\b",
-        headline,
+        r"кластер\s+электробатарей)\b", headline,
     ):
-        supported["электротехническое направление"] = (
-            "title", "электробатареи"
+        votes["электротехническое направление"] = (
+            6.0, "title", "электробатареи"
         )
-        supported.setdefault("заводы", ("title", "промышленный кластер"))
+        if re.search(r"\bоткр\w*\s+кластер", headline):
+            votes.setdefault("заводы", (3.8, "title", "новый кластер"))
 
-    if not supported:
+    if not votes:
         return TagDecision((), "review", "industry_not_identified")
 
-    def evidence_weight(label: str) -> float:
-        base = 3.0 if supported[label][0] == "title" else 1.0
-        if label in ("инновации", "инжиниринг", "технологии"):
-            base -= 0.25
-        if label == "технологическое производство":
-            base -= 0.30
-        if label == "заводы":
-            base -= 0.15
-        if label in (
-            "авиация", "судостроение", "машиностроение", "атомная отрасль"
-        ):
-            base += 0.05
-        return base
-
-    scores: dict[str, float] = {}
+    score_bonus = {}
     for row in ranked or ():
         if not isinstance(row, dict):
             continue
-        tag = row.get("tag")
         try:
             value = float(row.get("final_score") or 0)
+            if math.isfinite(value):
+                score_bonus[str(row.get("tag"))] = min(
+                    max(value, 0.0), 1.0
+                ) * 0.2
         except (ValueError, TypeError):
             continue
-        if math.isfinite(value):
-            scores[tag] = min(0.7, max(0.0, value))
-    ordered = sorted(
-        supported,
-        key=lambda name: (
-            -evidence_weight(name) - scores.get(name, 0.0) * 0.25,
-            name,
-        ),
+    ordering = sorted(
+        votes,
+        key=lambda tag: (-votes[tag][0] - score_bonus.get(tag, 0.0), tag)
     )
-    tags = tuple(ordered[:max_tags])
+    picked = tuple(ordering[:min(max_tags, 2)])
     return TagDecision(
-        tags,
+        picked,
         "tagged",
-        "grounded_main_event",
+        "evidence_from_title_summary_and_subject_text",
         tuple(
-            f"{tag}: {supported[tag][0]}={supported[tag][1]}"
-            for tag in tags
+            f"{tag}: {votes[tag][1]}={votes[tag][2]}"
+            for tag in picked
         ),
     )
