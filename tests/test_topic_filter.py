@@ -195,6 +195,78 @@ class TopicFilterTests(unittest.TestCase):
         self.assertFalse(has_bad_title("Видеоаналитика выявила отклонения в домнах"))
         self.assertTrue(has_bad_title("Дайджест новостей промышленности"))
 
+    def test_clear_nonindustrial_events_from_november_collection(self):
+        cases = [
+            ("В Приморье произошло ДТП с участием скорой",
+             "offtopic_traffic_incident"),
+            ("В Приморье в ДТП с машиной скорой помощи пострадали пять человек",
+             "offtopic_traffic_incident"),
+            ("Аэропорты Череповца и Ярославля приостановили работу",
+             "offtopic_airport_operations"),
+            ("Аэропорт Внуково принимает и отправляет рейсы по согласованию",
+             "offtopic_airport_operations"),
+            ("Криминалист рассказал, как удается раскрывать дела из 90-х",
+             "offtopic_personal_crime"),
+            ("Выдача ипотеки заметно сократилась",
+             "offtopic_consumer_finance"),
+            ("В ОКБ сообщили о росте совокупного портфеля автокредитов в III квартале",
+             "offtopic_consumer_finance"),
+            ("В ГД предложили выдавать молодым семьям гранты на свадьбы",
+             "offtopic_consumer_finance"),
+            ("Юрист напомнил о праве обменять или вернуть товар с распродажи",
+             "offtopic_consumer_rights"),
+            ("Работники «Роснефти» проводят праздничные акции в честь праздника",
+             "offtopic_nonindustrial_cultural_event"),
+            ("Историческая драма «Рождение империи» выходит в широкий прокат",
+             "offtopic_nonindustrial_cultural_event"),
+            ("При поддержке Ростеха пройдет российско-сингапурский бизнес-диалог",
+             "offtopic_nonindustrial_publicity_event"),
+            ("ОСК проводит олимпиаду по судостроению",
+             "offtopic_nonindustrial_publicity_event"),
+        ]
+        for title, expected in cases:
+            with self.subTest(title=title):
+                self.assertEqual(self.decision(title).reason, expected)
+
+    def test_foreign_industry_not_related_to_russia(self):
+        cases = [
+            "В Южной Корее спустили на воду пятую подлодку нового поколения",
+            "Naval Group представила концепт эсминца с ракетами",
+            "Saab представила новую версию боевого катера CB-90",
+            "Reuters сообщил об остановке добычи газа на объекте в Ираке",
+        ]
+        # The body lacks an explicit Russian party, so headline-only foreign
+        # evidence plus the lead together allow a conservative rejection.
+        foreign_body = ("Инженеры и специалисты компании провели испытания "
+                        "нового оборудования и обсудили производство. ") * 4
+        for title in cases:
+            with self.subTest(title=title):
+                d = self.decision(title, body=foreign_body)
+                self.assertEqual(d.reason, "foreign_without_russian_connection")
+
+        # Industrial plans abroad with an actual Russian company are relevant.
+        russian_body = ("Норникель и российские инженеры испытали технологию "
+                        "производства оборудования на заводе. ") * 4
+        for title in (
+            "В Южной Корее российская компания создала новый прибор",
+            "Naval Group и ОСК представили совместное решение",
+            "В Ираке «Ростех» установил оборудование",
+        ):
+            with self.subTest(title=title):
+                self.assertTrue(self.decision(title, body=russian_body).accepted)
+
+    def test_new_rules_keep_actual_industrial_events(self):
+        cases = [
+            "Аэропорт Домодедово внедрил новую систему досмотра собственного производства",
+            "На заводе начали выпускать новые электробусы для обучения водителей",
+            "Промышленный завод представил новую технологию на юбилейной конференции",
+            "Российские инженеры модернизировали станок с применением ИИ",
+            "Российская компания разработала систему управления трафиком",
+        ]
+        for title in cases:
+            with self.subTest(title=title):
+                self.assertTrue(self.decision(title).accepted)
+
     def test_bulk_filter_keeps_order_without_mutating_articles(self):
         keep1 = article("НТМК модернизировал оборудование")
         drop = article("На АЗС запущена акция – скидка на топливо")
