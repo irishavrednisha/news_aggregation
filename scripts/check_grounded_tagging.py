@@ -2,8 +2,8 @@
 
 python -m scripts.check_grounded_tagging collector_test_results/news_fixed_20261109_031438.json --limit 230
 
-Uses the same offline classifier as production, with existing summary and
-subject-linked evidence from the full text when available.
+Uses exactly the same title + weighted-ready-summary classifier as production.
+The raw article body is never read by the classifier.
 This is an isolated tagging diagnostic, not an end-to-end test.
 """
 from __future__ import annotations
@@ -42,17 +42,16 @@ def audit(payload: dict, *, limit: int, max_tags: int = 2) -> dict:
             raise ValueError("Повтор URL в выборке: " + url)
         if url:
             seen_urls.add(url)
-        # Identical selector to default production; use original text
-        # instead of inventing a summary of the collected article.
+        # Missing summary means *headline-only* audit, not a substitute
+        # summary constructed from the article.
+        summary = str(
+            article.get("summary") or
+            article.get("summary_text") or
+            article.get("summary_used") or ""
+        ).strip()
         if title:
             decision = select_tags(
-                title,
-                summary=str(
-                    article.get("summary") or
-                    article.get("summary_text") or ""
-                ),
-                text=str(article.get("text") or ""),
-                max_tags=max_tags,
+                title, summary=summary, max_tags=max_tags
             )
             outcome, tags, reason = (
                 decision.outcome, list(decision.tags), decision.reason
@@ -62,7 +61,8 @@ def audit(payload: dict, *, limit: int, max_tags: int = 2) -> dict:
             outcome, tags, reason, evidence = "review", [], "missing_title", []
         results.append({
             "index": index, "source": article.get("source"),
-            "title": title, "url": url, "outcome": outcome,
+            "title": title, "url": url,
+            "summary_present": bool(summary), "outcome": outcome,
             "tags": tags, "reason": reason, "evidence": evidence,
             "human_tags": "", "human_notes": "",
         })
@@ -70,13 +70,14 @@ def audit(payload: dict, *, limit: int, max_tags: int = 2) -> dict:
         "read_only": True,
         "database_modified": False,
         "publishing_performed": False,
-        "mode": "grounded_title_summary_and_full_article_no_sbert",
-        "note": "Заголовок + готовая сводка (если она есть в JSON) + "
-                "относящиеся к главному событию фрагменты исходного текста "
-                "(до 50 тыс. символов). Это не измерение качества тегов "
-                "и не проверка публикации в MAX.",
+        "mode": "grounded_title_weighted_summary_no_body",
+        "note": "Сводка имеет приоритет над заголовком; полный текст не "
+                "используется. Если в JSON нет поля summary/summary_text/"
+                "summary_used, классификация работает только по заголовку. "
+                "Это не проверка качества тегов или публикации в MAX.",
         "counts": {
             "articles": len(results),
+            "summaries_present": sum(row["summary_present"] for row in results),
             "tagged": sum(r["outcome"] == "tagged" for r in results),
             "rejected": sum(r["outcome"] == "reject" for r in results),
             "review": sum(r["outcome"] == "review" for r in results),
@@ -114,7 +115,7 @@ def main() -> None:
         writer = csv.DictWriter(
             file,
             fieldnames=("index", "source", "title", "url", "outcome",
-                        "tags", "reason", "evidence", "human_tags", "human_notes"),
+                        "tags", "reason", "evidence", "summary_present", "human_tags", "human_notes"),
             delimiter=";",
         )
         writer.writeheader()
@@ -126,7 +127,9 @@ def main() -> None:
     print(json.dumps(result["counts"], ensure_ascii=False, indent=2))
     print("JSON:", args.output)
     print("CSV:", csv_path)
-    print("Проверка по заголовку/готовой сводке/тексту без БД и MAX. Это не метрика качества.")
+    if result["counts"]["summaries_present"] == 0:
+        print("ВНИМАНИЕ: в выборке нет сводок; проверка только по заголовкам.")
+    print("Проверка по заголовку и готовой сводке, без полного текста, БД и MAX.")
 
 
 if __name__ == "__main__":
