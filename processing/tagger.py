@@ -1771,14 +1771,18 @@ def tag_cluster(
         return []
 
     focus_text = f"{cluster.title or ''}\n{cluster.summary_text or ''}"
-    scored_tags = score_tags_detailed(text, focus_text=focus_text)
-
-    selected_tags = select_tags_by_score_gap(
-        scored_tags=scored_tags,
-        min_score=min_score,
-        max_tags=max_tags,
-        max_gap_from_best=0.05
-    )
+    try:
+        scored_tags = score_tags_detailed(text, focus_text=focus_text)
+    except Exception as exc:
+        if backend != "grounded":
+            raise
+        # Grounded tagging does not need SBERT to return supported
+        # sector tags. It must still work if the embedding model is
+        # unavailable locally or its inference fails.
+        scored_tags = []
+        if debug:
+            print(f"SBERT недоступен, только проверяемые отраслевые признаки: "
+                  f"{type(exc).__name__}: {exc}")
 
     # Stable event-grounded tagger: SBERT can rank supported industries,
     # but it cannot invent an industry from contextual similarity alone.
@@ -1809,6 +1813,13 @@ def tag_cluster(
                 f"теги: {cluster.tags or 'нет'}"
             )
         return selected_tags
+
+    selected_tags = select_tags_by_score_gap(
+        scored_tags=scored_tags,
+        min_score=min_score,
+        max_tags=max_tags,
+        max_gap_from_best=0.05
+    )
 
     # Гибрид: Sentence-BERT остаётся источником всех 18 оценок.
     # Экспериментальный второй этап проверяет, соответствует ли
