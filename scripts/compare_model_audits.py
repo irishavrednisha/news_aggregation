@@ -23,6 +23,7 @@ REVIEW_FIELDS = (
     "primary_filter_accepted", "primary_filter_reason", "unverified_tls",
     "sbert_tags", "hybrid_tags", "qwen_relevant", "qwen_tags",
     "qwen_error", "qwen_warnings",
+    "previous_qwen_relevant", "previous_qwen_tags", "previous_hybrid_tags",
     "human_relevant", "human_tags", "human_review_status", "human_notes",
 )
 
@@ -50,12 +51,25 @@ def validate_tags(tags, label: str) -> list[str]:
     return tags
 
 
-def compare(sbert: dict, hybrid: dict, qwen: dict, batch: dict | None = None) -> dict:
+def compare(
+    sbert: dict, hybrid: dict, qwen: dict, batch: dict | None = None, *,
+    previous_qwen: dict | None = None,
+    previous_hybrid: dict | None = None,
+) -> dict:
     s = indexed(sbert, "SBERT")
     h = indexed(hybrid, "hybrid")
     q = indexed(qwen, "Qwen")
     if not set(s) == set(h) == set(q):
         raise ValueError("Наборы URL моделей не совпадают")
+    previous_q = indexed(previous_qwen, "previous Qwen") if previous_qwen is not None else None
+    previous_h = indexed(previous_hybrid, "previous hybrid") if previous_hybrid is not None else None
+    for label, previous in (("Qwen", previous_q), ("hybrid", previous_h)):
+        if previous is not None and set(previous) != set(s):
+            raise ValueError(f"Предыдущий отчёт {label} содержит другой набор URL")
+    if previous_qwen is not None and previous_qwen.get("tags_only") is not True:
+        raise ValueError("Предыдущий Qwen-отчёт тоже должен быть --tags-only")
+    if previous_hybrid is not None and previous_hybrid.get("tagger_mode") != "hybrid":
+        raise ValueError("Предыдущий отчёт hybrid должен иметь tagger_mode=hybrid")
     if sbert.get("tagger_mode") != "legacy" or hybrid.get("tagger_mode") != "hybrid":
         raise ValueError("Нужны отчёты SBERT legacy и hybrid")
     if qwen.get("tags_only") is not True:
@@ -119,10 +133,36 @@ def compare(sbert: dict, hybrid: dict, qwen: dict, batch: dict | None = None) ->
         if qr.get("error"):
             reasons.append("qwen_error")
 
+        previous_relevant = None
+        previous_tags = None
+        previous_hybrid_tags = None
+        if previous_q is not None:
+            previous_record = previous_q[url]
+            previous_relevant = previous_record.get("relevant")
+            if previous_relevant is not None and type(previous_relevant) is not bool:
+                raise ValueError("Предыдущий Qwen relevant должен быть true/false/null")
+            previous_tags = validate_tags(previous_record.get("tags"), "previous Qwen")
+            if previous_relevant != relevant:
+                reasons.append("qwen_relevance_changed_between_runs")
+                counts["qwen_relevance_changed_between_runs"] += 1
+            if set(previous_tags) != set(qt):
+                reasons.append("qwen_tag_set_changed_between_runs")
+                counts["qwen_tag_set_changed_between_runs"] += 1
+            if previous_record.get("error") and qr.get("error"):
+                reasons.append("qwen_error_repeated")
+                counts["qwen_error_repeated"] += 1
+        if previous_h is not None:
+            previous_hybrid_tags = validate_tags(previous_h[url].get("tags"), "previous hybrid")
+            if set(previous_hybrid_tags) != set(ht):
+                reasons.append("hybrid_changed_between_runs")
+                counts["hybrid_changed_between_runs"] += 1
+
         high_flags = (
             "qwen_abstained_or_failed", "foreign_scope_conflict",
             "qwen_vs_primary_filter", "qwen_positive_sbert_empty",
             "sbert_positive_qwen_negative",
+            "qwen_relevance_changed_between_runs",
+            "qwen_error_repeated",
         )
         if any(flag in reasons for flag in high_flags):
             priority = "high"
@@ -154,6 +194,9 @@ def compare(sbert: dict, hybrid: dict, qwen: dict, batch: dict | None = None) ->
             "sbert_tags": st, "hybrid_tags": ht, "qwen_relevant": relevant,
             "qwen_tags": qt, "qwen_error": qr.get("error"),
             "qwen_warnings": qr.get("warnings") or [],
+            "previous_qwen_relevant": previous_relevant if previous_q is not None else "",
+            "previous_qwen_tags": previous_tags if previous_q is not None else [],
+            "previous_hybrid_tags": previous_hybrid_tags if previous_h is not None else [],
             "human_relevant": "", "human_tags": "",
             "human_review_status": "draft", "human_notes": "",
         })
@@ -178,7 +221,8 @@ def compare(sbert: dict, hybrid: dict, qwen: dict, batch: dict | None = None) ->
         "results": rows,
         "notes": [
             "Согласие моделей не является эталоном и не разрешает публикацию.",
-            "Одна ошибка Qwen — abstention, а не отрицательная новость.",
+            "Любая незавершённая проверка Qwen — abstention, а не отрицательная новость.",
+            "Смена решения Qwen между прогонами ставит новость в высокий приоритет.",
             "Сравнение по URL, не по позиции в файле.",
             "Эти предсказания получены до новых исправлений; нужен повторный прогон.",
         ],
@@ -207,17 +251,32 @@ def main() -> None:
     parser.add_argument("hybrid", type=Path)
     parser.add_argument("qwen", type=Path)
     parser.add_argument("--batch", type=Path)
+    parser.add_argument("--previous-qwen", type=Path,
+                        help="Предыдущий Qwen-отчёт с теми же URL")
+    parser.add_argument("--previous-hybrid", type=Path,
+                        help="Предыдущий hybrid-отчёт с теми же URL")
     parser.add_argument("--output-json", required=True, type=Path)
     parser.add_argument("--output-csv", required=True, type=Path)
     args = parser.parse_args()
     inputs = [args.sbert, args.hybrid, args.qwen]
     if args.batch:
         inputs.append(args.batch)
+    if args.previous_qwen:
+        inputs.append(args.previous_qwen)
+    if args.previous_hybrid:
+        inputs.append(args.previous_hybrid)
     outputs = [args.output_json, args.output_csv]
     if len({p.resolve() for p in inputs + outputs}) != len(inputs + outputs):
         parser.error("Выходной файл не должен совпадать со входным")
     payloads = [json.loads(path.read_text(encoding="utf-8")) for path in inputs]
-    result = compare(*payloads)
+    current = payloads[:3]
+    batch = json.loads(args.batch.read_text(encoding="utf-8")) if args.batch else None
+    old_qwen = (json.loads(args.previous_qwen.read_text(encoding="utf-8"))
+                if args.previous_qwen else None)
+    old_hybrid = (json.loads(args.previous_hybrid.read_text(encoding="utf-8"))
+                  if args.previous_hybrid else None)
+    result = compare(*current, batch, previous_qwen=old_qwen,
+                     previous_hybrid=old_hybrid)
     for path in outputs:
         path.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(
