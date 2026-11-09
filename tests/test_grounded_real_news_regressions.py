@@ -98,12 +98,10 @@ class RealNewsEventRegressionTests(unittest.TestCase):
         )
         self.assertFalse(movie.tags)
 
-    def test_foreign_only_and_other_nonindustrial_events_do_not_get_sector_tags(self):
+    def test_other_nonindustrial_events_do_not_get_sector_tags(self):
         cases = [
             "Naval Group представила концепт эсминца с 96 ячейками для ракет",
-            "Начался новый этап создания европейского многоцелевого корвета",
             "Финляндия поставит донные мины для датского флота",
-            "В Южной Корее спустили на воду пятую подлодку нового поколения",
             "Производители лазеров для радиэлектронной отрасли заплатят пониженные страховые взносы",
             "Историческая драма «Рождение империи», созданная при поддержке «Роснефти», выходит в широкий прокат",
             "«Роснефть» открыла новые цифровые лаборатории в Ачинском техникуме нефти и газа",
@@ -120,6 +118,52 @@ class RealNewsEventRegressionTests(unittest.TestCase):
                 decision = select_tags(title, text="В статье упоминаются металлургия, заводы и авиация.")
                 self.assertEqual(decision.tags, ())
                 self.assertIn(decision.outcome, ("reject", "review"))
+
+    def test_summary_and_full_body_are_both_used_without_secondary_topic_noise(self):
+        # The relevant equipment is identified beyond the former 550-char
+        # lead window. An unrelated aircraft paragraph is not a second tag.
+        title = "Предприятие модернизировало технологический процесс"
+        summary = "Специалисты изменили производственный процесс предприятия."
+        body = (
+            "Предприятие модернизировало технологический процесс. " +
+            "Подготовлены новые производственные инструкции. " * 25 +
+            "Предприятие модернизировало электродвигатель оборудования. " +
+            "Другая компания выпустила самолёт на своём предприятии."
+        )
+        result = select_tags(title, summary, text=body)
+        self.assertEqual(result.outcome, "tagged")
+        self.assertIn("электротехническое направление", result.tags, result)
+        self.assertNotIn("авиация", result.tags, result)
+
+    def test_summary_resolves_specific_product_when_title_is_generic(self):
+        result = select_tags(
+            "На предприятии разработали новое оборудование",
+            "Компания разработала электродвигатель для промышленной линии."
+        )
+        self.assertEqual(result.outcome, "tagged")
+        self.assertIn("электротехническое направление", result.tags)
+
+    def test_foreign_location_does_not_block_real_industrial_event(self):
+        result = select_tags(
+            "Начался новый этап создания европейского многоцелевого корвета"
+        )
+        self.assertEqual(result.outcome, "tagged")
+        self.assertIn("судостроение", result.tags)
+
+    def test_only_signed_agreement_is_not_a_completed_atomic_plant(self):
+        result = select_tags(
+            "Россия и Мьянма подписали межправительственное соглашение о "
+            "строительстве атомной станции малой мощности"
+        )
+        self.assertEqual(result.outcome, "review")
+        self.assertFalse(result.tags)
+
+    def test_pipeline_without_oil_or_gas_is_not_assumed_to_be_oil_gas(self):
+        result = select_tags(
+            "Российские учёные повысили надёжность трубопроводной системы",
+            "Исследователи повысили надёжность систем водоснабжения."
+        )
+        self.assertNotIn("нефтегазовая промышленность", result.tags)
 
     def test_plans_and_operations_do_not_masquerade_as_completed_manufacturing(self):
         cases = [
