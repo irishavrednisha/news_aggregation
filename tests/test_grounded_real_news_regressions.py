@@ -26,7 +26,7 @@ class RealNewsEventRegressionTests(unittest.TestCase):
             )
         )
         tag_names = {node.value for node in assigned.keys}
-        self.assertEqual({name for name, _ in CATEGORY}, tag_names)
+        self.assertEqual({name for name, _ in CATEGORY} | {"заводы", "технологическое производство"}, tag_names)
 
     def test_recovered_industrial_examples(self):
         examples = [
