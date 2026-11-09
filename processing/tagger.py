@@ -1700,7 +1700,7 @@ def tag_cluster(
     # Экспериментальная NLI-классификация: AI оценивает смысл
     # заголовка + summary и затем независимо 18 тематик.
     # Без подтверждённых тегов публикации нет.
-    backend = os.getenv("NEWS_TAGGER_BACKEND", "legacy").strip().lower()
+    backend = os.getenv("NEWS_TAGGER_BACKEND", "grounded").strip().lower()
     if backend == "nli":
         from processing.ai_tagger import predict_tags
         try:
@@ -1748,8 +1748,8 @@ def tag_cluster(
                 print(f"  {tag}: {score:.3f}")
         return prediction.tags
 
-    if backend not in ("legacy", "hybrid"):
-        raise ValueError("NEWS_TAGGER_BACKEND должен быть legacy, hybrid или nli")
+    if backend not in ("legacy", "hybrid", "grounded"):
+        raise ValueError("NEWS_TAGGER_BACKEND должен быть grounded, legacy, hybrid или nli")
 
     text = get_cluster_text_for_tagging(session, cluster)
 
@@ -1779,6 +1779,36 @@ def tag_cluster(
         max_tags=max_tags,
         max_gap_from_best=0.05
     )
+
+    # Stable event-grounded tagger: SBERT can rank supported industries,
+    # but it cannot invent an industry from contextual similarity alone.
+    # An uncertain article is held in tagging_review (not ready for MAX,
+    # not silently discarded, and not processed again every scheduler run).
+    if backend == "grounded":
+        from processing.grounded_tagger import select_tags
+        decision = select_tags(
+            cluster.title or "", cluster.summary_text or "",
+            ranked=scored_tags, max_tags=max_tags,
+        )
+        selected_tags = list(decision.tags)
+        cluster.tags = ", ".join(selected_tags) if selected_tags else None
+        if decision.outcome == "tagged":
+            from processing.summary_pipeline import tagged_summary_status
+            cluster.status = tagged_summary_status(
+                selected_tags, review_pending=review_pending
+            )
+        elif decision.outcome == "review":
+            cluster.status = "tagging_review"
+        else:
+            cluster.status = "not_for_publication"
+        session.commit()
+        if debug:
+            print(
+                f"Grounded tagger кластера #{cluster.id}: "
+                f"{cluster.status}; {decision.reason}; "
+                f"теги: {cluster.tags or 'нет'}"
+            )
+        return selected_tags
 
     # Гибрид: Sentence-BERT остаётся источником всех 18 оценок.
     # Экспериментальный второй этап проверяет, соответствует ли
