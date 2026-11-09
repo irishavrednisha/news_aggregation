@@ -76,11 +76,30 @@ class MixedBatchTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     create_batch({"articles": [a, b]}, audit)
 
+    def test_stale_rejections_not_used_as_content_false_negatives(self):
+        a, b, c = make_row(0), make_row(1), make_row(2)
+        audit = {"decisions": [
+            {"url": a["url"], "accepted_by_primary_filter": True,
+             "filter_reason": "accepted"},
+            {"url": b["url"], "accepted_by_primary_filter": False,
+             "filter_reason": "stale_article"},
+            {"url": c["url"], "accepted_by_primary_filter": False,
+             "filter_reason": "offtopic_event_only"},
+        ]}
+        result = create_batch(
+            {"articles": [a, b, c]}, audit, limit=3, accepted=1,
+        )
+        self.assertEqual(result["selection"]["stale_rejected_excluded_from_content_comparison"], 1)
+        self.assertEqual(
+            {row["url"] for row in result["articles"]},
+            {a["url"], c["url"]},
+        )
+
     def test_no_implicit_training_and_early_mixed_prefix(self):
         raw = [make_row(i) for i in range(6)]
         audit = {"decisions": [
             {"url": r["url"], "accepted_by_primary_filter": i < 3,
-             "filter_reason": "accepted" if i < 3 else "stale_article"}
+             "filter_reason": "accepted" if i < 3 else "offtopic_event_only"}
             for i, r in enumerate(raw)
         ]}
         p = create_batch({"articles": raw}, audit, limit=6, accepted=3)
