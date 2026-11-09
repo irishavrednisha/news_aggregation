@@ -1698,7 +1698,7 @@ def tag_cluster(
     # Экспериментальная NLI-классификация: AI оценивает смысл
     # заголовка + summary и затем независимо 18 тематик.
     # Без подтверждённых тегов публикации нет.
-    backend = os.getenv("NEWS_TAGGER_BACKEND", "legacy").strip().lower()
+    backend = os.getenv("NEWS_TAGGER_BACKEND", "grounded").strip().lower()
     if backend == "nli":
         from processing.ai_tagger import predict_tags
         try:
@@ -1743,8 +1743,8 @@ def tag_cluster(
                 print(f"  {tag}: {score:.3f}")
         return prediction.tags
 
-    if backend not in ("legacy", "hybrid"):
-        raise ValueError("NEWS_TAGGER_BACKEND должен быть legacy, hybrid или nli")
+    if backend not in ("legacy", "hybrid", "grounded"):
+        raise ValueError("NEWS_TAGGER_BACKEND должен быть grounded, legacy, hybrid или nli")
 
     text = get_cluster_text_for_tagging(session, cluster)
 
@@ -1764,6 +1764,35 @@ def tag_cluster(
             print("Причина: стоп-слова нерелевантной темы")
 
         return []
+
+    # Default classifier: no Sentence-BERT download or Ollama request.
+    # Rank by event/object evidence in title, summary and source lead.
+    # Uncertain articles go to tagging_review and are never ready for MAX.
+    if backend == "grounded":
+        from processing.grounded_tagger import select_tags
+
+        decision = select_tags(
+            cluster.title or "",
+            cluster.summary_text or "",
+            text=text,
+            max_tags=min(max_tags, 2),
+        )
+        selected = list(decision.tags)
+        cluster.tags = ", ".join(selected) if selected else None
+        cluster.status = (
+            "ready" if decision.outcome == "tagged" else
+            "tagging_review" if decision.outcome == "review" else
+            "not_for_publication"
+        )
+        session.commit()
+        if debug:
+            print(
+                f"Grounded #{cluster.id}: {cluster.status}; "
+                f"{decision.reason}; теги: {cluster.tags or 'нет'}"
+            )
+            if decision.evidence:
+                print("Основания:", "; ".join(decision.evidence))
+        return selected
 
     focus_text = f"{cluster.title or ''}\n{cluster.summary_text or ''}"
     scored_tags = score_tags_detailed(text, focus_text=focus_text)
