@@ -2,8 +2,8 @@
 
 python -m scripts.check_grounded_tagging collector_test_results/news_fixed_20261109_031438.json --limit 230
 
-Uses the same event-grounded selector as production, but without SBERT
-tie-breaking. This is an isolated tagging diagnostic, not an end-to-end test.
+Uses the same offline selector as production, with article lead disambiguation.
+This is an isolated tagging diagnostic, not an end-to-end test.
 """
 from __future__ import annotations
 
@@ -41,26 +41,34 @@ def audit(payload: dict, *, limit: int, max_tags: int = 2) -> dict:
             raise ValueError("Повтор URL в выборке: " + url)
         if url:
             seen_urls.add(url)
-        # Do not generate a new summary: test the main event in the headline.
-        # The production tagger also considers SBERT tie-breakers.
+        # Identical selector to default production; use original text
+        # instead of inventing a summary of the collected article.
         if title:
-            decision = select_tags(title, max_tags=max_tags)
-            outcome, tags, reason = decision.outcome, list(decision.tags), decision.reason
+            decision = select_tags(
+                title,
+                text=str(article.get("text") or ""),
+                max_tags=max_tags,
+            )
+            outcome, tags, reason = (
+                decision.outcome, list(decision.tags), decision.reason
+            )
+            evidence = list(decision.evidence)
         else:
-            outcome, tags, reason = "review", [], "missing_title"
+            outcome, tags, reason, evidence = "review", [], "missing_title", []
         results.append({
             "index": index, "source": article.get("source"),
             "title": title, "url": url, "outcome": outcome,
-            "tags": tags, "reason": reason,
+            "tags": tags, "reason": reason, "evidence": evidence,
             "human_tags": "", "human_notes": "",
         })
     return {
         "read_only": True,
         "database_modified": False,
         "publishing_performed": False,
-        "mode": "grounded_headline_only_no_sbert",
-        "note": "Диагностика по заголовкам без SBERT и без кластерного summary. "
-                "Не является проверкой всей производственной цепочки или точности.",
+        "mode": "grounded_title_and_article_lead_no_sbert",
+        "note": "Заголовок + начало исходной статьи без SBERT. В основном "
+                "конвейере также доступна сводка кластера. Это не "
+                "accuracy, precision, recall или F1.",
         "counts": {
             "articles": len(results),
             "tagged": sum(r["outcome"] == "tagged" for r in results),
@@ -100,18 +108,19 @@ def main() -> None:
         writer = csv.DictWriter(
             file,
             fieldnames=("index", "source", "title", "url", "outcome",
-                        "tags", "reason", "human_tags", "human_notes"),
+                        "tags", "reason", "evidence", "human_tags", "human_notes"),
             delimiter=";",
         )
         writer.writeheader()
         for row in result["results"]:
             writer.writerow({
                 **row, "tags": ", ".join(row["tags"]),
+                "evidence": "; ".join(row["evidence"]),
             })
     print(json.dumps(result["counts"], ensure_ascii=False, indent=2))
     print("JSON:", args.output)
     print("CSV:", csv_path)
-    print("Это проверка по заголовкам, не метрика качества и не публикация.")
+    print("Проверка по заголовку/тексту, без БД и MAX. Это не метрика качества.")
 
 
 if __name__ == "__main__":
