@@ -1770,29 +1770,16 @@ def tag_cluster(
 
         return []
 
-    focus_text = f"{cluster.title or ''}\n{cluster.summary_text or ''}"
-    try:
-        scored_tags = score_tags_detailed(text, focus_text=focus_text)
-    except Exception as exc:
-        if backend != "grounded":
-            raise
-        # Grounded tagging does not need SBERT to return supported
-        # sector tags. It must still work if the embedding model is
-        # unavailable locally or its inference fails.
-        scored_tags = []
-        if debug:
-            print(f"SBERT недоступен, только проверяемые отраслевые признаки: "
-                  f"{type(exc).__name__}: {exc}")
-
-    # Stable event-grounded tagger: SBERT can rank supported industries,
-    # but it cannot invent an industry from contextual similarity alone.
-    # An uncertain article is held in tagging_review (not ready for MAX,
-    # not silently discarded, and not processed again every scheduler run).
+    # Grounded is the default and must work fully offline even when the
+    # Sentence-BERT checkpoint is missing. Other backends remain unchanged.
+    # The same pure selector is used by scripts.check_grounded_tagging.
     if backend == "grounded":
         from processing.grounded_tagger import select_tags
         decision = select_tags(
-            cluster.title or "", cluster.summary_text or "",
-            ranked=scored_tags, max_tags=max_tags,
+            cluster.title or "",
+            cluster.summary_text or "",
+            text=text,
+            max_tags=max_tags,
         )
         selected_tags = list(decision.tags)
         cluster.tags = ", ".join(selected_tags) if selected_tags else None
@@ -1802,17 +1789,23 @@ def tag_cluster(
                 selected_tags, review_pending=review_pending
             )
         elif decision.outcome == "review":
-            cluster.status = "tagging_review"
+            # Ambiguous news is not spam and should not be misclassified
+            # as not_for_publication. Hold it for an explicit manual review.
+            cluster.status = "review_required" if review_pending else "tagging_review"
         else:
             cluster.status = "not_for_publication"
         session.commit()
         if debug:
             print(
-                f"Grounded tagger кластера #{cluster.id}: "
-                f"{cluster.status}; {decision.reason}; "
-                f"теги: {cluster.tags or 'нет'}"
+                f"Grounded #{cluster.id}: {cluster.status}; "
+                f"{decision.reason}; tags={cluster.tags or 'нет'}"
             )
+            if decision.evidence:
+                print("Основания:", "; ".join(decision.evidence))
         return selected_tags
+
+    focus_text = f"{cluster.title or ''}\n{cluster.summary_text or ''}"
+    scored_tags = score_tags_detailed(text, focus_text=focus_text)
 
     selected_tags = select_tags_by_score_gap(
         scored_tags=scored_tags,
