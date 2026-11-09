@@ -97,7 +97,7 @@ NOT_INDUSTRIAL = (
         r"преступлени\w*|дорожа\w*)\b"
     )),
     ("agriculture_or_social", rx(
-        r"\b(?:урожай\w*|озим\w*|посев\w*|"
+        r"\b(?:скидк\w*|распродаж\w*|урожай\w*|озим\w*|посев\w*|"
         r"мальк\w*|осетр\w*|рекультивац\w*|"
         r"свадьб\w*|птицефабрик\w*|"
         r"сбор\w*\s+икр\w*|"
@@ -398,7 +398,7 @@ def _contextual_evidence(
                     votes[tag] = (strength, source, match.group(0))
             if (
                 source == "summary"
-                and not has_concrete_title_tag
+                and not title_hints
                 and action and GENERIC_PRODUCTION.search(piece)
             ):
                 votes.setdefault(
