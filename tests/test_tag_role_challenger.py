@@ -38,6 +38,22 @@ class TagRoleChallengerTests(unittest.TestCase):
             "Новый проект эсминца проходит модельные испытания."
         ))
 
+    def test_launching_a_vessel_is_shipbuilding_not_transport_only(self):
+        # General linguistic case: "спустили/спущено на воду" means the
+        # completion of a vessel-building stage, even without "построили".
+        self.assertTrue(shipbuilding_evidence(
+            'Спустили на воду электрическое пассажирское судно',
+            'Новое судно оснащено гибридной энергетической установкой.'
+        ))
+        self.assertTrue(shipbuilding_evidence(
+            'На воду спустили новый речной теплоход',
+            'Испытания проводятся на местной судоверфи.'
+        ))
+        self.assertFalse(shipbuilding_evidence(
+            'Паромное сообщение возобновили после ремонта причала',
+            'Суда перевезут пассажиров на другой берег.'
+        ))
+
     def test_uav_wing_development_is_aircraft_engineering(self):
         self.assertTrue(aviation_production_evidence(
             "Конструкторы испытали новое крыло беспилотного летательного аппарата",
