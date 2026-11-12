@@ -79,6 +79,7 @@ def list_pending(session: Session, limit: int = 10):
         session.query(ModerationItem)
         .join(Post, Post.id == ModerationItem.post_id)
         .filter(ModerationItem.status == "pending", Post.status == "draft")
+        .filter(ModerationItem.telegram_message_id.is_(None))
         .order_by(ModerationItem.id.asc())
         .limit(max(1, min(limit, 30)))
         .all()
@@ -188,6 +189,17 @@ def valid_approval(session: Session, post: Post, *, require_text_only: bool = Tr
         .first()
     )
     if item is None or not item.moderator_telegram_id or not item.reviewed_at:
+        return False
+    action = (
+        session.query(ModerationAction.id)
+        .filter(
+            ModerationAction.moderation_item_id == item.id,
+            ModerationAction.action == "approve",
+            ModerationAction.moderator_telegram_id == item.moderator_telegram_id,
+        )
+        .first()
+    )
+    if action is None:
         return False
     if item.snapshot_sha256 != snapshot_hash(post.post_text, item.image_id):
         return False
