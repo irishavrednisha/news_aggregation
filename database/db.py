@@ -30,7 +30,12 @@ def create_tables():
     """
     from database.models import Source, News, Cluster, Post
 
-    Base.metadata.create_all(bind=engine)
+    # Legacy tables only: do NOT create new moderation/image tables on startup.
+    # They must be installed through the validated Alembic migration, after backup.
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[Source.__table__, News.__table__, Cluster.__table__, Post.__table__],
+    )
 
 
 def get_session():
