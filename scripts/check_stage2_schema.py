@@ -1,6 +1,14 @@
 """Read-only report of existing and stage-2 tables; does not mutate PostgreSQL."""
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Allow both "python scripts/check_stage2_schema.py" and "python -m scripts.check_stage2_schema".
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from sqlalchemy import inspect, text
 
 from database.db import engine
