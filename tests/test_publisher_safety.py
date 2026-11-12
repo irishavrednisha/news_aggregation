@@ -1,12 +1,14 @@
 """Database-level moderation tests (SQLite; no MAX/network activity)."""
+import os
 import unittest
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from database.db import Base
 from database.models import Cluster, Post
-from publishing.publisher import _claim_post, get_approved_posts
+from publishing.publisher import _claim_post, get_approved_posts, publish_approved_posts
 
 
 class PublisherSafetyTests(unittest.TestCase):
@@ -42,6 +44,24 @@ class PublisherSafetyTests(unittest.TestCase):
         self.add_post(status="approved", text="only title")
         self.add_post(status="draft")
         self.assertEqual([p.id for p in get_approved_posts(self.session)], [approved.id])
+
+    def test_max_disabled_does_not_even_open_a_db_session(self):
+        self.add_post(status="approved")
+        with patch.dict(os.environ, {"MAX_PUBLISHING_ENABLED": "false"}):
+            with patch("publishing.publisher.get_session", side_effect=AssertionError("No DB access")):
+                self.assertEqual(publish_approved_posts(), 0)
+
+    def test_dry_run_never_changes_approval_or_opens_browser(self):
+        approved = self.add_post(status="approved")
+        with patch("publishing.publisher.get_session", return_value=self.session):
+            with patch("publishing.publisher.sync_playwright", side_effect=AssertionError("No browser")):
+                self.assertEqual(publish_approved_posts(dry_run=True), 1)
+        # Reopen a fresh session to prove the persisted state is unchanged.
+        check = sessionmaker(bind=self.engine)()
+        try:
+            self.assertEqual(check.get(Post, approved.id).status, "approved")
+        finally:
+            check.close()
 
     def test_claim_is_atomic_and_cannot_be_repeated(self):
         approved = self.add_post(status="approved")
