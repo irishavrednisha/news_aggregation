@@ -1,0 +1,2 @@
+# Additional dependency for stage 2 (existing project dependencies remain unchanged).
+alembic>=1.13,<2
