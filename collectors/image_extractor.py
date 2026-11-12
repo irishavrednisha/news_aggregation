@@ -6,6 +6,7 @@ Rights are never presumed from the ability to download an image.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
@@ -39,7 +40,11 @@ def _absolute(url: str | None, base_url: str) -> str:
     parsed = urlsplit(full)
     if parsed.scheme not in ("https", "http") or not parsed.hostname:
         return ""
-    if any(token in parsed.path.casefold() for token in _BAD_TOKENS):
+    # Whole filename segments only. Substring matching accidentally rejected
+    # legitimate subjects, e.g. "silicon" containing "icon".
+    basename = parsed.path.rsplit("/", 1)[-1].casefold()
+    filename_tokens = set(re.split(r"[^a-z]+", basename))
+    if any(token in filename_tokens for token in _BAD_TOKENS):
         return ""
     if parsed.path.casefold().endswith((".svg", ".gif", ".ico")):
         return ""
@@ -53,7 +58,7 @@ def _attr(node, name: str) -> str:
 
 
 def _source_from_img(img) -> str:
-    for name in ("data-src", "data-original", "data-lazy-src", "src"):
+    for name in ("data-src", "data-original", "data-lazy-src"):
         value = _attr(img, name)
         if value and not value.startswith(("data:", "blob:")):
             return value
@@ -75,7 +80,7 @@ def _source_from_img(img) -> str:
             choices.append((width, bits[0]))
         if choices:
             return max(choices, key=lambda pair: pair[0])[1]
-    return ""
+    return _attr(img, "src")
 
 
 def extract_image_candidates(
