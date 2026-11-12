@@ -289,6 +289,46 @@ def save_news(session: Session, article) -> News | None:
     session.commit()
     session.refresh(news)
 
+    # Best-effort image attachment: image errors never drop an already saved
+    # article, and no images are downloaded until the feature is enabled.
+    import os
+    if os.environ.get("NEWS_IMAGES_ENABLED", "false").strip().casefold() in (
+        "1", "true", "yes", "on"
+    ):
+        candidates = getattr(article, "image_candidates", None) or []
+        if candidates:
+            try:
+                from database.moderation_models import NewsImage
+                from processing.image_downloader import download_main_image
+                saved_image = download_main_image(
+                    candidates,
+                    storage_dir=os.environ.get(
+                        "NEWS_IMAGE_STORAGE_DIR", "data/news_images"
+                    ),
+                )
+                if saved_image is not None:
+                    session.add(NewsImage(
+                        news_id=news.id,
+                        source_url=saved_image.source_url,
+                        local_path=saved_image.local_path,
+                        mime_type=saved_image.mime_type,
+                        width=saved_image.width,
+                        height=saved_image.height,
+                        sha256=saved_image.sha256,
+                        caption=saved_image.caption,
+                        credit=saved_image.credit,
+                        license_url=saved_image.license_url,
+                        rights_status="unknown",
+                    ))
+                    session.commit()
+                    print(f"Сохранено изображение к новости #{news.id}")
+            except Exception as error:
+                session.rollback()
+                print(
+                    f"Не удалось сохранить картинку для новости #{news.id}: "
+                    f"{type(error).__name__}: {error}"
+                )
+
     return news
 
 
