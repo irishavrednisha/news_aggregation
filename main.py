@@ -27,7 +27,6 @@ from processing.clustering import (
 from processing.summarizer import summarize_new_clusters
 from processing.tagger import tag_new_clusters
 
-from publishing.publisher import publish_ready_clusters
 
 def main():
     print("Создание таблиц...")
@@ -102,10 +101,9 @@ def main():
 
         )
 
-        print("\nПубликация готовых кластеров в MAX...")
-        publish_ready_clusters(
-            limit=30
-        )
+        print("\nГотовые материалы сохранены. Отправка в MAX не производится.")
+        print("Все публикации должны пройти Telegram-модерацию.")
+        print("Очередь модерации будет подключена на следующем этапе.")
 
     finally:
         session.close()
