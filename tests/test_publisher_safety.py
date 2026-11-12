@@ -1,6 +1,7 @@
 """Database-level moderation tests (SQLite; no MAX/network activity)."""
 import os
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
@@ -8,6 +9,8 @@ from sqlalchemy.orm import sessionmaker
 
 from database.db import Base
 from database.models import Cluster, Post
+from database.moderation_models import ModerationItem, ModerationAction, NewsImage, PublicationAttempt
+from moderation.service import snapshot_hash
 from publishing.publisher import _claim_post, get_approved_posts, publish_approved_posts
 
 
@@ -33,6 +36,15 @@ class PublisherSafetyTests(unittest.TestCase):
         )
         self.session.add(post)
         self.session.commit()
+        if status == "approved":
+            self.session.add(ModerationItem(
+                post_id=post.id, status="approved",
+                snapshot_sha256=snapshot_hash(post.post_text, None),
+                image_rights_decision="no_image",
+                moderator_telegram_id=12345,
+                reviewed_at=datetime.utcnow(),
+            ))
+            self.session.commit()
         return post
 
     def test_ready_cluster_and_draft_post_cannot_be_selected(self):
@@ -44,6 +56,13 @@ class PublisherSafetyTests(unittest.TestCase):
         self.add_post(status="approved", text="only title")
         self.add_post(status="draft")
         self.assertEqual([p.id for p in get_approved_posts(self.session)], [approved.id])
+
+    def test_post_marked_approved_without_moderation_is_ineligible(self):
+        post = self.add_post(status="draft")
+        post.status = "approved"
+        self.session.commit()
+        self.assertEqual(get_approved_posts(self.session), [])
+        self.assertFalse(_claim_post(self.session, post.id))
 
     def test_max_disabled_does_not_even_open_a_db_session(self):
         self.add_post(status="approved")
