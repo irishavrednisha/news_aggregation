@@ -37,12 +37,19 @@ class PublisherSafetyTests(unittest.TestCase):
         self.session.add(post)
         self.session.commit()
         if status == "approved":
-            self.session.add(ModerationItem(
+            item = ModerationItem(
                 post_id=post.id, status="approved",
                 snapshot_sha256=snapshot_hash(post.post_text, None),
                 image_rights_decision="no_image",
                 moderator_telegram_id=12345,
                 reviewed_at=datetime.utcnow(),
+            )
+            self.session.add(item)
+            self.session.flush()
+            self.session.add(ModerationAction(
+                moderation_item_id=item.id,
+                moderator_telegram_id=12345,
+                action="approve",
             ))
             self.session.commit()
         return post
