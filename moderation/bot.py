@@ -42,14 +42,21 @@ class Telegram:
         self.http = requests.Session()
 
     def call(self, method: str, *, data: dict | None = None, files=None, timeout: int = 35):
-        response = self.http.post(
-            self.endpoint + method,
-            data=data or {},
-            files=files,
-            timeout=(10, timeout),
-        )
-        response.raise_for_status()
-        result = response.json()
+        try:
+            response = self.http.post(
+                self.endpoint + method,
+                data=data or {},
+                files=files,
+                timeout=(10, timeout),
+            )
+            response.raise_for_status()
+            result = response.json()
+        except (requests.RequestException, ValueError) as exc:
+            # Requests exception messages may contain the bot token in the URL.
+            # Never print or chain their raw content to terminal/log files.
+            raise RuntimeError(
+                f"Telegram {method} failed ({type(exc).__name__})"
+            ) from None
         if not result.get("ok"):
             raise RuntimeError(f"Telegram API {method}: {result.get('description', 'unknown error')}")
         return result["result"]
@@ -174,7 +181,8 @@ def _on_update(bot: Telegram, update: dict):
     elif command == "/status":
         with get_session() as session:
             from database.moderation_models import ModerationItem
-            rows = session.query(ModerationItem.status, __import__("sqlalchemy").func.count()).group_by(ModerationItem.status).all()
+            from sqlalchemy import func
+            rows = session.query(ModerationItem.status, func.count()).group_by(ModerationItem.status).all()
         stats = ", ".join(f"{status}: {count}" for status, count in rows) or "пусто"
         bot.message(chat_id, f"Очередь: {stats}")
     elif command == "/queue":
