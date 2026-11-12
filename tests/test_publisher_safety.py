@@ -53,13 +53,14 @@ class PublisherSafetyTests(unittest.TestCase):
 
     def test_dry_run_never_changes_approval_or_opens_browser(self):
         approved = self.add_post(status="approved")
+        post_id = approved.id
         with patch("publishing.publisher.get_session", return_value=self.session):
             with patch("publishing.publisher.sync_playwright", side_effect=AssertionError("No browser")):
                 self.assertEqual(publish_approved_posts(dry_run=True), 1)
         # Reopen a fresh session to prove the persisted state is unchanged.
         check = sessionmaker(bind=self.engine)()
         try:
-            self.assertEqual(check.get(Post, approved.id).status, "approved")
+            self.assertEqual(check.get(Post, post_id).status, "approved")
         finally:
             check.close()
 
