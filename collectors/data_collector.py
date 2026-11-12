@@ -24,10 +24,12 @@ import re
 import urllib3
 
 from bs4 import BeautifulSoup
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse, urljoin
 from playwright.sync_api import sync_playwright
+
+from collectors.image_extractor import ImageCandidate, extract_image_candidates
 
 from utils.text_utils import (
     clean_text,
@@ -48,6 +50,8 @@ class Article:
     published_at: object
     text: str
     text_source: str
+    # Candidate URLs only; download after text passes filters and is stored.
+    image_candidates: list[ImageCandidate] = field(default_factory=list)
 
 
 @dataclass
@@ -2885,10 +2889,16 @@ def build_full_article(preview: ArticlePreview) -> Article:
     title = preview.title
     text, text_source = "", "none"
     published_at = preview.published_at
+    image_candidates = []
 
     if html:
         soup = BeautifulSoup(html, "html.parser")
         jsonld = _jsonld_article(soup)
+        # Reuse already fetched article HTML: never request the page twice.
+        try:
+            image_candidates = extract_image_candidates(soup, preview.url)
+        except Exception as exc:
+            print(f"Не удалось извлечь изображения {preview.url}: {exc}")
 
         # РИА: диагностика уже загруженной страницы без дополнительных
         # запросов. Нужна, если RSS отдаёт ссылки, но тело не извлекается.
@@ -3001,6 +3011,7 @@ def build_full_article(preview: ArticlePreview) -> Article:
         published_at=published_at,
         text=text,
         text_source=text_source,
+        image_candidates=image_candidates,
     )
 
 def collect_news(
