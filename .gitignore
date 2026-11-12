@@ -27,3 +27,9 @@ training/real_gold_verified.json
 # Local temporary artifacts
 *.merge-backup.py
 .DS_Store
+
+# Local backups, images and credentials must not enter Git
+backups/
+data/news_images/
+*.dump
+*.backup
