@@ -52,11 +52,18 @@ def get_approved_posts(session, limit: int = 100) -> list[Post]:
         .limit(limit)
         .all()
     )
-    return [post for post in candidates if is_approved_post(post)]
+    # A Post.status=approved flag alone is never enough.
+    # A matching Telegram moderation record is required.
+    from moderation.service import valid_approval
+    return [post for post in candidates if is_approved_post(post) and valid_approval(session, post)]
 
 
 def _claim_post(session, post_id: int) -> bool:
-    """Reserve an approved post atomically, so two workers cannot both send it."""
+    """Reserve only genuinely moderated text-only posts, atomically."""
+    from moderation.service import valid_approval
+    candidate = session.get(Post, post_id)
+    if candidate is None or not is_approved_post(candidate) or not valid_approval(session, candidate):
+        return False
     updated = (
         session.query(Post)
         .filter(Post.id == post_id, Post.status == "approved")
