@@ -108,7 +108,7 @@ _INDUSTRIAL = re.compile(
     r"энергопотреблен\w*|электроэнерг\w*|генераци\w*|трансформатор\w*|турбин\w*|истребител\w*|вертолет\w*|"
     r"ледокол\w*|фрегат\w*|корвет\w*|круизн\w* лайнер\w*|подлод\w*|тепловоз\w*|трамва\w*|"
     r"акпп|брест-од-\d+|мс-21|су-34|ак-12|sim.карт\w*|титан\w*|"
-    r"алмаз\w*|поезд\w*|ракет\w*|геополимер\w*)\b")
+    r"алмаз\w*|поезд\w*|ракет\w*|геополимер\w*|лэп|химпром\w*|"\n    r"химическ\w* отрасл\w*)\b")
 _EVENT = re.compile(
     r"\b(?:запуст\w*|ввел\w*|ввели|введ\w*|открыл\w*|создал\w*|"
     r"разработ\w*|произвел\w*|изготов\w*|испыт\w*|модернизир\w*|модернизац\w*|создан\w*|"
@@ -183,6 +183,54 @@ _OBVIOUS_SPORTS = re.compile(
     r"\b(?:обыгра\w*|очк\w* .{0,80} побед\w*)\b"
 )
 _OBVIOUS_UNRELATED = re.compile(r"\b(?:маньяк\w*|аукцион\w* картин\w*|картин\w* .{0,60} аукцион\w*)\b")
+# Domain mentions in a body are not enough when the actual event is a
+# military operation, political address, flight restriction, art sale, etc.
+# These headline-first rules do not block news about manufacturing aircraft,
+# defence equipment, industrial R&D or completed technology deployment.
+_NONINDUSTRIAL_PRIMARY = re.compile(
+    r"(?:^си цзиньпин\b|^песков сообщил.{0,70}прям\w* лини\w*|"
+    r"^работа .{0,80}\b(?:кандинск\w*|аукцион\w*)|"
+    r"^beget лишился статуса регистратора|"
+    r"^армия .{0,50}\b(?:отражени\w*|налет\w*)|"
+    r"^силы пво .{0,60}\b(?:атак\w*|отраж\w*)|"
+    r"^российские регионы захлестнула .{0,50}дрон\w*|"
+    r"^в кемеровской области упал военно.транспортн\w*|"
+    r"^в аэропорту .{0,50}\bограничени\w*|"
+    r"^первопричин\w* .{0,60}\bсбо\w* в аэропорт\w*|"
+    r"^оттава выделила .{0,80}военн\w* помощ\w*|"
+    r"^американские силы .{0,80}авианосн\w* ударн\w* групп\w*|"
+    r"^британск\w* стратегическ\w* подлодк\w* вернул\w*|"
+    r"^.{0,90}бросил\w* якорь у .{0,40}берег\w*|"
+    r"^в якутии обратили .{0,50}бриллиант\w* в доход государства|"
+    r"^.{0,90}\b(?:пво отража\w* атаку|отражени\w* налет\w*)"
+    r")"
+)
+# A conference announcement is not a plant opening, even if its long
+# promotional body casually lists successful old production projects.
+_UPCOMING_EVENT_HEADLINE = re.compile(
+    r"\b(?:обсудят .{0,60}(?:в казани|на форум\w*)|"
+    r"пройдет .{0,60}(?:мероприяти\w*|выставк\w*|форум\w*)|"
+    r"международн\w* специализированн\w* выставк\w*|"
+    r"ключев\w* площадк\w* по .{0,80}безопасност\w*|"
+    r"вебинар\w*|"
+    r"кругл\w* стол на .{0,60}мфэс)"
+)
+_EVENT_NOTICE_LEAD = re.compile(
+    r"\b(?:состоится|состоятс\w*|пройдет|пройдут|"
+    r"приглаша\w*|организу\w* вебинар\w*|"
+    r"с \d{1,2} по \d{1,2} .{0,60}\bсостоится)"
+)
+# Commercial giveaways to industrial buyers remain advertising, not plant news.
+_COMMERCIAL_CAMPAIGN = re.compile(
+    r"\b(?:бесплатн\w* каско|программ\w* бесплатн\w* каско|"
+    r"покупк\w* спецтехник\w* .{0,60}бесплатн\w*)"
+)
+# Industry-relevant engineering design should be preserved even if the title
+# uses an equipment abbreviation missing from generic word lists.
+_ENGINEERING_SUBJECT = re.compile(
+    r"\b(?:лэп|рза|рзу|электротехническ\w*|сетев\w* инфраструктур\w*)\b"
+)
+
 # HR, PR and governance mentions are not proof of a production event.
 _EVENT_ANNOUNCEMENT = re.compile(
     r"\b(?:до .{0,70} выставк\w* .{0,70} осталось|"
@@ -227,6 +275,12 @@ def semantic_decision(article) -> IntakeDecision:
         _INDUSTRY_ACTORS.search(title) and _ACTOR_TECHNICAL_OUTPUT.search(title)
     ))
     event = bool(_EVENT.search(title))
+    if _NONINDUSTRIAL_PRIMARY.search(title):
+        return IntakeDecision("rejected", "nonindustrial_primary_event", "semantic")
+    if _COMMERCIAL_CAMPAIGN.search(title):
+        return IntakeDecision("rejected", "advertisement", "semantic")
+    if _UPCOMING_EVENT_HEADLINE.search(title) and _EVENT_NOTICE_LEAD.search(lead):
+        return IntakeDecision("rejected", "event_announcement", "semantic")
     if _EVENT_ANNOUNCEMENT.search(title):
         return IntakeDecision("rejected", "event_announcement", "semantic")
     if _LABOR_PROTEST.search(title):
@@ -254,6 +308,8 @@ def semantic_decision(article) -> IntakeDecision:
         return IntakeDecision("rejected", "offtopic_primary_event", "semantic")
     if industrial and _UNCONFIRMED_PLAN.search(title) and not _PROJECT_COMMITTED.search(title):
         return IntakeDecision("accepted", "industrial_plan_unconfirmed", "semantic")
+    if _ENGINEERING_SUBJECT.search(title) and _INDUSTRIAL.search(lead):
+        return IntakeDecision("accepted", "engineering_application", "semantic")
     if _TECH_APPLIED_TITLE.search(title) and _TECH_APPLIED_LEAD.search(lead):
         return IntakeDecision("accepted", "industrial_application_confirmed", "semantic")
     if industrial and _PRODUCTION_PROGRESS_LEAD.search(lead) and (
