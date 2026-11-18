@@ -37,3 +37,7 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_collector_regressions.py' -v
       - name: Run all-source extraction fixtures
         run: python -m unittest discover -s tests -p 'test_text_extraction_all_sources.py' -v
+      - name: Run RSS/source-specific regressions
+        run: python -m unittest discover -s tests -p 'test_reactivated_sources.py' -v
+      - name: Run photo extraction and safe-download regressions
+        run: python -m unittest discover -s tests -p 'test_news_images.py' -v
