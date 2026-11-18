@@ -3212,8 +3212,11 @@ def collect_news(
                 # При чистой проверке сбора не скрываем короткие статьи:
                 # длина текста остаётся видна в JSON, а решение принимает человек.
                 # Пустая страница не является статьёй даже в raw-режиме.
-                if len((article.text or "").strip()) < (
-                    min_text_length if apply_filters else 80
+                # Raw diagnostics retain real but unusually short HTML text;
+                # the JSON marks it incomplete. Production still enforces
+                # the per-source minimum. Empty/error pages were rejected above.
+                if not (article.text or "").strip() or (
+                    apply_filters and len(article.text.strip()) < min_text_length
                 ):
                     stat["short_or_empty"] += 1
                     stat["rejected_urls"].append(preview.url)
