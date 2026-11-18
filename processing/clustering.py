@@ -241,6 +241,50 @@ def cluster_recent_news(session, hours: int = 48,
     return changed
 
 
+def get_cluster_source_links(session, cluster_id: int) -> list[dict]:
+    """Read-only list of accepted news and stage-2 raw exact mirrors.
+
+    Stage 2 intentionally keeps exact syndications out of the News table.
+    They are retained in NewsIntakeRecord and should still be offered as
+    additional source links. No schema migration or DB mutation.
+    """
+    from sqlalchemy import inspect, or_
+    from database.models import Source
+
+    members = (session.query(News)
+               .filter(News.cluster_id == cluster_id)
+               .order_by(News.id.asc()).all())
+    source_names = {source.id: source.name for source in session.query(Source).all()}
+    links = [{
+        "news_id": item.id, "source": source_names.get(item.source_id, ""),
+        "url": item.url, "link_type": "accepted_event_article",
+    } for item in members]
+    if not members or not inspect(session.get_bind()).has_table("news_intake_records"):
+        return links
+    from database.intake_models import NewsIntakeRecord
+    ids = [item.id for item in members]
+    originals = (session.query(NewsIntakeRecord.id)
+                 .filter(NewsIntakeRecord.news_id.in_(ids)).all())
+    origin_ids = [id_value for (id_value,) in originals]
+    clauses = [NewsIntakeRecord.duplicate_of_news_id.in_(ids)]
+    if origin_ids:
+        clauses.append(NewsIntakeRecord.duplicate_of_intake_id.in_(origin_ids))
+    copies = (session.query(NewsIntakeRecord)
+              .filter(or_(*clauses))
+              .order_by(NewsIntakeRecord.id.asc()).all())
+    seen = {item["url"] for item in links}
+    for copy in copies:
+        if copy.raw_url in seen:
+            continue
+        seen.add(copy.raw_url)
+        links.append({
+            "news_id": copy.duplicate_of_news_id,
+            "source": source_names.get(copy.source_id, ""),
+            "url": copy.raw_url, "link_type": "stage2_exact_copy",
+        })
+    return links
+
+
 def print_recent_clusters(session, limit: int = 20):
     clusters = (
         session.query(Cluster)
@@ -272,6 +316,11 @@ def print_recent_clusters(session, limit: int = 20):
             mark = "[PRIMARY]" if news.is_primary else "         "
             print(f"{mark} {news.title}")
             print(f"          {news.url}")
+        # Raw copies are not duplicate News rows, but their links are kept.
+        # Printed once below with the original source names.
+        for link in get_cluster_source_links(session, cluster.id):
+            if link["link_type"] == "stage2_exact_copy":
+                print(f"    [RAW COPY] {link['source']}: {link['url']}")
 
 
 def print_cluster_details(session, cluster_id: int):
@@ -306,4 +355,13 @@ def print_cluster_details(session, cluster_id: int):
         print(f"Ссылка: {news.url}")
         print(f"Дата публикации: {news.published_at}")
         print(f"Дата сбора: {news.collected_at}")
-        print(f"Текст: {news.text[:700]}...")
+        print(f"Текст: {(news.text or '')[:700]}...")
+
+    exact_links = [
+        item for item in get_cluster_source_links(session, cluster.id)
+        if item["link_type"] == "stage2_exact_copy"
+    ]
+    if exact_links:
+        print("Точные копии, сохранённые на этапе 2:")
+        for item in exact_links:
+            print(f"  {item['source']}: {item['url']}")
