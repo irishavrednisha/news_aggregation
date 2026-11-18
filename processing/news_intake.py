@@ -127,7 +127,7 @@ def semantic_decision(article) -> IntakeDecision:
     event = bool(_EVENT.search(title))
     if _OFFTOPIC.search(title):
         # Industrial safety investigations can be relevant, unlike a generic raid.
-        if industrial and event:
+        if industrial:
             return IntakeDecision("review", "offtopic_event_with_industry", "semantic")
         return IntakeDecision("rejected", "offtopic_event", "semantic")
     if _CONSUMER.search(title) and _CONSUMER_ACTION.search(title) and not (industrial and event):
