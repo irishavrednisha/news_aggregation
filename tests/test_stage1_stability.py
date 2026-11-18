@@ -1,0 +1,127 @@
+"""Offline stability contracts: no ML on collection path, isolation, TLS and reporting."""
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from collectors.article_quality import is_error_page_text
+from collectors.data_collector import Article, fetch_html_with_requests
+from collectors.tls_policy import ca_bundle_for_url
+from scripts.diagnose_all_sources import article_metrics, inspect_source
+
+
+class Stage1StabilityTests(unittest.TestCase):
+    def test_main_import_does_not_import_ml(self):
+        script = (
+            "import sys; import main; "
+            "assert not any(x in sys.modules for x in "
+            "('sklearn', 'torch', 'sentence_transformers')); "
+            "print('COLLECTOR_IMPORT_OK')"
+        )
+        process = subprocess.run([sys.executable, "-c", script],
+                                 capture_output=True, text=True, timeout=12)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn("COLLECTOR_IMPORT_OK", process.stdout)
+
+    def test_collection_continues_after_source_failure(self):
+        import main
+        sources = [SimpleNamespace(name="Broken", source_type="html"),
+                   SimpleNamespace(name="Working", source_type="html")]
+        session = MagicMock()
+        good = Article(
+            source="Working", title="Открыт новый российский промышленный завод",
+            url="https://example.org/news/factory", published_at=datetime(2026, 11, 18),
+            text="Подробная информация о работе нового промышленного предприятия. " * 6,
+            text_source="html",
+        )
+        with patch("database.db.get_session", return_value=session), \
+             patch("database.repository.get_active_sources", return_value=sources), \
+             patch("collectors.data_collector.collect_news",
+                   side_effect=[RuntimeError("unavailable"), [good]]) as collected, \
+             patch("processing.topic_filter.filter_articles", side_effect=lambda a: a), \
+             patch("database.repository.save_articles", return_value=1):
+            saved = main.collect(limit=1)
+        self.assertEqual(saved, 1)
+        self.assertEqual(collected.call_count, 2)
+        session.rollback.assert_called()
+        session.close.assert_called_once()
+
+    def test_error_pages_never_count_as_news(self):
+        for text in (
+            "",
+            "Error establishing a database connection",
+            "Access Denied",
+            "Just a moment...",
+            "Please enable JavaScript to view this page",
+        ):
+            self.assertTrue(is_error_page_text(text), text)
+        self.assertFalse(is_error_page_text(
+            "Инженеры запустили новое производство компонентов для отечественных машин. " * 12
+        ))
+
+    def test_requests_always_starts_with_verified_tls(self):
+        from requests.exceptions import SSLError
+        page = MagicMock()
+        page.status_code = 200
+        page.encoding = "utf-8"
+        page.text = "<html><article>verified from system</article></html>"
+        with patch("collectors.data_collector.requests.get",
+                   side_effect=SSLError("untrusted")) as req, \
+             patch("collectors.data_collector.retry_with_trusted_roots",
+                   return_value=page) as trusted:
+            result = fetch_html_with_requests("https://www.gazprom.ru/press/news/")
+        self.assertIn("system", result)
+        self.assertTrue(req.call_args.kwargs["verify"])
+        trusted.assert_called_once()
+
+    def test_ca_bundle_matches_exact_host_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ca = Path(tmp) / "root.pem"
+            ca.write_text("test", encoding="utf-8")
+            with patch.dict(os.environ, {
+                "NEWS_SOURCE_CA_BUNDLES": (
+                    '{"www.rostec.ru": "' + str(ca).replace("\\\\", "/") + '"}'
+                ),
+                "NEWS_CA_BUNDLE": "",
+            }):
+                self.assertEqual(ca_bundle_for_url("https://www.rostec.ru/media/news/"), str(ca))
+                self.assertIsNone(ca_bundle_for_url("https://www.rostec.ru.attacker.test/news"))
+                self.assertIsNone(ca_bundle_for_url("https://rostec.ru/media/news"))
+                self.assertIsNone(ca_bundle_for_url("https://user:pass@www.rostec.ru/media/news"))
+
+    def test_diagnostics_reports_date_title_image_and_extraction(self):
+        source = SimpleNamespace(id=7, name="Example", source_type="html",
+                                 url="https://example.com", rss_url=None, is_active=False)
+        sample = Article(
+            source="Example", title="Новая установка заработала на промышленном заводе",
+            url="https://example.com/article", text="Новые технологии применены на заводе. " * 20,
+            published_at=datetime(2026, 11, 18), text_source="html",
+        )
+        with patch("collectors.data_collector.collect_news", return_value=[sample]) as fetch:
+            result = inspect_source(source, limit=2)
+        self.assertEqual(result["source_id"], 7)
+        self.assertFalse(result["configured_active"])
+        self.assertEqual(result["articles_extracted"], 1)
+        self.assertEqual(result["full_html_texts_250_plus"], 1)
+        self.assertEqual(result["valid_dates"], 1)
+        self.assertEqual(result["articles_with_image_candidates"], 0)
+        self.assertIsNone(fetch.call_args.kwargs["session"])
+        self.assertFalse(fetch.call_args.kwargs["apply_filters"])
+
+    def test_empty_html_or_rss_preview_is_not_complete_html_text(self):
+        rss = Article("Example", "Промышленное строительство в России",
+                      "https://example.com/n", datetime(2026, 11, 18),
+                      "Предварительный анонс выпуска нового оборудования. " * 6,
+                      "rss")
+        self.assertFalse(article_metrics(rss)["full_text_heuristic"])
+
+
+if __name__ == "__main__":
+    unittest.main()
