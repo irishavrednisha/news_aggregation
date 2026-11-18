@@ -72,6 +72,7 @@ class Stage2RealWorldRecallRegressions(unittest.TestCase):
             ("Австралия начала резку стали для больших десантных кораблей", "accepted"),
             ("Роботизированную платформу «Депеша» сделали выносливее", "accepted"),
             ("«Ареал» планирует добывать титан в Тамбовской области", "review"),
+            ("Эстония решила закрыть границу с Россией после попытки диверсии на заводе по выпуску дронов", "review"),
         ]
         self.assertGreaterEqual(len(cases), 30)
         for title, expected in cases:
