@@ -127,10 +127,13 @@ def audit_real(articles, *, today=None, expected_labels=None, excluded=None):
     expected_labels = expected_labels or {}
     excluded = excluded or set()
     index = ExactDuplicateIndex()
+    raw_index = ExactDuplicateIndex()
     rows = []
     article_by_url = {}
+    raw_by_id = {}
     counts = Counter()
     next_id = 1
+    raw_next_id = 1
     for article in articles:
         canonical = normalize_url(article.url)
         if canonical in excluded:
@@ -138,12 +141,18 @@ def audit_real(articles, *, today=None, expected_labels=None, excluded=None):
             continue
         decision = classify_intake(article, now=today)
         match = index.find(article) if decision.status == "accepted" else None
-        status = "duplicate" if match is not None else decision.status
-        reason = match.reason if match is not None else decision.reason
+        raw_match = raw_index.find(article) if canonical and len(
+            article.text or ""
+        ) >= 250 else None
+        duplicate = match or (raw_match if decision.status != "accepted" else None)
+        status = "duplicate" if duplicate is not None else decision.status
+        reason = duplicate.reason if duplicate is not None else decision.reason
         target = next(
             (u for u, n in article_by_url.items() if match is not None and n == match.news_id),
             None,
         )
+        if target is None and status == "duplicate" and raw_match is not None:
+            target = raw_by_id.get(raw_match.news_id)
         row = {
             "source": article.source,
             "title": article.title,
@@ -154,7 +163,7 @@ def audit_real(articles, *, today=None, expected_labels=None, excluded=None):
             "text": article.text,
             "body_chars": len(article.text or ""),
             "status": status, "reason": reason,
-            "stage": "exact_duplicate" if match else decision.stage,
+            "stage": "exact_duplicate" if duplicate else decision.stage,
             "duplicate_of_url": target,
         }
         rows.append(row)
@@ -165,6 +174,10 @@ def audit_real(articles, *, today=None, expected_labels=None, excluded=None):
             index.add(SimpleNamespace(id=next_id, **vars(article)))
             article_by_url[canonical] = next_id
             next_id += 1
+        if status != "duplicate" and canonical and len(article.text or "") >= 250:
+            raw_index.add(SimpleNamespace(id=raw_next_id, **vars(article)))
+            raw_by_id[raw_next_id] = canonical
+            raw_next_id += 1
 
     # Replaying the same input against the accepted pool must create zero news.
     index2 = ExactDuplicateIndex()
@@ -213,6 +226,7 @@ def audit_real(articles, *, today=None, expected_labels=None, excluded=None):
     return {
         "counts": dict(counts),
         "repeatability": {"replay_new_news": replay_new_news},
+        "duplicate_audit_scope": "all_raw_statuses_with_eligible_text",
         "gold_real_metrics": dict(label_counts) if label_counts else None,
         "labeled_mistakes": labeled,
         "articles": rows,
