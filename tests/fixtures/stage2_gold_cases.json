@@ -1,5 +1,5 @@
 {
-  "description": "Curated synthetic boundary cases, not an independently labeled real sample.",
+  "description": "Curated synthetic binary accepted/rejected controls (duplicates are rejected with duplicate reason). Not independently labeled real news.",
   "cases": [
     {
       "id": "S2-01",
@@ -175,7 +175,7 @@
     {
       "id": "S2-20",
       "title": "Завод обсуждает инновационные программы",
-      "expected_status": "review",
+      "expected_status": "accepted",
       "expected_reason": "industry_without_clear_event",
       "body_kind": "full",
       "published_at": "2026-11-18",
@@ -184,7 +184,7 @@
     {
       "id": "S2-21",
       "title": "Посещение верфи учащимися",
-      "expected_status": "review",
+      "expected_status": "accepted",
       "expected_reason": "industry_without_clear_event",
       "body_kind": "full",
       "published_at": "2026-11-18",
@@ -193,8 +193,8 @@
     {
       "id": "S2-22",
       "title": "Власти обсуждают экономическую программу",
-      "expected_status": "review",
-      "expected_reason": "uncertain_industry",
+      "expected_status": "accepted",
+      "expected_reason": "industry_in_lead",
       "body_kind": "full",
       "published_at": "2026-11-18",
       "url": "https://sample.example/news/test-22"
@@ -202,7 +202,7 @@
     {
       "id": "S2-23",
       "title": "Объявлен конкурс инженеров",
-      "expected_status": "review",
+      "expected_status": "rejected",
       "expected_reason": "corporate_or_hr_event",
       "body_kind": "full",
       "published_at": "2026-11-18",
@@ -211,7 +211,7 @@
     {
       "id": "S2-24",
       "title": "На заводе прошли обыски",
-      "expected_status": "review",
+      "expected_status": "rejected",
       "expected_reason": "offtopic_event_with_industry",
       "body_kind": "full",
       "published_at": "2026-11-18",
@@ -220,7 +220,7 @@
     {
       "id": "S2-25",
       "title": "Вице-премьер посетил производство",
-      "expected_status": "review",
+      "expected_status": "accepted",
       "expected_reason": "industry_without_clear_event",
       "body_kind": "full",
       "published_at": "2026-11-18",
@@ -229,8 +229,8 @@
     {
       "id": "S2-26",
       "title": "Развитие сырьевого комплекса",
-      "expected_status": "review",
-      "expected_reason": "uncertain_industry",
+      "expected_status": "accepted",
+      "expected_reason": "industry_in_lead",
       "body_kind": "full",
       "published_at": "2026-11-18",
       "url": "https://sample.example/news/test-26"
@@ -238,7 +238,7 @@
     {
       "id": "S2-27",
       "title": "Новая производственная линия",
-      "expected_status": "review",
+      "expected_status": "accepted",
       "expected_reason": "industry_without_clear_event",
       "body_kind": "full",
       "published_at": "2026-11-18",
@@ -247,7 +247,7 @@
     {
       "id": "S2-28",
       "title": "Завод запустил короткую заметку",
-      "expected_status": "review",
+      "expected_status": "rejected",
       "expected_reason": "short_text",
       "body_kind": "short",
       "published_at": "2026-11-18",
@@ -256,7 +256,7 @@
     {
       "id": "S2-29",
       "title": "Завод запустил оборудование",
-      "expected_status": "review",
+      "expected_status": "rejected",
       "expected_reason": "rss_preview_only",
       "body_kind": "rss",
       "published_at": "2026-11-18",
@@ -265,7 +265,7 @@
     {
       "id": "S2-30",
       "title": "Завод запустил старое оборудование",
-      "expected_status": "review",
+      "expected_status": "accepted",
       "expected_reason": "stale_article",
       "body_kind": "full",
       "published_at": "2026-08-01",
@@ -274,7 +274,7 @@
     {
       "id": "S2-31",
       "title": "Завод запустил оборудование завтра",
-      "expected_status": "review",
+      "expected_status": "rejected",
       "expected_reason": "future_date",
       "body_kind": "full",
       "published_at": "2026-11-30",
@@ -283,7 +283,7 @@
     {
       "id": "S2-32",
       "title": "Завод запустил оборудование без текста",
-      "expected_status": "review",
+      "expected_status": "rejected",
       "expected_reason": "empty_text",
       "body_kind": "empty",
       "published_at": "2026-11-18",
