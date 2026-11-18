@@ -56,14 +56,14 @@ class CuratedBoundaryTests(unittest.TestCase):
         value = article("В Китае построили новую фабрику")
         self.assertEqual(classify_intake(value, now=TODAY).status, "accepted")
 
-    def test_review_short_and_rss_not_silently_deleted(self):
+    def test_reject_unusable_short_and_rss_but_keep_raw_audit(self):
         for kwargs, reason in (
             ({"text": "Важное сообщение"}, "short_text"),
             ({"text_source": "rss"}, "rss_preview_only"),
         ):
             with self.subTest(reason=reason):
                 decision = classify_intake(article("Завод запустил новую линию", **kwargs), now=TODAY)
-                self.assertEqual((decision.status, decision.reason), ("review", reason))
+                self.assertEqual((decision.status, decision.reason), ("rejected", reason))
 
     def test_production_mentioned_in_ad_is_still_ad(self):
         v = article("Скидки на промышленное оборудование для заводов")
@@ -178,7 +178,8 @@ class Stage2AuditTests(unittest.TestCase):
         b = article("Завод запустил новый цех", url="https://example.org/news/abc?utm_source=mail")
         outcome = audit_real([a, b], today=TODAY)
         self.assertEqual(outcome["counts"]["accepted"], 1)
-        self.assertEqual(outcome["counts"]["duplicate"], 1)
+        self.assertEqual(outcome["counts"]["rejected"], 1)
+        self.assertEqual(outcome["counts"]["exact_duplicates"], 1)
         self.assertEqual(outcome["repeatability"]["replay_new_news"], 0)
         self.assertIsNone(outcome["gold_real_metrics"])
 
@@ -207,22 +208,22 @@ class DatabaseIntakeTests(unittest.TestCase):
         self.session.close()
         self.engine.dispose()
 
-    def test_store_accept_review_reject_and_exact_copy(self):
+    def test_store_accept_reject_and_exact_copy(self):
         from database.intake_repository import save_intake_batch
         first = article("Завод запустил новый цех", url="https://first.example/a")
-        review = article("Завод обсуждает планы", url="https://first.example/b",
-                         text=BODY + " Это отдельный материал о консультациях.")
+        vacancy = article("Вакансии на заводе", url="https://first.example/b",
+                          text=BODY + " Это отдельное объявление о найме.")
         rejected = article("Скидки на товары", url="https://first.example/c",
                            text=BODY + " Иная рекламная акция со скидками.")
         copy = article("Завод запустил новый цех", source="ФлотПром",
                        url="https://second.example/a")
         with patch.dict(os.environ, {"NEWS_IMAGES_ENABLED": "false"}):
-            stats = save_intake_batch(self.session, [first, review, rejected, copy], now=TODAY)
+            stats = save_intake_batch(self.session, [first, vacancy, rejected, copy], now=TODAY)
         self.assertEqual(stats.saved, 1)
         self.assertEqual(self.session.query(self.News).count(), 1)
         records = self.session.query(self.Record).order_by(self.Record.id).all()
         self.assertEqual([x.status for x in records],
-                         ["accepted", "review", "rejected", "duplicate"])
+                         ["accepted", "rejected", "rejected", "rejected"])
         self.assertEqual(records[-1].duplicate_of_news_id, records[0].news_id)
         self.assertEqual(records[-1].reason, "duplicate_text")
 
