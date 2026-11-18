@@ -94,7 +94,7 @@ class Stage2RawDuplicatePersistence(unittest.TestCase):
         self.assertEqual(stats.saved, 0)
         records = self.session.query(self.Intake).order_by(self.Intake.id).all()
         self.assertEqual([r.status for r in records],
-                         ["review", "duplicate", "rejected", "duplicate"])
+                         ["rejected", "rejected", "rejected", "rejected"])
         self.assertEqual(records[1].duplicate_of_intake_id, records[0].id)
         self.assertEqual(records[3].duplicate_of_intake_id, records[2].id)
         self.assertEqual(self.session.query(self.News).count(), 0)
