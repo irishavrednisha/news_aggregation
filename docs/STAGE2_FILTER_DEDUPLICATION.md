@@ -119,3 +119,43 @@ MAX и Telegram не запускать.
 ```
 
 В `comparison_with_previous_model.transitions` будут старые и новые статусы; `changed` содержит конкретные заголовки и причины. Переход из `review` в `accepted` сам по себе не доказывает качество: источником истины остаётся независимая ручная оценка. Статус `review` сохраняется для действительно спорных случаев и устаревших публикаций.
+
+
+## Проверка полного корпуса 231 статьи (18.11.2026)
+
+По фактически загруженному `stage2_latest.json` (231 материал, 17 источников) первоначальный аудит дал `45 accepted / 168 review / 10 rejected / 8 duplicate`. Сравнение **полных нормализованных текстов всех статусов**, а не только `accepted`, выявило 13 групп одинаковых текстов и **21 избыточную копию**: 8 уже обнаруженных + 11 прежних `review` + 2 прежних `rejected`. Наиболее заметны четыре копии «ОСК усовершенствовала систему подготовки наставников», четыре копии о «Пролетарском заводе» и три копии выбора ракет ATMACA. Нельзя называть 8/21 полнотой промышленной дедупликации: это наблюдение одного корпуса, а не независимая gold-разметка.
+
+**Исправление:** `audit_stage2.py` теперь обнаруживает точные копии в сыром корпусе независимо от стадии смысловой фильтрации, но не отбрасывает оригинальные записи. `intake_repository.py` хранит путь к оригиналу `review/rejected` в `duplicate_of_intake_id`, а к принятой `news` в `duplicate_of_news_id`. Событие со статусом `review` никогда не блокирует позднее поступившую действительно принятую новость. Raw-журнал сохраняет тексты, причины и все зеркала; повторные снимки учитываются `seen_count`. Окончательные цифры проверять только на CI-артефакте **текущего SHA**.
+
+**Новая обязательная добавочная миграция:** `20261118_03_raw_duplicate_links.py` поверх `20261118_02`. Добавляет nullable FK `news_intake_records.duplicate_of_intake_id` и индекс, не меняет `news/clusters/posts/sources`. Без неё сбор специально останавливается до записи. Ни один CI-тест с SQLite и Github Actions **не заменяет** проверку локальной PostgreSQL 17 или самостоятельную резервную копию.
+
+### PowerShell перед любым сбором на новой ветке
+
+```powershell
+cd D:\Projects\news_aggregation
+git status --short
+git fetch origin
+git switch feat/stage2-filter-exact-dedupe-2026-11-18
+git pull --ff-only
+
+$env:MAX_PUBLISHING_ENABLED = "false"
+$env:NEWS_IMAGES_ENABLED = "false"
+
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_stage2_review_duplicates.py" -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_stage2_followup.py" -v
+
+# Только чтение БД до миграции, проверьте имя пользователя и БД по своему .env:
+.\.venv\Scripts\python.exe -m alembic current
+& "C:\Program Files\PostgreSQL\17\bin\pg_dump.exe" -U postgres -d news_aggregation -Fc -f "D:\Projects\news_aggregation\stage2_pre03_backup.dump"
+Test-Path "D:\Projects\news_aggregation\stage2_pre03_backup.dump"
+
+# Только после проверенной резервной копии:
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe -m alembic current
+.\.venv\Scripts\python.exe scripts\check_stage2_intake_schema.py --output collector_test_results\stage2_schema_after03.json
+
+# Воспроизводимый read-only повторный аудит, без БД, MAX и Telegram:
+.\.venv\Scripts\python.exe scripts\audit_stage2.py --input collector_test_results\stage2_live_250.json --date 2026-11-18 --target 250 --require-coverage --output collector_test_results\stage2_231_after_dedupe.json
+```
+
+Даже при успешной CI-проверке этап **не закрывается** до независимой разметки ошибок смысловой фильтрации, проверки локального PostgreSQL и исключения совпадений с ранее использованными обучающими URL.
