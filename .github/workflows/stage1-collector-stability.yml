@@ -15,6 +15,7 @@ jobs:
     timeout-minutes: 15
     env:
       MAX_PUBLISHING_ENABLED: "false"
+      PYTHONIOENCODING: "utf-8"
       NEWS_IMAGES_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
