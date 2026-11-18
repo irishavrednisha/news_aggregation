@@ -115,13 +115,13 @@ def _image_metadata(data: bytes) -> tuple[str, str, int, int]:
     return mime, ext, width, height
 
 
-def _verify_tls():
-    ca_bundle = os.environ.get("NEWS_CA_BUNDLE", "").strip()
-    if ca_bundle:
-        if not Path(ca_bundle).is_file():
-            raise ValueError("NEWS_CA_BUNDLE points to missing file")
-        return ca_bundle
-    return True
+def _verify_tls(url: str):
+    """Images use verified TLS with only a CA explicitly assigned to their host.
+
+    Do not pass NEWS_CA_BUNDLE to arbitrary CDN or third-party URLs.
+    """
+    from collectors.tls_policy import ca_bundle_for_url
+    return ca_bundle_for_url(url) or True
 
 
 def download_main_image(
@@ -142,7 +142,7 @@ def download_main_image(
                 _assert_public_http(current_url)
                 with requests.get(
                     current_url, stream=True, timeout=(8, 20),
-                    headers=HEADERS, verify=_verify_tls(),
+                    headers=HEADERS, verify=_verify_tls(current_url),
                     allow_redirects=False,
                 ) as response:
                     if response.status_code in (301, 302, 303, 307, 308):
