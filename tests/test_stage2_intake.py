@@ -108,7 +108,8 @@ class ExactDuplicateTests(unittest.TestCase):
 
     def test_cross_domain_mirror_article_path(self):
         a = article("Верфь построила новый корабль", url="https://военное.рф/2026/11/18/unique-article-name")
-        b = article("Верфь построила новый корабль", url="https://flotprom.ru/2026/11/18/unique-article-name")
+        b = article("Верфь построила новый корабль", url="https://flotprom.ru/2026/11/18/unique-article-name",
+                    text="На другой площадке изложены детали кораблестроения и технических испытаний. " * 8)
         self.assertEqual(match_exact(a, b), "duplicate_mirror")
 
     def test_mirrors_unrelated_path_not_equal(self):
