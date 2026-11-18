@@ -1,0 +1,13 @@
+# Minimal Windows collector and diagnostic environment; NO ML dependencies.
+# Existing working venv: do NOT reinstall SQLAlchemy if Windows Code Integrity
+# blocks its compiled wheel. Run .venv\Scripts\python.exe directly instead.
+requests
+feedparser
+beautifulsoup4
+playwright
+sqlalchemy
+psycopg2-binary
+python-dotenv
+apscheduler
+# Optional trusted Windows CA support; pure Python wrapper.
+truststore
