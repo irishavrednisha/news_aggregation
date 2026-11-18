@@ -92,7 +92,7 @@ class ExactDuplicateTests(unittest.TestCase):
 
     def test_idn_domains_and_aliases(self):
         a = normalize_url("https://военное.рф/2026/11/18/new-ship/")
-        b = normalize_url("https://xn--b1aebw4ab5a.xn--p1ai/2026/11/18/new-ship")
+        b = normalize_url("https://xn--b1aga5aadd.xn--p1ai/2026/11/18/new-ship")
         self.assertEqual(a, b)
 
     def test_trailing_slash_and_query_order(self):
