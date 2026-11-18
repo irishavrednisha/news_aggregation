@@ -58,11 +58,13 @@ def build_embedding(text: str) -> list[float]:
     return vector.tolist()
 
 
-def ensure_news_embedding(session, news: News):
+def ensure_news_embedding(session, news: News, *, recalculate: bool = False):
+    """Rebuild unversioned legacy vectors when explicitly requested.
+
+    The old pipeline persisted FULL-TEXT embeddings; those are incompatible
+    with new title+lead embeddings, despite identical vector dimensions.
     """
-    Создаёт embedding новости, если его ещё нет.
-    """
-    if news.embedding is None:
+    if news.embedding is None or recalculate:
         news.embedding = build_embedding(get_news_text(news))
         session.flush()
 
@@ -115,11 +117,13 @@ def update_cluster_primary_news(session, cluster: Cluster):
     session.flush()
 
 
-def update_cluster_embedding(session, cluster: Cluster):
+def update_cluster_embedding(session, cluster: Cluster, *, embedding_cache=None):
     news_items = (session.query(News)
                   .filter(News.cluster_id == cluster.id).all())
-    vectors = [np.asarray(n.embedding, dtype=float) for n in news_items
-               if n.embedding is not None]
+    embedding_cache = embedding_cache or {}
+    vectors = [np.asarray(embedding_cache.get(n.id, n.embedding), dtype=float)
+               for n in news_items
+               if embedding_cache.get(n.id, n.embedding) is not None]
     cluster.cluster_size = len(news_items)  # count ALL attached sources
     if vectors:
         mean = np.mean(vectors, axis=0)
@@ -129,14 +133,14 @@ def update_cluster_embedding(session, cluster: Cluster):
     session.flush()
 
 
-def attach_news_to_cluster(session, news: News, cluster: Cluster):
+def attach_news_to_cluster(session, news: News, cluster: Cluster, *, embedding_cache=None):
     """One caller-owned transaction, no intermediate commit."""
     if news.cluster_id is not None:
         return
     news.cluster_id = cluster.id
     news.is_primary = False
     session.flush()
-    update_cluster_embedding(session, cluster)
+    update_cluster_embedding(session, cluster, embedding_cache=embedding_cache)
     update_cluster_primary_news(session, cluster)
 
 
@@ -155,18 +159,26 @@ def create_cluster_with_news(session, news: News) -> Cluster:
 
 
 def find_best_cluster(news: News, clusters: list[Cluster],
-                      threshold: float = MERGE_THRESHOLD, session=None):
+                      threshold: float = MERGE_THRESHOLD, session=None,
+                      embedding_cache=None):
     """Legacy-compatible function with factual verification; no centroid-only merge."""
     if session is None:
         return None, 0.0  # no evidence -> no potentially destructive merge
+    embedding_cache = embedding_cache if embedding_cache is not None else {}
     candidates = []
     for cluster in sorted(clusters, key=lambda c: c.id):
         items = (session.query(News)
                  .filter(News.cluster_id == cluster.id)
                  .order_by(News.id.asc()).all())
+        members = []
+        for member in items:
+            # Cache normalized NEW text encoding in memory only. Historical
+            # DB embeddings can come from the old full-text model path.
+            if member.id not in embedding_cache:
+                embedding_cache[member.id] = build_embedding(get_news_text(member))
+            members.append((member, embedding_cache[member.id]))
         candidates.append({
-            "id": cluster.id, "cluster": cluster,
-            "items": [(n, n.embedding) for n in items if n.embedding is not None],
+            "id": cluster.id, "cluster": cluster, "items": members,
         })
     match, decision = choose_existing_cluster(news, news.embedding, candidates,
                                               threshold=threshold)
@@ -189,6 +201,7 @@ def cluster_recent_news(session, hours: int = 48,
     print(f"Новых новостей без кластера: {len(recent)}")
     changed = []
     changed_ids = set()
+    embedding_cache = {}
     for original in recent:
         try:
             # Lock must be acquired BEFORE fresh cluster candidate reads.
@@ -199,16 +212,20 @@ def cluster_recent_news(session, hours: int = 48,
             if news is None or news.cluster_id is not None:
                 session.rollback()
                 continue
-            ensure_news_embedding(session, news)
+            ensure_news_embedding(session, news, recalculate=True)
+            embedding_cache[news.id] = news.embedding
             # Larger than the incoming collection window to allow late mirrors.
             cluster_limit = get_time_limit(max(hours, 24 * 14))
             clusters = (session.query(Cluster)
                         .filter(Cluster.updated_at >= cluster_limit)
                         .order_by(Cluster.id.asc()).all())
-            candidate, score = find_best_cluster(news, clusters, threshold,
-                                                 session=session)
+            candidate, score = find_best_cluster(
+                news, clusters, threshold, session=session,
+                embedding_cache=embedding_cache
+            )
             if candidate is not None:
-                attach_news_to_cluster(session, news, candidate)
+                attach_news_to_cluster(session, news, candidate,
+                                       embedding_cache=embedding_cache)
                 result = candidate
                 print(f"Присоединено #{news.id} к кластеру #{result.id} ({score:.3f})")
             else:
