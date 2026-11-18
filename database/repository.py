@@ -333,12 +333,25 @@ def save_news(session: Session, article) -> News | None:
 
 
 def save_articles(session: Session, articles: list) -> int:
+    """Save independently, including after duplicate/racing inserts on reruns.
+
+    The news.url UNIQUE constraint remains the source of truth. Never roll back
+    already committed articles because a later one failed.
+    """
+    from sqlalchemy.exc import IntegrityError
+
     saved_count = 0
-
     for article in articles:
-        saved = save_news(session, article)
-
+        try:
+            saved = save_news(session, article)
+        except IntegrityError:
+            session.rollback()
+            print(f"Уже сохранено или одновременно записано: {article.url}")
+            continue
+        except Exception as exc:
+            session.rollback()
+            print(f"Ошибка сохранения {article.url}: {type(exc).__name__}: {exc}")
+            continue
         if saved is not None:
             saved_count += 1
-
     return saved_count
