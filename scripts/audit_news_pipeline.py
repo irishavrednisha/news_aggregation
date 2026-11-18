@@ -30,7 +30,10 @@ from processing.topic_filter import classify_article
 from scripts.check_sources import get_configured_sources
 
 
-DEFAULT_SOURCES = ("Военное.рф", "Интерфакс", "РИА Новости", "ТАСС", "MASHNEWS")
+DEFAULT_SOURCES = (
+    "Военное.рф", "Отраслевое.рф", "ФлотКом", "ФлотПром",
+    "Интерфакс", "РИА Новости", "ТАСС", "MASHNEWS",
+)
 DEFAULT_OUTPUT = ROOT / "collector_test_results" / "pipeline_audit.json"
 
 
@@ -155,7 +158,7 @@ def main() -> int:
         description="Audit real news: text/filter/TextRank/Grounded tags, read-only."
     )
     parser.add_argument("--source", action="append", default=[],
-                        help="Repeat to select sources; defaults to five representative sites.")
+                        help="Repeat to select sources; defaults to eight representative sites.")
     parser.add_argument("--limit", type=int, default=3, help="Articles per source (1-10).")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
