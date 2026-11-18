@@ -115,7 +115,7 @@ def match_exact(article, candidate) -> str | None:
         return "duplicate_url"
     t1, t2 = normalize_title(article.title), normalize_title(candidate.title)
     body1, body2 = _body_key(article), _body_key(candidate)
-    if body1 and body1 == body2 and t1 == t2 and _dates_close(
+    if body1 and body1 == body2 and _dates_close(
         getattr(article, "published_at", None),
         getattr(candidate, "published_at", None), 30
     ):
