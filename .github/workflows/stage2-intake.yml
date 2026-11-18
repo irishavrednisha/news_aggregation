@@ -1,0 +1,41 @@
+name: Stage 2 intake filtering and exact deduplication
+on:
+  push:
+    branches:
+      - feat/stage2-filter-exact-dedupe-2026-11-18
+  workflow_dispatch:
+
+jobs:
+  offline-intake:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    env:
+      MAX_PUBLISHING_ENABLED: "false"
+      NEWS_IMAGES_ENABLED: "false"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install lightweight libraries and Alembic (no ML, no browser download)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install beautifulsoup4 requests feedparser playwright sqlalchemy psycopg2-binary python-dotenv apscheduler alembic
+      - name: Compile stage2 modules
+        run: |
+          python -m py_compile main.py processing/news_intake.py processing/exact_duplicates.py database/intake_models.py database/intake_repository.py scripts/audit_stage2.py tests/test_stage2_intake.py migrations/versions/20261118_02_news_intake.py
+      - name: Verify additive migration graph (no DB write)
+        run: python -m alembic heads
+      - name: Stage 2 labeled and DB tests
+        run: python -m unittest discover -s tests -p "test_stage2_intake.py" -v
+      - name: Preserve stage 1 collector contracts
+        run: python -m unittest discover -s tests -p "test_stage1_stability.py" -v
+      - name: Preserve old filter diagnostics
+        run: python -m unittest discover -s tests -p "test_topic_filter.py" -v
+      - name: Verify read-only audit CLI
+        run: python scripts/audit_stage2.py --help
