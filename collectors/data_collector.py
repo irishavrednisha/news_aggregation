@@ -139,9 +139,10 @@ def _request_ca_bundle():
     return bundle
 
 
-# Явная имитация «всё равно перейти» ТОЛЬКО для локального read-only
-# тестового сборщика и только двух известных официальных доменов.
-# По умолчанию TLS проверяется. В production флаг не передаётся.
+# Изолированный аналог «всё равно перейти» для трёх официальных
+# источников. По умолчанию каждый запрос использует verified HTTPS.
+# Этот флаг выставляется только для Ростеха, Роснефти и Газпрома
+# на уровне одного источника. Не распространяется на остальные сайты.
 _ALLOW_UNVERIFIED_TLS = ContextVar("news_allow_unverified_tls", default=False)
 
 
@@ -239,6 +240,31 @@ def _confirmed_certificate_failure(url: str) -> bool:
     )
 
 
+def _cert_warning_same_source(requested_url: str, target_url: str) -> bool:
+    """Only HTTPS navigation/subresources on exact official hosts of one source."""
+    from urllib.parse import urlsplit
+
+    official_groups = (
+        frozenset(("rostec.ru", "www.rostec.ru")),
+        frozenset(("rosneft.ru", "www.rosneft.ru", "limited.rosneft.ru")),
+        frozenset(("gazprom.ru", "www.gazprom.ru")),
+    )
+
+    def parsed_safe(url: str):
+        parts = urlsplit(url)
+        return (
+            (parts.hostname or "").lower() if (
+                parts.scheme == "https" and not parts.username and not parts.password
+            ) else ""
+        )
+
+    original = parsed_safe(requested_url)
+    target = parsed_safe(target_url)
+    return bool(original and target and any(
+        original in hosts and target in hosts for hosts in official_groups
+    ))
+
+
 def fetch_html_with_browser(url: str, ignore_https_errors: bool = False) -> str:
     # The direct browser API also requires a confirmed certificate error.
     bypass = (ignore_https_errors and _may_ignore_https_errors(url)
@@ -249,26 +275,44 @@ def fetch_html_with_browser(url: str, ignore_https_errors: bool = False) -> str:
             try:
                 if bypass:
                     print(
-                        f"ВНИМАНИЕ: HTTPS-сертификат НЕ ПРОВЕРЯЕТСЯ "
-                        f"для {url} (только тестовый сбор)"
+                        f"ВНИМАНИЕ: игнорируем ошибку HTTPS-сертификата "
+                        f"только в Chromium для {url}"
                     )
-                    audit = _FETCH_AUDIT.get()
-                    if audit is not None:
-                        audit.setdefault("unverified_tls_urls", []).append(url)
                     context = browser.new_context(
                         user_agent=HEADERS["User-Agent"],
                         viewport={"width": 1280, "height": 900},
                         ignore_https_errors=True,
                     )
                     try:
+                        # The browser context ignores TLS errors for its lifetime.
+                        # Prevent it from visiting any external (possibly
+                        # malicious) host, including redirects and subresources.
+                        def same_source_only(route):
+                            if _cert_warning_same_source(url, route.request.url):
+                                route.continue_()
+                            else:
+                                _record_fetch_problem(
+                                    url, "unverified_cross_site_request_blocked",
+                                    route.request.url,
+                                )
+                                route.abort()
+
+                        context.route("**/*", same_source_only)
                         page = context.new_page()
                         page.goto(url, wait_until="domcontentloaded", timeout=45000)
                         final_url = getattr(page, "url", url)
-                        if isinstance(final_url, str) and not _may_ignore_https_errors(final_url):
-                            _record_fetch_problem(url, "unverified_redirect_blocked", final_url)
+                        if (not isinstance(final_url, str)
+                                or not _cert_warning_same_source(url, final_url)):
+                            _record_fetch_problem(url, "unverified_redirect_blocked", str(final_url))
                             return ""
                         page.wait_for_timeout(1500)
-                        return page.content()
+                        html = page.content()
+                        if not html:
+                            return ""
+                        audit = _FETCH_AUDIT.get()
+                        if audit is not None:
+                            audit.setdefault("unverified_tls_urls", []).append(url)
+                        return html
                     finally:
                         context.close()
                 else:
@@ -302,8 +346,8 @@ def _rosneft_limited_url(url: str) -> str | None:
 def fetch_html(url: str) -> str:
     domain = get_domain(url)
 
-    # Diagnostic opt-in never bypasses a valid certificate. A recorded
-    # certificate verification failure on this exact URL is mandatory.
+    # Even in browser-warning mode, ordinary verified HTTPS runs first.
+    # A recorded certificate error for this exact URL is mandatory.
     if _may_ignore_https_errors(url):
         verified = fetch_html_with_requests(url)
         if verified and not is_error_page_text(BeautifulSoup(verified, "html.parser").get_text(" ", strip=True)):
@@ -313,7 +357,15 @@ def fetch_html(url: str) -> str:
             return browser_verified
         if not _confirmed_certificate_failure(url):
             return ""
-        return fetch_html_with_browser(url, ignore_https_errors=True)
+        unverified = fetch_html_with_browser(url, ignore_https_errors=True)
+        if unverified and is_error_page_text(
+            BeautifulSoup(unverified, "html.parser").get_text(" ", strip=True)
+        ):
+            _record_fetch_problem(
+                url, "unverified_site_error_page", "Warning bypass returned an access/error page",
+            )
+            return ""
+        return unverified
 
     browser_domains = (
         "nornickel.ru", "заводы.рф", "xn--80az8a.xn--p1ai",
