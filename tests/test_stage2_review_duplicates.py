@@ -1,6 +1,6 @@
-"""Regression: exact copies of review/rejected reports across publisher mirrors.
+"""Regression: exact copies of rejected reports across publisher mirrors.
 
-The original remains auditable, and review cannot suppress later acceptance.
+The original remains auditable, and a prior rejection cannot suppress later acceptance.
 """
 import os
 from datetime import date
@@ -36,8 +36,8 @@ class Stage2RawDuplicateAudit(unittest.TestCase):
         result = audit_real([first, second, third, fourth], today=TODAY)
         rows = result["articles"]
         self.assertEqual([r["status"] for r in rows],
-                         ["review", "duplicate", "rejected", "duplicate"])
-        self.assertEqual([r["reason"] for r in rows if r["status"] == "duplicate"],
+                         ["rejected", "rejected", "rejected", "rejected"])
+        self.assertEqual([r["reason"] for r in rows if r["stage"] == "exact_duplicate"],
                          ["duplicate_text", "duplicate_text"])
         self.assertEqual(rows[1]["duplicate_of_url"], normalize_url(first.url))
         self.assertEqual(rows[3]["duplicate_of_url"], normalize_url(third.url))
@@ -52,7 +52,7 @@ class Stage2RawDuplicateAudit(unittest.TestCase):
                           "дипломатических встречах министров. " * 9))
         result = audit_real([a, b], today=TODAY)
         self.assertEqual([r["status"] for r in result["articles"]],
-                         ["review", "review"])
+                         ["rejected", "rejected"])
 
 
 class Stage2RawDuplicatePersistence(unittest.TestCase):
@@ -78,7 +78,7 @@ class Stage2RawDuplicatePersistence(unittest.TestCase):
         self.session.close()
         self.engine.dispose()
 
-    def test_review_and_rejected_exact_mirrors_are_linked(self):
+    def test_rejected_exact_mirrors_are_linked(self):
         from database.intake_repository import save_intake_batch
         title = "ОСК усовершенствовала систему подготовки наставников"
         arr = [
@@ -107,7 +107,7 @@ class Stage2RawDuplicatePersistence(unittest.TestCase):
         self.assertEqual(self.session.query(self.Intake).count(), 4)
         self.assertEqual([r.seen_count for r in records], [2, 2, 2, 2])
 
-    def test_existing_review_never_blocks_new_accepted_news(self):
+    def test_existing_rejection_never_blocks_new_accepted_news(self):
         from database.intake_repository import save_intake_batch
         r = article("ОСК усовершенствовала систему подготовки наставников",
                     "https://flot.com/2026/industry51", "ФлотКом")
@@ -118,7 +118,7 @@ class Stage2RawDuplicatePersistence(unittest.TestCase):
         self.assertEqual(result.saved, 1)
         self.assertEqual(self.session.query(self.News).count(), 1)
         self.assertEqual([x.status for x in self.session.query(self.Intake).order_by(self.Intake.id)],
-                         ["review", "accepted"])
+                         ["rejected", "accepted"])
 
 
 if __name__ == "__main__":
