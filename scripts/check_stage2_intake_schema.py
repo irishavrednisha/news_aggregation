@@ -24,7 +24,7 @@ from database.db import get_session
 LEGACY = ("sources", "news", "clusters", "posts")
 INTAKE = "news_intake_records"
 REQUIRED_COLUMNS = {
-    "id", "source_id", "news_id", "duplicate_of_news_id", "raw_url",
+    "id", "source_id", "news_id", "duplicate_of_news_id", "duplicate_of_intake_id", "raw_url",
     "raw_title", "raw_text", "raw_published_at", "canonical_url",
     "url_sha256", "payload_sha256", "status", "reason", "decision_stage",
     "seen_count", "first_seen_at", "last_seen_at", "text_source",
