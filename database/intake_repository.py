@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timezone
+from types import SimpleNamespace
 import os
 
 from sqlalchemy import inspect
@@ -111,9 +112,18 @@ def save_intake_batch(session, articles, *, now=None, max_age_days=30) -> Intake
     require_intake_schema(session)
     stats = IntakeStats()
     index = ExactDuplicateIndex()
-    # Legacy rows must be considered; old data have no intake snapshots.
+    # Promoted News are canonical ML candidates, while raw_index preserves
+    # the ability to find duplicates of articles still awaiting moderation.
     for existing in session.query(News).all():
         index.add(existing)
+    raw_index = ExactDuplicateIndex()
+    for old in session.query(NewsIntakeRecord).order_by(NewsIntakeRecord.id):
+        if old.status == "duplicate" or not old.canonical_url or len(old.raw_text or "") < 250:
+            continue
+        raw_index.add(SimpleNamespace(
+            id=old.id, url=old.raw_url, title=old.raw_title,
+            text=old.raw_text, published_at=old.raw_published_at,
+        ))
 
     for article in articles:
         try:
@@ -140,11 +150,18 @@ def save_intake_batch(session, articles, *, now=None, max_age_days=30) -> Intake
                 continue
 
             decision = classify_intake(article, now=now, max_age_days=max_age_days)
+            # Older review/rejected copies must not proliferate across mirrors.
+            # A prior review must NOT suppress a newly accepted useful story.
             match = index.find(article) if decision.status == "accepted" else None
+            raw_match = raw_index.find(article) if canonical and len(
+                str(getattr(article, "text", "") or "")
+            ) >= 250 else None
             news = None
             status, reason, stage = decision.status, decision.reason, decision.stage
             if match is not None:
                 status, reason, stage = "duplicate", match.reason, "exact_duplicate"
+            elif decision.status != "accepted" and raw_match is not None:
+                status, reason, stage = "duplicate", raw_match.reason, "exact_duplicate"
             elif decision.status == "accepted":
                 news = News(
                     source_id=source.id, title=article.title, text=article.text,
@@ -158,6 +175,9 @@ def save_intake_batch(session, articles, *, now=None, max_age_days=30) -> Intake
                 source_id=source.id,
                 news_id=news.id if news else None,
                 duplicate_of_news_id=match.news_id if match else None,
+                duplicate_of_intake_id=(
+                    raw_match.news_id if status == "duplicate" and raw_match else None
+                ),
                 raw_url=raw_url, raw_title=str(getattr(article, "title", "") or ""),
                 raw_text=str(getattr(article, "text", "") or ""),
                 raw_published_at=_database_datetime(getattr(article, "published_at", None)),
@@ -172,6 +192,14 @@ def save_intake_batch(session, articles, *, now=None, max_age_days=30) -> Intake
                 index.add(news)
                 stats.saved += 1
                 _store_image_after_commit(session, article, news)
+            if status != "duplicate" and canonical and len(
+                str(getattr(article, "text", "") or "")
+            ) >= 250:
+                raw_index.add(SimpleNamespace(
+                    id=record.id, url=raw_url, title=article.title,
+                    text=article.text,
+                    published_at=getattr(article, "published_at", None),
+                ))
             stats.counts[status] += 1
             stats.counts[reason] += 1
         except IntegrityError as exc:
