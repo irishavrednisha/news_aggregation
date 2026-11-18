@@ -185,7 +185,7 @@ _OBVIOUS_SPORTS = re.compile(
 _OBVIOUS_UNRELATED = re.compile(r"\b(?:маньяк\w*|аукцион\w* картин\w*|картин\w* .{0,60} аукцион\w*)\b")
 # HR, PR and governance mentions are not proof of a production event.
 _EVENT_ANNOUNCEMENT = re.compile(
-    r"\b(?:до .{0,70} выставк\w* осталось|"
+    r"\b(?:до .{0,70} выставк\w* .{0,70} осталось|"
     r"(?:приглаша\w* на|приглаша\w* к участию в) .{0,70}(?:форум\w*|выставк\w*)|"
     r"анонс (?:форум\w*|выставк\w*))\b"
 )
