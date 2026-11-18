@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -86,9 +87,7 @@ class Stage1StabilityTests(unittest.TestCase):
             ca = Path(tmp) / "root.pem"
             ca.write_text("test", encoding="utf-8")
             with patch.dict(os.environ, {
-                "NEWS_SOURCE_CA_BUNDLES": (
-                    '{"www.rostec.ru": "' + str(ca).replace("\\\\", "/") + '"}'
-                ),
+                "NEWS_SOURCE_CA_BUNDLES": json.dumps({"www.rostec.ru": str(ca)}),
                 "NEWS_CA_BUNDLE": "",
             }):
                 self.assertEqual(ca_bundle_for_url("https://www.rostec.ru/media/news/"), str(ca))
