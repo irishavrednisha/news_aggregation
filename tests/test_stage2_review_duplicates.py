@@ -28,9 +28,11 @@ class Stage2RawDuplicateAudit(unittest.TestCase):
         first = article(title, "https://flotprom.ru/2026/industry51")
         second = article(title, "https://flot.com/2026/industry51", "ФлотКом")
         third = article("Распродажа техники для покупателей",
-                        "https://flot.com/2026/promo52", "ФлотКом")
+                        "https://flot.com/2026/promo52", "ФлотКом",
+                        text=TEXT + " Отдельная торговая акция на складе.")
         fourth = article("Распродажа техники для покупателей",
-                         "https://flotprom.ru/2026/promo52")
+                         "https://flotprom.ru/2026/promo52",
+                         text=TEXT + " Отдельная торговая акция на складе.")
         result = audit_real([first, second, third, fourth], today=TODAY)
         rows = result["articles"]
         self.assertEqual([r["status"] for r in rows],
@@ -46,8 +48,8 @@ class Stage2RawDuplicateAudit(unittest.TestCase):
                     "https://flotprom.ru/2026/industry51")
         b = article("ОСК обсудила подготовку наставников",
                     "https://flot.com/2026/industry51", "ФлотКом",
-                    text=TEXT.replace("практических", "лабораторных") +
-                         " В этом году речь идет о другом объекте.")
+                    text=("Совершенно иной отчет о флотской политике и о "
+                          "дипломатических встречах министров. " * 9))
         result = audit_real([a, b], today=TODAY)
         self.assertEqual([r["status"] for r in result["articles"]],
                          ["review", "review"])
@@ -82,8 +84,10 @@ class Stage2RawDuplicatePersistence(unittest.TestCase):
         arr = [
             article(title, "https://flotprom.ru/2026/industry51"),
             article(title, "https://flot.com/2026/industry51", "ФлотКом"),
-            article("Распродажа техники", "https://flot.com/2026/promo52", "ФлотКом"),
-            article("Распродажа техники", "https://flotprom.ru/2026/promo52"),
+            article("Распродажа техники", "https://flot.com/2026/promo52",
+                    "ФлотКом", text=TEXT + " Иная промоакция."),
+            article("Распродажа техники", "https://flotprom.ru/2026/promo52",
+                    text=TEXT + " Иная промоакция."),
         ]
         with patch.dict(os.environ, {"NEWS_IMAGES_ENABLED": "false"}):
             stats = save_intake_batch(self.session, arr, now=TODAY)
