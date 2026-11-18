@@ -312,6 +312,10 @@ def fetch_html(url: str) -> str:
 
     if any(domain_name in domain for domain_name in browser_domains):
         html = fetch_html_with_browser(url)
+        if not html:
+            # Pages that trigger a browser download (TPP РФ) or have broken JS
+            # may still offer verified HTML to ordinary Requests.
+            html = fetch_html_with_requests(url)
     else:
         html = fetch_html_with_requests(url)
         if not html:
@@ -3049,6 +3053,7 @@ def collect_news(
         stat = {
             "candidates": 0, "accepted": 0, "short_or_empty": 0,
             "error_page_rejections": 0, "quality_probes": [],
+            "rss_preview_only": 0, "full_html_accepted": 0,
             "errors": [], "rejected_urls": [],
             "fetch_failures": [], "status": "not_started",
         }
@@ -3186,6 +3191,14 @@ def collect_news(
                     print(f"Не извлечён достаточный основной текст: {preview.url}")
                     continue
 
+                # RSS snippets may be useful diagnostics but do NOT count as
+                # complete articles for storage/publication.
+                if article.text_source != "html":
+                    stat["rss_preview_only"] += 1
+                    if apply_filters:
+                        stat["rejected_urls"].append(preview.url)
+                        continue
+
                 # У новых источников нельзя прерывать поиск на дайджесте
                 # или нерелевантной статье: она всё равно не пройдёт
                 # последующий фильтр и займёт слот лимита.
@@ -3228,6 +3241,8 @@ def collect_news(
 
                 all_articles.append(article)
                 stat["accepted"] += 1
+                if article.text_source == "html":
+                    stat["full_html_accepted"] += 1
                 if stat["accepted"] >= limit_per_source:
                     break
 
@@ -3239,7 +3254,9 @@ def collect_news(
             _ALLOW_UNVERIFIED_TLS.reset(unverified_token)
             _FETCH_AUDIT.reset(audit_token)
             if stat["accepted"]:
-                stat["status"] = "ok"
+                stat["status"] = (
+                    "ok" if stat["full_html_accepted"] else "rss_preview_only"
+                )
             elif stat["fetch_failures"]:
                 stat["status"] = "fetch_failed"
                 # Сохраняем краткие причины в привычном поле errors,
