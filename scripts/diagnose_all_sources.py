@@ -34,6 +34,14 @@ def load_sources():
         session.close()
 
 
+def load_configured_sources():
+    """CI fallback only: seed definitions, NOT current local database records."""
+    from scripts.check_sources import get_configured_sources
+
+    return [SimpleNamespace(id=None, **vars(row))
+            for row in get_configured_sources().values()]
+
+
 def article_metrics(article, include_text=False):
     title = (article.title or "").strip()
     text = (article.text or "").strip()
@@ -130,13 +138,19 @@ def main(argv=None):
     parser.add_argument("--allow-unverified-tls", action="store_true",
                         help="Explicit diagnostic ONLY; never records news or publishes")
     parser.add_argument("--strict", action="store_true", help="Exit 1 if any source has no valid article")
+    parser.add_argument("--from-config", action="store_true",
+                        help="CI-only source definitions from seed_sources, NOT PostgreSQL")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Parallel independent source probes, 1-4 (default 1)")
     args = parser.parse_args(argv)
     if not 1 <= args.limit <= 10:
         parser.error("--limit must be from 1 to 10")
+    if not 1 <= args.workers <= 4:
+        parser.error("--workers must be from 1 to 4")
     try:
-        sources = load_sources()
+        sources = load_configured_sources() if args.from_config else load_sources()
     except Exception as exc:
-        print(f"Failed to read sources from PostgreSQL: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"Failed to load sources: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     if args.source:
         names = set(args.source)
@@ -148,11 +162,22 @@ def main(argv=None):
         print("No sources in PostgreSQL. Nothing was changed.", file=sys.stderr)
         return 2
 
-    results = [inspect_source(s, args.limit, args.allow_unverified_tls, args.include_text)
-               for s in sources]
+    if args.workers == 1:
+        results = [inspect_source(s, args.limit, args.allow_unverified_tls, args.include_text)
+                   for s in sources]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            results = list(pool.map(
+                lambda source: inspect_source(
+                    source, args.limit, args.allow_unverified_tls, args.include_text,
+                ), sources,
+            ))
     report = {
         "checked_at_utc": datetime.now(timezone.utc).isoformat(),
-        "source_count_from_database": len(sources),
+        "source_origin": "seed_configuration_not_database" if args.from_config else "postgresql_sources_table",
+        "source_count_from_database": None if args.from_config else len(sources),
+        "source_count_checked": len(sources),
         "read_only": True,
         "max_publishing_enabled": False,
         "limit_per_source": args.limit,
