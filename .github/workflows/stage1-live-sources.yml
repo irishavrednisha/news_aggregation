@@ -21,7 +21,7 @@ jobs:
           python-version: "3.11"
       - name: Install collector only (no ML, no database credentials)
         run: |
-          python -m pip install beautifulsoup4 requests feedparser playwright sqlalchemy psycopg2-binary python-dotenv
+          python -m pip install beautifulsoup4 requests feedparser playwright sqlalchemy psycopg2-binary python-dotenv truststore
           python -m playwright install --with-deps chromium
       - name: Live smoke of 25 configured sources, NOT local DB
         run: |
