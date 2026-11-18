@@ -188,7 +188,7 @@ def technical_specs(row: object) -> frozenset[tuple[str, float]]:
     2500 W + 600 kg are stronger evidence than a shared industry name.
     These are NOT used without company, action and object corroboration.
     """
-    text = normalize(_field(row, "title")) + " " + normalize(_field(row, "text"))[:2200]
+    text = normalize(_field(row, "title")) + " " + normalize(_field(row, "text"))[:10000]
     pattern = re.compile(
         r"\b(\d+(?:[.,]\d+)?)\s*(квт|вт|мвт|гвт|кг|грамм\w*|мм|"
         r"л\.?\s*с\.?|километр\w*|метр\w*)\b"
