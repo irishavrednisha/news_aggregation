@@ -1,4 +1,4 @@
-name: Stage 1 public source live smoke (configured URLs)
+name: Stage 1 scoped browser certificate fallback live smoke
 on:
   push:
     branches:
@@ -23,13 +23,13 @@ jobs:
         run: |
           python -m pip install beautifulsoup4 requests feedparser playwright sqlalchemy psycopg2-binary python-dotenv truststore
           python -m playwright install --with-deps chromium
-      - name: Live smoke of 25 configured sources, NOT local DB
+      - name: Live opt-in warning-mode smoke of three configured sources, NOT local DB
         run: |
-          python scripts/diagnose_all_sources.py --from-config --limit 1 --workers 3 --output collector_test_results/configured_25_live.json
+          python scripts/diagnose_all_sources.py --from-config --source "Ростех" --source "Роснефть" --source "Газпром" --allow-unverified-tls --limit 1 --workers 3 --output collector_test_results/cert_warning_3_live.json
       - name: Upload full per-source JSON report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stage1-configured-source-live-diagnostics
-          path: collector_test_results/configured_25_live.json
+          name: stage1-certificate-warning-3-live-diagnostics
+          path: collector_test_results/cert_warning_3_live.json
           if-no-files-found: warn
