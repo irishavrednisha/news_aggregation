@@ -242,12 +242,12 @@ class Stage1StabilityTests(unittest.TestCase):
         source = SimpleNamespace(
             name="ИАПН", url="https://iapn.ru", rss_url="https://iapn.ru/feed/",
         )
-        feed_xml = b"""<?xml version="1.0" encoding="utf-8"?>
+        feed_xml = """<?xml version="1.0" encoding="utf-8"?>
           <rss version="2.0"><channel><title>News</title><item>
           <title>Российский завод ввёл новую производственную линию</title>
           <link>https://iapn.ru/test-industrial-news/</link>
           <description>Российский производитель оборудования</description>
-          </item></channel></rss>"""
+          </item></channel></rss>""".encode("utf-8")
         response = MagicMock()
         response.content = feed_xml
         response.raise_for_status.return_value = None
