@@ -107,14 +107,15 @@ _INDUSTRIAL = re.compile(
     r"руд\w*|угл\w*|скважин\w*|золот\w*|электродвигател\w*|автокран\w*|дрон\w*|бпла|беспилот\w*|фанер\w*|металл\w*|нефтехими\w*|реактор\w*|pvd|покрыти\w*|инструмент\w*|"
     r"энергопотреблен\w*|электроэнерг\w*|генераци\w*|трансформатор\w*|турбин\w*|истребител\w*|вертолет\w*|"
     r"ледокол\w*|фрегат\w*|корвет\w*|круизн\w* лайнер\w*|подлод\w*|тепловоз\w*|трамва\w*|"
-    r"акпп|брест-од-\d+|мс-21|су-34|ак-12|sim.карт\w*|титан\w*)\b")
+    r"акпп|брест-од-\d+|мс-21|су-34|ак-12|sim.карт\w*|титан\w*|"
+    r"алмаз\w*|поезд\w*|ракет\w*|геополимер\w*)\b")
 _EVENT = re.compile(
     r"\b(?:запуст\w*|ввел\w*|ввели|введ\w*|открыл\w*|создал\w*|"
     r"разработ\w*|произвел\w*|изготов\w*|испыт\w*|модернизир\w*|модернизац\w*|создан\w*|"
     r"постро\w*|инвестир\w*|влож\w*|обновил\w*|добы\w*|спуст\w*|представ\w*|отгруз\w*|отправ\w*|нараст\w*|достиг\w*|"
     r"расшир\w*|начал выпуск\w*|поставил\w*|заработал\w*|внедри\w*|увеличил\w*|выпуст\w*|выпуск\w*|сертифицир\w*|одобр\w*|"
     r"освоил\w*|контракт\w*|проект\w*|оснащ\w*|оснаст\w*|собрал\w*|сборк\w*|переработ\w*|восстанов\w*|мощност\w*|"
-    r"перевыполн\w*|вывел\w* из эксплуатации|ликвидир\w*|перезапуст\w*|заверш\w*|превыс\w*|сократил\w*|снизил\w*|"
+    r"перевыполн\w*|вывел\w* из эксплуатации|ликвидир\w*|заморозил\w*|перезапуст\w*|заверш\w*|превыс\w*|сократил\w*|снизил\w*|"
     r"запущ\w*|запуска\w*|созда\w*|оптимизир\w*|вывез\w*|стартова\w*|поступил\w*|"
     r"заказа\w*|сдела\w*|вывел\w* на обкатк\w*|начал\w* (?:ходов\w* )?испытани\w*|"
     r"начал\w* резк\w*|прош\w* .{0,80}испытани\w*)\b")
@@ -160,6 +161,28 @@ _OFFTOPIC_PRIMARY = re.compile(
     r"^.{0,90}\b(?:решил\w* закрыть границ\w*|закрыл\w* границ\w*)\b"
 )
 
+# Technical headlines can omit the usual "factory launched" wording.
+# Read ONLY the opening paragraph to corroborate a completed event.
+_PRODUCTION_PROGRESS_LEAD = re.compile(
+    r"\b(?:заканчива\w* сборк\w*|заверша\w* сборк\w*|"
+    r"сборк\w* .{0,55}\b(?:заверша\w*|заканчива\w*)|"
+    r"прош\w* испытани\w*|представил\w* масштабн\w* обновлени\w*)\b"
+)
+_TECH_APPLIED_TITLE = re.compile(
+    r"\bразработк\w* .{0,100}\b(?:использу\w*|применя\w*|внедр\w*)\b"
+)
+_TECH_APPLIED_LEAD = re.compile(
+    r"\b(?:оборудовани\w*|терминал\w*|аппаратн\w* комплекс\w*)\b"
+)
+_SECTOR_PRODUCTION_LEAD = re.compile(
+    r"\b(?:производств\w*|выпуск\w*|добыч\w*) "
+    r"(?:стали|проката|угл\w*|металл\w*|руды)\b.{0,90}"
+    r"\b(?:сократил\w*|увеличил\w*|вырос\w*|снизил\w*|упал\w*)\b"
+)
+_OBVIOUS_SPORTS = re.compile(
+    r"\b(?:обыгра\w*|очк\w* .{0,80} побед\w*)\b"
+)
+_OBVIOUS_UNRELATED = re.compile(r"\b(?:маньяк\w*|аукцион\w* картин\w*|картин\w* .{0,60} аукцион\w*)\b")
 # HR, PR and governance mentions are not proof of a production event.
 _ORG_ONLY = re.compile(
     r"\b(?:обучени\w*|наставничеств\w*|стажировк\w*|олимпиад\w*|"
@@ -180,6 +203,7 @@ _CRIME_ONLY = re.compile(
 
 def semantic_decision(article) -> IntakeDecision:
     title = _norm(getattr(article, "title", ""))
+    lead = _norm(getattr(article, "text", ""))[:900]
     # A promotion remains a promotion even if it mentions factories/products.
     for pattern, reason in (
         (_ADVERTISEMENT, "advertisement"),
@@ -201,6 +225,8 @@ def semantic_decision(article) -> IntakeDecision:
         return IntakeDecision("review", "speculative_industry", "semantic")
     if _CRIME_ONLY.search(title):
         return IntakeDecision("rejected", "offtopic_event", "semantic")
+    if not industrial and (_OBVIOUS_SPORTS.search(title) or _OBVIOUS_UNRELATED.search(title)):
+        return IntakeDecision("rejected", "offtopic_event", "semantic")
     if _ORG_ONLY.search(title):
         return IntakeDecision("review", "corporate_or_hr_event", "semantic")
     if _OFFTOPIC.search(title):
@@ -214,6 +240,14 @@ def semantic_decision(article) -> IntakeDecision:
         return IntakeDecision("review", "offtopic_primary_event", "semantic")
     if industrial and _UNCONFIRMED_PLAN.search(title) and not _PROJECT_COMMITTED.search(title):
         return IntakeDecision("review", "industrial_plan_unconfirmed", "semantic")
+    if _TECH_APPLIED_TITLE.search(title) and _TECH_APPLIED_LEAD.search(lead):
+        return IntakeDecision("accepted", "industrial_application_confirmed", "semantic")
+    if industrial and _PRODUCTION_PROGRESS_LEAD.search(lead) and (
+        "поезд" in title or "шахт" in title
+    ):
+        return IntakeDecision("accepted", "industrial_progress_confirmed", "semantic")
+    if industrial and _SECTOR_PRODUCTION_LEAD.search(lead):
+        return IntakeDecision("accepted", "industrial_report", "semantic")
     if industrial and _INDUSTRY_REPORT.search(title):
         return IntakeDecision("accepted", "industrial_report", "semantic")
     if industrial and event:
