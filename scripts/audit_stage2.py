@@ -80,7 +80,13 @@ def _load_rows(path):
         for key in ("articles", "news", "items"):
             if isinstance(payload.get(key), list):
                 return payload[key]
-    raise ValueError("Expected array or dict with 'articles', 'news' or 'items'")
+        # Allow deterministic replay of the stage2_real_250.json report itself
+        # without fetching any sites again or touching the local database.
+        if isinstance(payload.get("real_sample"), dict):
+            nested = payload["real_sample"].get("articles")
+            if isinstance(nested, list):
+                return nested
+    raise ValueError("Expected article array or dict containing article records")
 
 
 def _labels(path):
@@ -305,6 +311,27 @@ def main(argv=None):
     today = args.date or datetime.now(timezone.utc).date()
     real = audit_real(selected, today=today, expected_labels=_labels(args.labels),
                       excluded=exclusions)
+    # Differences against an earlier *model* decision are not ground-truth
+    # errors; they measure how much the new triage behavior changed.
+    old_by_url = {}
+    if args.input:
+        for old in _load_rows(args.input):
+            if isinstance(old, dict) and old.get("status"):
+                old_by_url.setdefault(normalize_url(old.get("url", "")),
+                                      (old["status"], old.get("reason")))
+    changes = []
+    transitions = Counter()
+    for row in real["articles"]:
+        old = old_by_url.get(row["canonical_url"])
+        if not old:
+            continue
+        transitions[old[0] + " -> " + row["status"]] += 1
+        if old[0] != row["status"] or old[1] != row["reason"]:
+            changes.append({
+                "title": row["title"], "url": row["url"],
+                "before_status": old[0], "before_reason": old[1],
+                "after_status": row["status"], "after_reason": row["reason"],
+            })
     report = {
         "stage": 2, "read_only": True, "db_written": False,
         "max_published": False, "telegram_started": False,
@@ -320,6 +347,11 @@ def main(argv=None):
         "sources": sources, "source_diagnostics": diagnostics,
         "controlled_gold": _gold_report(today=date(2026, 11, 18)),
         "real_sample": real,
+        "comparison_with_previous_model": {
+            "transitions": dict(transitions),
+            "changed": changes,
+            "note": "Changes are not independent accuracy labels.",
+        },
         "caveat": (
             "Unlabeled real items are not error-rate denominators. "
             "Manual labels are needed to measure real false positives and negatives."
