@@ -85,7 +85,7 @@ def _mirror_key(url: str) -> str | None:
         return None
     path = parsed.path.casefold()
     # A generic /news or a home page is not an exact-article identifier.
-    if host in MIRRORS and re.search(r"/20\d{2}/[^/]{6,}", path):
+    if host in MIRRORS and re.search(r"/20\d{2}/(?:\d{1,2}/){0,2}[^/]{6,}", path):
         return path + ("?" + parsed.query if parsed.query else "")
     return None
 
