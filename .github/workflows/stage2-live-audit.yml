@@ -1,0 +1,42 @@
+name: Stage 2 live real-news corpus (read only)
+on:
+  push:
+    branches:
+      - feat/stage2-filter-exact-dedupe-2026-11-18
+    paths:
+      - .github/workflows/stage2-live-audit.yml
+  workflow_dispatch:
+
+jobs:
+  live-audit-250:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MAX_PUBLISHING_ENABLED: "false"
+      NEWS_IMAGES_ENABLED: "false"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install collector dependencies only and Chromium
+        run: |
+          python -m pip install beautifulsoup4 requests feedparser playwright sqlalchemy psycopg2-binary python-dotenv apscheduler truststore
+          python -m playwright install --with-deps chromium
+      - name: Collect independent real RSS/HTML articles without PostgreSQL or publication
+        continue-on-error: true
+        run: |
+          python scripts/audit_stage2.py --live --date 2026-11-18 --per-source 16 --target 250 --require-coverage --output collector_test_results/stage2_live_250.json
+      - name: Print actual sample coverage and unresolved quality counts
+        if: always()
+        run: |
+          python -c "import json,pathlib; p=pathlib.Path('collector_test_results/stage2_live_250.json'); r=json.loads(p.read_text(encoding='utf-8')) if p.exists() else {}; print(json.dumps({k:r.get(k) for k in ('collected_before_sampling','selected_before_exclusions','sample_complete','independence_from_prior_samples')},ensure_ascii=False)); print(json.dumps((r.get('real_sample') or {}).get('counts',{}),ensure_ascii=False)); print(json.dumps((r.get('controlled_gold') or {}).get('metrics',{}),ensure_ascii=False))"
+      - name: Save original titles, texts, URLs, triage decisions and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage2-live-real-news-20261118
+          path: collector_test_results/stage2_live_250.json
+          retention-days: 14
+          if-no-files-found: warn

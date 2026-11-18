@@ -27,28 +27,29 @@ def _browser_cert_warning_enabled() -> bool:
 def collect(limit: int = 10) -> int:
     from collectors.data_collector import collect_news
     from database.db import get_session
-    from database.repository import get_active_sources, save_articles
-    from processing.topic_filter import filter_articles
+    from database.repository import get_active_sources
+    from database.intake_repository import require_intake_schema, save_intake_batch
 
     session = get_session()
     diagnostics = {}
     saved = 0
     try:
+        require_intake_schema(session)
         sources = get_active_sources(session)
         LOG.info("Collecting from %s active sources (database is authoritative)", len(sources))
         for source in sources:
             try:
                 # Per-source isolation: one failed website cannot interrupt others.
                 articles = collect_news(
-                    [source], limit_per_source=limit, session=session,
-                    diagnostics=diagnostics,
+                    [source], limit_per_source=limit, session=None,
+                    diagnostics=diagnostics, apply_filters=False,
                     allow_unverified_tls=(
                         _browser_cert_warning_enabled()
                         and source.name in CERT_WARNING_SOURCES
                     ),
                 )
-                filtered = filter_articles(articles)
-                saved_now = save_articles(session, filtered)
+                intake = save_intake_batch(session, articles)
+                saved_now = intake.saved
                 saved += saved_now
                 stat = diagnostics.get(source.name, {})
                 if stat.get("unverified_tls_urls"):
@@ -58,10 +59,9 @@ def collect(limit: int = 10) -> int:
                         "MAX publication remains disabled",
                         source.name, len(stat["unverified_tls_urls"]),
                     )
-                LOG.info("%s: candidates=%s articles=%s filtered=%s saved=%s status=%s",
-                         source.name, stat.get("candidates", "?"),
-                         len(articles), len(filtered), saved_now,
-                         stat.get("status", "unknown"))
+                LOG.info("%s: candidates=%s raw=%s triage=%s saved=%s status=%s",
+                         source.name, stat.get("candidates", "?"), len(articles),
+                         intake.as_dict(), saved_now, stat.get("status", "unknown"))
             except Exception:
                 session.rollback()
                 LOG.exception("Source %s failed; continuing", source.name)

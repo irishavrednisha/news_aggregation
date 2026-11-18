@@ -1,0 +1,67 @@
+name: Stage 2 intake filtering and exact deduplication
+on:
+  push:
+    branches:
+      - feat/stage2-filter-exact-dedupe-2026-11-18
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  offline-intake:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    env:
+      MAX_PUBLISHING_ENABLED: "false"
+      NEWS_IMAGES_ENABLED: "false"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install lightweight libraries and Alembic (no ML, no browser download)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install beautifulsoup4 requests feedparser playwright sqlalchemy psycopg2-binary python-dotenv apscheduler alembic
+      - name: Compile stage2 modules
+        run: |
+          python -m py_compile main.py processing/news_intake.py processing/exact_duplicates.py database/intake_models.py database/intake_repository.py scripts/audit_stage2.py tests/test_stage2_intake.py migrations/versions/20261118_02_news_intake.py
+      - name: Verify additive migration graph (no DB write)
+        run: python -m alembic heads
+      - name: Stage 2 labeled and DB tests
+        run: python -m unittest discover -s tests -p "test_stage2_intake.py" -v
+      - name: Verify raw review/rejected exact duplicates and persistence
+        run: python -m unittest discover -s tests -p "test_stage2_review_duplicates.py" -v
+      - name: Validate real audit headline regressions
+        run: python -m unittest discover -s tests -p "test_stage2_real_title_regressions.py" -v
+      - name: Stage 2 follow-up real-world and URL regressions
+        run: python -m unittest discover -s tests -p "test_stage2_followup.py" -v
+      - name: Preserve stage 1 collector contracts
+        run: python -m unittest discover -s tests -p "test_stage1_stability.py" -v
+      - name: Preserve old filter diagnostics
+        run: python -m unittest discover -s tests -p "test_topic_filter.py" -v
+      - name: Verify read-only audit CLI
+        run: python scripts/audit_stage2.py --help
+      - name: Download stored live corpus of 231 articles (read-only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 44224642774 --repo irishavrednisha/news_aggregation --name stage2-live-real-news-20261118 --dir collector_test_results
+      - name: Replay 231 real articles against this exact commit
+        run: |
+          python scripts/audit_stage2.py --input collector_test_results/stage2_live_250.json --date 2026-11-18 --target 250 --require-coverage --output collector_test_results/stage2_live_231_latest.json
+      - name: Upload reproducible read-only replay report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage2-live-231-replay-${{ matrix.os }}
+          path: collector_test_results/stage2_live_231_latest.json
+          retention-days: 14
+          if-no-files-found: warn
