@@ -22,7 +22,9 @@ COMPANIES = {
     "роснефть": r"\bроснефт\w*\b",
     "газпром": r"\bгазпром\w*\b",
     "норникель": r"\b(?:норникел\w*|норильск\w* никел\w*)\b",
-    "руcал": r"\bрусал\w*\b",
+    "русал": r"\bрусал\w*\b",
+    "селигдар": r"\bселигдар\w*\b",
+    "крэt": r"\b(?:крет|концерн радиоэлектронн\w* технолог\w*)\b",
     "свеза": r"\bсвез\w*\b",
     "тмк": r"\b(?:тмк|трубн\w* металлургическ\w* компани\w*)\b",
     "одк": r"\b(?:одк|объединенн\w* двигателестроительн\w* корпораци\w*)\b",
@@ -32,11 +34,12 @@ COMPANIES = {
     "пролетарский завод": r"\bпролетарск\w* завод\w*\b",
 }
 ACTIONS = {
-    "production": r"\b(?:выпуст\w*|изготов\w*|произвел\w*|производ\w* парти\w*|собрал\w* парти\w*)\b",
+    "production": r"\b(?:выпуст\w*|изготов\w*|произвел\w*|достиг\w* отметк\w*|перешагнул\w* рубеж\w*|производ\w* парти\w*|собрал\w* парти\w*)\b",
     "construction": r"\b(?:постро\w*|строительств\w*|возвод\w*|начал\w* строит\w*)\b",
     "launch": r"\b(?:запуст\w*|ввел\w* в эксплуатаци\w*|открыл\w* производств\w*)\b",
     "modernization": r"\b(?:модерниз\w*|усовершенств\w*|улучшил\w*|обновил\w*|модернизаци\w*)\b",
     "development": r"\b(?:разработ\w*|создал\w*|спроектир\w*)\b",
+    "presentation": r"\b(?:представил\w*|презентовал\w*|продемонстрир\w*)\b",
     "tests": r"\b(?:испытан\w*|испытал\w*|протестир\w*)\b",
     "delivery": r"\b(?:поставил\w*|поставк\w*|передал\w* заказчик\w*|отгруз\w*)\b",
     "contract": r"\b(?:контракт\w*|соглашени\w*|договор\w*|подписал\w*)\b",
@@ -53,6 +56,8 @@ OBJECTS = {
     "tram": r"\b(?:трамва\w*|вагон\w*|локомотив\w*|тепловоз\w*)\b",
     "mining": r"\b(?:рудник\w*|шахт\w*|месторождени\w*)\b",
     "metal": r"\b(?:сталь\w*|металл\w*|прокат\w*|титан\w*)\b",
+    "gold": r"\bзолот\w*\b",
+    "coal": r"\bугл\w*\b",
     "transformer": r"\bтрансформатор\w*\b",
     "equipment": r"\b(?:оборудовани\w*|станк\w*|комплекс\w*)\b",
     "pipeline": r"\b(?:трубопровод\w*|газопровод\w*)\b",
@@ -196,13 +201,21 @@ def same_event(a: object, b: object, similarity: float,
     if left.planned != right.planned:
         return EventDecision(False, score, "plan_vs_completed")
     if left.actions and right.actions and not left.actions.intersection(right.actions):
-        return EventDecision(False, score, "different_action")
+        # Product development reported as a presentation can describe the
+        # same unveiling. Require strong embedding + all remaining hard gates.
+        compatible = (left.actions | right.actions) == {"development", "presentation"}
+        if not compatible or score < 0.88:
+            return EventDecision(False, score, "different_action")
     if left.objects and right.objects and not left.objects.intersection(right.objects):
         return EventDecision(False, score, "different_object")
-    quantities_a = dict(left.quantities)
-    quantities_b = dict(right.quantities)
+    quantities_a, quantities_b = {}, {}
+    for unit, amount in left.quantities:
+        quantities_a.setdefault(unit, set()).add(amount)
+    for unit, amount in right.quantities:
+        quantities_b.setdefault(unit, set()).add(amount)
     for unit in quantities_a.keys() & quantities_b.keys():
-        if not math.isclose(quantities_a[unit], quantities_b[unit], rel_tol=0.01):
+        if not any(math.isclose(x, y, rel_tol=0.01)
+                   for x in quantities_a[unit] for y in quantities_b[unit]):
             return EventDecision(False, score, "different_quantity")
     if left.publication_date and right.publication_date:
         gap = abs((left.publication_date - right.publication_date).days)
@@ -212,7 +225,7 @@ def same_event(a: object, b: object, similarity: float,
     # Both company AND action AND object needed for ordinary merges. Very close
     # paraphrases can omit company in one title, but still need action + object.
     company_ok = bool(left.companies & right.companies)
-    action_ok = bool(left.actions & right.actions)
+    action_ok = bool(left.actions & right.actions) or (left.actions | right.actions) == {"development", "presentation"}
     object_ok = bool(left.objects & right.objects)
     title_equal = left.title == right.title and bool(left.title)
     if not action_ok or not object_ok:
