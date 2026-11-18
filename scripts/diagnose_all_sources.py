@@ -107,15 +107,23 @@ def inspect_source(source, limit, allow_unverified_tls=False, include_text=False
         "rss_url": source.rss_url,
         "configured_active": bool(source.is_active),
         "status": stat.get("status", "exception"),
-        "available": bool(metrics) or bool(stat.get("candidates")),
+        "available": (
+            bool(stat.get("candidates"))
+            and stat.get("status") not in ("fetch_failed", "collector_error")
+        ) or any(x["text_method"] == "html" for x in metrics),
         "links_found": stat.get("candidates", 0),
-        "articles_extracted": len(metrics),
+        "articles_extracted": sum(
+            x["text_method"] == "html" and x["text_chars"] >= 80
+            for x in metrics
+        ),
+        "rss_previews_only": sum(x["text_method"] == "rss" for x in metrics),
         "full_html_texts_250_plus": sum(bool(x["full_text_heuristic"]) for x in metrics),
         "valid_titles": sum(bool(x["title_valid"]) for x in metrics),
         "valid_dates": sum(bool(x["date_valid"]) for x in metrics),
         "articles_with_image_candidates": sum(bool(x["image_candidates"]) for x in metrics),
         "short_or_empty": stat.get("short_or_empty", 0),
         "error_page_rejections": stat.get("error_page_rejections", 0),
+        "rss_preview_only_events": stat.get("rss_preview_only", 0),
         "errors": failures + stat.get("errors", []),
         "fetch_failures": stat.get("fetch_failures", []),
         "article_probes": stat.get("quality_probes", []),
