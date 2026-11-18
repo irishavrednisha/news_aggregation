@@ -3245,6 +3245,8 @@ def collect_news(
                     f"{e['kind']}: {e['url']}" for e in stat["fetch_failures"]
                 )
                 stat["errors"].extend(list(reasons)[:15])
+            elif stat["errors"]:
+                stat["status"] = "collector_error"
             elif stat.get("duplicate_milpress"):
                 stat["status"] = "duplicates_only"
             elif stat["candidates"]:
