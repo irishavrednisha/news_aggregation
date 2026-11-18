@@ -241,6 +241,25 @@ def compare_pair_labels(rows, baseline, revised, path, input_path):
     urls = {r["url"] for r in rows}
     maps = {name: {d["url"]: d["cluster"] for d in decisions}
             for name, decisions in (("baseline", baseline), ("revised", revised))}
+    # Count unique, well-formed pair decisions; reversed or repeated labels
+    # must never inflate the claimed number of reviewed real examples.
+    reviewed_pairs = set()
+    for entry in pairs:
+        if not isinstance(entry, dict):
+            raise ValueError("Every gold pair must be a JSON object")
+        if type(entry.get("same_event")) is not bool:
+            raise ValueError("Gold pair missing boolean same_event")
+        try:
+            a = entry["a"] if entry.get("a") else original_urls[entry["a_index"]]
+            b = entry["b"] if entry.get("b") else original_urls[entry["b_index"]]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError("Gold pair references an invalid accepted article") from exc
+        if a not in urls or b not in urls or a == b:
+            raise ValueError(f"Gold URL not in accepted corpus or identical: {a} ; {b}")
+        pair = tuple(sorted((a, b)))
+        if pair in reviewed_pairs:
+            raise ValueError(f"Duplicate/reversed gold pair: {a} ; {b}")
+        reviewed_pairs.add(pair)
     result = {}
     for name, assignments in maps.items():
         counts = Counter()
