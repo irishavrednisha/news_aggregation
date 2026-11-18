@@ -9,16 +9,7 @@ import os
 from contextvars import ContextVar
 from datetime import datetime, timezone
 import feedparser
-# На Windows Requests обычно использует certifi вместо доверенных
-# сертификатов Windows. truststore (если установлен) позволяет безопасно
-# проверять HTTPS по системному хранилищу. Проверку TLS не отключаем.
-if os.name == "nt":
-    try:
-        import truststore
-        truststore.inject_into_ssl()
-    except ImportError:
-        pass
-
+# TLS truststore fallback is per request; never globally monkey-patch ssl.
 import requests
 import re
 import urllib3
@@ -30,6 +21,8 @@ from urllib.parse import urlparse, urljoin
 from playwright.sync_api import sync_playwright
 
 from collectors.image_extractor import ImageCandidate, extract_image_candidates
+from collectors.article_quality import is_error_page_text
+from collectors.tls_policy import retry_with_trusted_roots
 
 from utils.text_utils import (
     clean_text,
@@ -147,6 +140,7 @@ def _may_ignore_https_errors(url: str) -> bool:
     host = (urlsplit(url).hostname or "").lower()
     return (
         _ALLOW_UNVERIFIED_TLS.get()
+        and not urlsplit(url).username and not urlsplit(url).password
         and host in {
             "rostec.ru", "www.rostec.ru",
             "rosneft.ru", "www.rosneft.ru", "limited.rosneft.ru",
@@ -181,46 +175,41 @@ def fetch_html_with_requests(url: str) -> str:
     from urllib.parse import urlsplit
 
     domain = urlsplit(url).hostname or ""
-    # Медленный промпортал: два ограниченных по времени запроса.
     attempts = 2 if domain in ("promvest.info", "www.promvest.info") else 1
-    verify = _request_ca_bundle()
+    timeout = (10, 35 if domain.endswith("promvest.info") else 30)
 
     for attempt in range(1, attempts + 1):
         try:
-            response = requests.get(
-                url, headers=HEADERS,
-                timeout=(10, 35 if domain.endswith("promvest.info") else 30),
-                verify=verify,
-            )
+            # Ordinary verified TLS first; truststore and site CA only on SSLError.
+            try:
+                response = requests.get(url, headers=HEADERS, timeout=timeout, verify=True)
+            except SSLError as exc:
+                _record_fetch_problem(url, "ssl_certificate_error", type(exc).__name__)
+                print(f"HTTPS certificate verification failed for {url}; trying trusted roots")
+                response = retry_with_trusted_roots(
+                    url, HEADERS, timeout, record_issue=_record_fetch_problem,
+                )
+                if response is None:
+                    return ""
+
             if response.status_code in (403, 429):
-                print(f"HTTP {response.status_code} (запрет/лимит): {url}")
                 _record_fetch_problem(url, "http_denied", str(response.status_code))
                 return ""
             try:
                 response.raise_for_status()
             except RequestException as exc:
-                _record_fetch_problem(url, "http_error", str(exc))
-                raise
+                _record_fetch_problem(url, "http_error", type(exc).__name__)
+                return ""
             if response.encoding is None or response.encoding.lower() in ("iso-8859-1", "latin-1"):
                 response.encoding = response.apparent_encoding
             return response.text
-        except SSLError as exc:
-            print(f"Ошибка проверки HTTPS-сертификата {url}: {exc}")
-            print(
-                "Не отключайте TLS: установите truststore "
-                "(python -m pip install truststore) или настройте NEWS_CA_BUNDLE."
-            )
-            _record_fetch_problem(url, "ssl_certificate_error", str(exc))
-            return ""
         except (ReadTimeout, RequestConnectionError) as exc:
-            print(f"Сетевой сбой {url}, попытка {attempt}/{attempts}: {type(exc).__name__}: {exc}")
-            _record_fetch_problem(url, "connection_or_timeout", f"{type(exc).__name__}: {exc}")
+            _record_fetch_problem(url, "connection_or_timeout", type(exc).__name__)
             if attempt == attempts:
                 return ""
             time.sleep(1)
         except RequestException as exc:
-            print(f"Ошибка HTTP {url}: {type(exc).__name__}: {exc}")
-            _record_fetch_problem(url, "http_request_exception", f"{type(exc).__name__}: {exc}")
+            _record_fetch_problem(url, "http_request_exception", type(exc).__name__)
             return ""
     return ""
 
@@ -249,6 +238,10 @@ def fetch_html_with_browser(url: str, ignore_https_errors: bool = False) -> str:
                     try:
                         page = context.new_page()
                         page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                        final_url = getattr(page, "url", url)
+                        if isinstance(final_url, str) and not _may_ignore_https_errors(final_url):
+                            _record_fetch_problem(url, "unverified_redirect_blocked", final_url)
+                            return ""
                         page.wait_for_timeout(1500)
                         return page.content()
                     finally:
@@ -284,17 +277,29 @@ def _rosneft_limited_url(url: str) -> str | None:
 def fetch_html(url: str) -> str:
     domain = get_domain(url)
 
-    # Временная альтернатива нажатию «Всё равно перейти» в браузере.
-    # Не используем requests(verify=False), чтобы этот обход не
-    # наследовался переходами на чужие домены.
+    # Diagnostic opt-in never bypasses a valid certificate. A recorded
+    # certificate verification failure on this exact URL is mandatory.
     if _may_ignore_https_errors(url):
-        html = fetch_html_with_browser(url, ignore_https_errors=True)
-        if html:
-            return html
-        mirror = _rosneft_limited_url(url)
-        if mirror and mirror != url and _may_ignore_https_errors(mirror):
-            return fetch_html_with_browser(mirror, ignore_https_errors=True)
-        return ""
+        verified = fetch_html_with_requests(url)
+        if verified and not is_error_page_text(BeautifulSoup(verified, "html.parser").get_text(" ", strip=True)):
+            return verified
+        browser_verified = fetch_html_with_browser(url)
+        if browser_verified and not is_error_page_text(BeautifulSoup(browser_verified, "html.parser").get_text(" ", strip=True)):
+            return browser_verified
+        audit = _FETCH_AUDIT.get() or {}
+        confirmed_ssl = any(
+            failure.get("kind") == "ssl_certificate_error" or (
+                failure.get("kind") == "browser_error" and (
+                    "ERR_CERT_AUTHORITY_INVALID" in failure.get("detail", "")
+                    or "CERTIFICATE_VERIFY_FAILED" in failure.get("detail", "")
+                )
+            )
+            for failure in audit.get("fetch_failures", [])
+            if failure.get("url") == url
+        )
+        if not confirmed_ssl:
+            return ""
+        return fetch_html_with_browser(url, ignore_https_errors=True)
 
     browser_domains = (
         "nornickel.ru", "заводы.рф", "xn--80az8a.xn--p1ai",
@@ -332,6 +337,10 @@ def fetch_html(url: str) -> str:
     if html:
         if "Error establishing a database connection" in html:
             _record_fetch_problem(url, "origin_database_error", "Сайт не может подключиться к собственной базе данных")
+            return ""
+        if is_error_page_text(BeautifulSoup(html, "html.parser").get_text(" ", strip=True)):
+            _record_fetch_problem(url, "site_error_or_access_page", "HTML is an error/access page")
+            return ""
         return html
 
     # Официальная мобильная/облегчённая версия Роснефти. Сохраняем
@@ -3036,6 +3045,7 @@ def collect_news(
     for source in sources:
         stat = {
             "candidates": 0, "accepted": 0, "short_or_empty": 0,
+            "error_page_rejections": 0, "quality_probes": [],
             "errors": [], "rejected_urls": [],
             "fetch_failures": [], "status": "not_started",
         }
@@ -3138,6 +3148,21 @@ def collect_news(
                     print(f"Ошибка парсинга: {message}")
                     continue
 
+                if len(stat["quality_probes"]) < 15:
+                    stat["quality_probes"].append({
+                        "url": article.url,
+                        "text_chars": len(article.text or ""),
+                        "text_source": article.text_source,
+                        "has_date": article.published_at is not None,
+                        "has_title": len((article.title or "").strip()) >= 15,
+                        "image_candidates": len(article.image_candidates or []),
+                    })
+                if is_error_page_text(article.text):
+                    stat["error_page_rejections"] += 1
+                    stat["short_or_empty"] += 1
+                    stat["rejected_urls"].append(preview.url)
+                    continue
+
                 # Ограничиваем частоту запросов и для отсеянных публикаций.
                 # Ранее continue в фильтрах пропускал паузу.
                 time.sleep(1)
@@ -3150,8 +3175,8 @@ def collect_news(
                 # При чистой проверке сбора не скрываем короткие статьи:
                 # длина текста остаётся видна в JSON, а решение принимает человек.
                 # Пустая страница не является статьёй даже в raw-режиме.
-                if not article.text or not article.text.strip() or (
-                    apply_filters and len(article.text.strip()) < min_text_length
+                if len((article.text or "").strip()) < (
+                    min_text_length if apply_filters else 80
                 ):
                     stat["short_or_empty"] += 1
                     stat["rejected_urls"].append(preview.url)
