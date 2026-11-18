@@ -46,8 +46,9 @@ class Stage1StabilityTests(unittest.TestCase):
              patch("database.repository.get_active_sources", return_value=sources), \
              patch("collectors.data_collector.collect_news",
                    side_effect=[RuntimeError("unavailable"), [good]]) as collected, \
-             patch("processing.topic_filter.filter_articles", side_effect=lambda a: a), \
-             patch("database.repository.save_articles", return_value=1):
+             patch("database.intake_repository.require_intake_schema"), \
+             patch("database.intake_repository.save_intake_batch",\
+                   return_value=SimpleNamespace(saved=1, as_dict=lambda: {})):
             saved = main.collect(limit=1)
         self.assertEqual(saved, 1)
         self.assertEqual(collected.call_count, 2)
