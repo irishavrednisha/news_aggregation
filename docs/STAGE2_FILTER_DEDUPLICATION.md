@@ -1,4 +1,4 @@
-# Этап 2 из 7 — очистка, tri-state фильтр и точные дубликаты
+# Этап 2 из 7 — очистка, фильтр accepted/rejected и точные дубликаты
 
 Ветка: `feat/stage2-filter-exact-dedupe-2026-11-18`.
 Родитель: `fix/collector-isolation-tls-2026-11-18` @ `8574fb3`.
@@ -7,10 +7,10 @@
 ## Разделение конвейера
 
 1. **Raw collection:** `collectors.data_collector.collect_news(..., apply_filters=False, session=None)` собирает исходные статьи RSS/HTML без смысловых стоп-слов и без отказа по географии. Совсем пустые страницы/пустые HTML-заглушки отбрасываются самим сетевым сборщиком; они присутствуют в его диагностике, а не в таблице исходных текстов.
-2. **Technical triage:** `processing.news_intake.technical_decision` проверяет заголовок, URL, сервисные страницы, boilerplate, длину, источник текста и даты. Пустой/короткий текст, RSS preview, слишком старые и будущие даты получают `review`, а не пропадают.
-3. **Semantic triage:** `processing.news_intake.semantic_decision` отклоняет очевидную рекламу, поздравления, вакансии, дайджесты, ЕГЭ, уголовные и потребительские сюжеты без промышленного события. Промышленное событие принимается, неоднозначное — `review`. **Строгого RU/foreign фильтра нет.** Старый `processing/topic_filter.py` сохранён для совместимости предыдущих аудитов и тестов, production использует новую tri-state функцию.
+2. **Technical triage:** `processing.news_intake.technical_decision` проверяет заголовок, URL, служебные страницы, boilerplate, длину, источник и даты. Пустые/короткие тексты, RSS-превью, некорректные будущие даты — `rejected` с объяснением, но raw-снимки сохраняются. Старые полноценные статьи — `accepted` с причиной `stale_article` (свежесть решается отдельно).
+3. **Semantic triage:** `processing.news_intake.semantic_decision` отклоняет явную рекламу, поздравления, вакансии, анонсы, дайджесты, уголовные и непрофильные сюжеты; промышленные события, проекты и содержательную отраслевую аналитику принимает. Для непрозрачных заголовков проверяется начало статьи, а не применяется безусловное отклонение. **Строгого RU/foreign фильтра нет.** Production возвращает только `accepted`/`rejected`; старый `processing/topic_filter.py` сохранён как legacy API.
 4. **Exact dedupe:** `processing.exact_duplicates` удаляет трекинг URL, нормализует заголовок, проверяет идентичный текст и совпадение зеркального адреса. Параметры вроде `?obj=...` у НедраДВ НЕ удаляются. Один и тот же общий заголовок разных событий **не** является достаточным основанием для слияния.
-5. **Persistence:** `database.intake_repository.save_intake_batch` добавляет все извлечённые статьи в `news_intake_records`. Только `accepted` и не дубликат попадает в прежнюю `news`. `review/rejected/duplicate` остаются в сыром журнале, включая URL, полный текст, источник, дату, причину и ссылку на оригинальный News ID. Повторный сбор идентичной записи увеличивает `seen_count`, новых News не создаёт.
+5. **Persistence:** `database.intake_repository.save_intake_batch` сохраняет все извлечённые raw-статьи в `news_intake_records`. В `news` попадает только `accepted` без точной копии. Новый raw-журнал использует только `accepted` и `rejected`; копии имеют `rejected` + `duplicate_url/duplicate_text/...`, ссылки `duplicate_of_news_id` или `duplicate_of_intake_id`, исходные URL, тексты, даты и `seen_count`. Исторические `review`/`duplicate` в БД не переписываются ради сохранения аудита.
 6. **Semantic clustering:** по-прежнему отдельный процесс `python main.py process`, читает только `news`. В ходе этапа 2 **не запускался**.
 
 ## Основания для решений
@@ -84,11 +84,11 @@ Test-Path "D:\Projects\news_aggregation\stage2_backup.dump"
 {"labels":[
   {"url":"https://example.org/news/real-article-1","expected_status":"accepted"},
   {"url":"https://example.org/news/real-article-2","expected_status":"rejected"},
-  {"url":"https://example.org/news/real-article-3","expected_status":"duplicate"}
+  {"url":"https://example.org/news/real-article-3","expected_status":"rejected","expected_reason":"duplicate_text"}
 ]}
 ```
 
-Затем добавьте `--labels collector_test_results\stage2_manual_labels.json`. В отчёте появятся `false_junk_pass`, `false_useful_reject`, `useful_awaits_review`, `duplicate_tp/fp/fn`, список реальных ошибок и воспроизводимость при повторном прогоне. Если оценок нет, `gold_real_metrics=null`, а не сфабрикованный ноль ошибок.
+Затем добавьте `--labels collector_test_results\stage2_manual_labels.json`. В отчёте появятся `false_junk_pass`, `false_useful_reject`, `duplicate_tp/fp/fn`, список реальных ошибок и воспроизводимость при повторном прогоне. Если оценок нет, `gold_real_metrics=null`, а не сфабрикованный ноль ошибок.
 
 После проверки миграции и принятия результатов аудита можно запускать **только сбор**:
 
@@ -159,3 +159,20 @@ Test-Path "D:\Projects\news_aggregation\stage2_pre03_backup.dump"
 ```
 
 Даже при успешной CI-проверке этап **не закрывается** до независимой разметки ошибок смысловой фильтрации, проверки локального PostgreSQL и исключения совпадений с ранее использованными обучающими URL.
+
+
+## Обновление: два статуса вместо review (18.11.2026)
+
+По просьбе владельца проекта **новые** решения фильтра и audit JSON используют **только** `accepted` / `rejected`. Отдельного `review` или `duplicate` как статуса нет. Смысл копий сохраняется в `reason=duplicate_*`, `stage=exact_duplicate`, `duplicate_of_url`; отчёт содержит `counts.exact_duplicates`. В БД сохраняются обе ссылки на оригинальные статьи и все raw-снимки. `news` пополняется только уникальными `accepted`, а в публикацию на этом этапе ничего не отправляется.
+
+- Пустые/короткие и RSS-preview материалы отклоняются как технически неготовые, но не удаляются из raw-журнала.
+- Очевидный мусор/HR/рекламные и непрофильные истории отклоняются с конкретной причиной.
+- Промышленные статьи, проекты, аналитика и сомнительные по одному заголовку материалы с промышленными фактами в начале текста принимаются.
+- Устаревшие содержательные статьи **не уничтожаются**: остаются `accepted` с причиной `stale_article` для отдельной проверки свежести перед публикацией.
+- `review` и `duplicate` могут встречаться только в **исторических** старых отчётах/строках БД, которые не переписывались, и в полях сравнения `before_status`. Новое `status` содержит строго два значения.
+- SQL-схема статуса — строковая; ради перехода к двум состояниям **новую миграцию не добавляем**. Однако обязательная добавочная миграция `20261118_03` для `duplicate_of_intake_id` по-прежнему нужна перед новым сбором.
+- После обновления ветки повторный аудит выполняется без доступа к БД:
+```powershell
+.\.venv\Scripts\python.exe scripts\audit_stage2.py --input collector_test_results\stage2_live_250.json --date 2026-11-18 --target 250 --require-coverage --output collector_test_results\stage2_binary.json
+```
+Результаты первоначальных 231 записей и проценты `review`, приведённые в разделах выше, являются **историческими** — не интерпретируйте их как новый результат.
