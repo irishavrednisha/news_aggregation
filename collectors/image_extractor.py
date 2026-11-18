@@ -40,9 +40,12 @@ def _absolute(url: str | None, base_url: str) -> str:
     parsed = urlsplit(full)
     if parsed.scheme not in ("https", "http") or not parsed.hostname:
         return ""
-    # Whole filename segments only. Substring matching accidentally rejected
-    # legitimate subjects, e.g. "silicon" containing "icon".
-    basename = parsed.path.rsplit("/", 1)[-1].casefold()
+    # Whole path segments + filename tokens: /images/logo/ru.png is a logo,
+    # while industrial "silicon.jpg" is not an icon.
+    segments = [part.casefold() for part in parsed.path.split("/") if part]
+    if any(part in _BAD_TOKENS for part in segments[:-1]):
+        return ""
+    basename = segments[-1] if segments else ""
     filename_tokens = set(re.split(r"[^a-z]+", basename))
     if any(token in filename_tokens for token in _BAD_TOKENS):
         return ""
