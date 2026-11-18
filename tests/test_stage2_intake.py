@@ -110,7 +110,13 @@ class ExactDuplicateTests(unittest.TestCase):
         a = article("Верфь построила новый корабль", url="https://военное.рф/2026/11/18/unique-article-name")
         b = article("Верфь построила новый корабль", url="https://flotprom.ru/2026/11/18/unique-article-name",
                     text="На другой площадке изложены детали кораблестроения и технических испытаний. " * 8)
-        self.assertEqual(match_exact(a, b), "duplicate_mirror")
+        # Matching dated path alone is not sufficient: different content
+        # must not silently destroy an unrelated industrial story.
+        self.assertIsNone(match_exact(a, b))
+        c = article("Верфь построила новый корабль",
+                    url="https://flotprom.ru/2026/11/18/unique-article-name",
+                    text=BODY + " Дополнительный комментарий редактора.")
+        self.assertEqual(match_exact(a, c), "duplicate_mirror")
 
     def test_mirrors_unrelated_path_not_equal(self):
         a = article("Верфь построила корабль", url="https://flot.com/2026/11/18/unique-one")
