@@ -105,7 +105,7 @@ def _content_similarity(a, b) -> float:
 
 def _numbers(article):
     """Changes to quantities, model IDs or dates block title-based merging."""
-    return sorted(re.findall(r"\\d+(?:[.,]\\d+)*", normalize_text(
+    return sorted(re.findall(r"\d+(?:[.,]\d+)*", normalize_text(
         getattr(article, "text", "")
     )))
 
