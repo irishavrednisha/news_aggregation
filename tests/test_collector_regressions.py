@@ -488,7 +488,9 @@ class CollectorTests(unittest.TestCase):
         from collectors.data_collector import fetch_html_with_requests
         with patch.dict(os.environ, {"NEWS_CA_BUNDLE": ""}):
             with patch("collectors.data_collector.requests.get",
-                       side_effect=SSLError("untrusted CA")) as req:
+                       side_effect=SSLError("untrusted CA")) as req, \
+                 patch("collectors.data_collector.retry_with_trusted_roots",
+                       return_value=None):
                 html = fetch_html_with_requests("https://rostec.ru/media/news/")
         self.assertEqual(html, "")
         self.assertIs(req.call_args.kwargs["verify"], True)
@@ -549,7 +551,9 @@ class CollectorTests(unittest.TestCase):
         diagnostics = {}
         with patch("collectors.data_collector.requests.get",
                    side_effect=SSLError("untrusted root CA")):
-            with patch("collectors.data_collector.fetch_html_with_browser",
+            with patch("collectors.data_collector.retry_with_trusted_roots",
+                       return_value=None), patch(
+                       "collectors.data_collector.fetch_html_with_browser",
                        return_value=""):
                 articles = collect_news([source], limit_per_source=2,
                                         diagnostics=diagnostics)
