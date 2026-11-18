@@ -83,7 +83,7 @@ _CONGRATULATIONS = re.compile(
     r"отмечает \d{1,3}.?(?:летие|лет)|юбиле\w*|торжеств\w* юбиле\w*)\b")
 _VACANCY = re.compile(
     r"\b(?:ваканси\w*|требуются сотрудник\w*|приглашаем на работу|"
-    r"открыт набор персонала|ищем специалист\w*|ярмарка вакансий)\b")
+    r"открыт набор персонала|ищем специалист\w*|ярмарка вакансий|центр подбора персонала)\b")
 _DIGEST = re.compile(
     r"\b(?:дайджест\w*|подборка ссылок|обзор сми|главное в отраслевых сми|"
     r"итоги недели|новости за неделю|топ.?\d+ новостей)\b")
@@ -102,14 +102,40 @@ _INDUSTRIAL = re.compile(
     r"машиностроени\w*|судостроени\w*|верф\w*|самолет\w*|авиацион\w*|"
     r"двигател\w*|металлург\w*|добыч\w*|месторождени\w*|шахт\w*|"
     r"нефт\w*|газов\w*|энергетик\w*|электростанц\w*|электросет\w*|"
-    r"оборудовани\w*|станк\w*|инженер\w*|технологи\w*|"
-    r"судн\w*|корабл\w*|станци\w*|линия\w*|атомн\w*|робот\w*)\b")
+    r"оборудовани\w*|станк\w*|инженер\w*|технологи\w*|комбинат\w*|цех\w*|"
+    r"судн\w*|суда|судов|сухогруз\w*|краболов\w*|корабл\w*|станци\w*|линия\w*|атомн\w*|робот\w*|"
+    r"руд\w*|угл\w*|скважин\w*|золот\w*|электродвигател\w*|автокран\w*|дрон\w*|бпла|беспилот\w*|фанер\w*|металл\w*|нефтехими\w*)\b")
 _EVENT = re.compile(
-    r"\b(?:запуст\w*|ввел\w*|введ\w*|открыл\w*|создал\w*|"
-    r"разработал\w*|произвел\w*|испытал\w*|модернизир\w*|"
-    r"постро\w*|инвестир\w*|обновил\w*|добы\w*|"
-    r"расширил\w*|начал выпуск\w*|поставил\w*|заработал\w*|внедри\w*|увеличил\w*|выпуст\w*|"
-    r"освоил\w*|контракт\w*|проект\w*|оснащ\w*)\b")
+    r"\b(?:запуст\w*|ввел\w*|ввели|введ\w*|открыл\w*|создал\w*|"
+    r"разработ\w*|произвел\w*|изготов\w*|испыт\w*|модернизир\w*|"
+    r"постро\w*|инвестир\w*|обновил\w*|добы\w*|спуст\w*|представ\w*|отгруз\w*|нараст\w*|"
+    r"расширил\w*|начал выпуск\w*|поставил\w*|заработал\w*|внедри\w*|увеличил\w*|выпуст\w*|выпуск\w*|сертифицир\w*|"
+    r"освоил\w*|контракт\w*|проект\w*|оснащ\w*|собрал\w*|сборк\w*|переработ\w*|восстанов\w*|мощност\w*)\b")
+
+
+# Industrial organizations may anchor a specific technical/production story
+# even when the title omits the generic word "factory".
+_INDUSTRY_ACTORS = re.compile(
+    r"\b(?:оск|одк|оак|ростех|росэл|крэ т|крет|норникел\w*|"
+    r"свеза|алроса|селигдар|русолово|швабе|тмк|гмк|уралхимпласт|"
+    r"лукойл|газпром|р.флот)\b"
+)
+# HR, PR and governance mentions are not proof of a production event.
+_ORG_ONLY = re.compile(
+    r"\b(?:обучени\w*|наставничеств\w*|стажировк\w*|олимпиад\w*|"
+    r"чемпионат\w*|фестивал\w*|конкурс\w*|"
+    r"преми\w*|наград\w*|призов\w* мест\w*|"
+    r"совет директоров|собрани\w* акционер\w*|"
+    r"акционер\w*|дивиденд\w*|мастер.класс\w*)\b"
+)
+_FINANCE_ONLY = re.compile(
+    r"\b(?:самой дорогой компани\w*|котировк\w*|"
+    r"капитализаци\w*|курс акци\w*|цены на икру)\b"
+)
+_CRIME_ONLY = re.compile(
+    r"\b(?:осудил\w*|осужд\w*|незаконн\w* добыч\w*|"
+    r"возбудил\w* уголовн\w* дел\w*)\b"
+)
 
 
 def semantic_decision(article) -> IntakeDecision:
@@ -123,8 +149,14 @@ def semantic_decision(article) -> IntakeDecision:
     ):
         if pattern.search(title):
             return IntakeDecision("rejected", reason, "semantic")
-    industrial = bool(_INDUSTRIAL.search(title))
+    industrial = bool(_INDUSTRIAL.search(title) or _INDUSTRY_ACTORS.search(title))
     event = bool(_EVENT.search(title))
+    if _FINANCE_ONLY.search(title):
+        return IntakeDecision("rejected", "financial_markets", "semantic")
+    if _CRIME_ONLY.search(title):
+        return IntakeDecision("rejected", "offtopic_event", "semantic")
+    if _ORG_ONLY.search(title):
+        return IntakeDecision("review", "corporate_or_hr_event", "semantic")
     if _OFFTOPIC.search(title):
         # Industrial safety investigations can be relevant, unlike a generic raid.
         if industrial:
@@ -144,6 +176,13 @@ def classify_intake(article, *, now: date | datetime | None = None,
                     min_text_len: int = 250, max_age_days: int = 30) -> IntakeDecision:
     technical = technical_decision(article, now=now, min_text_len=min_text_len,
                                    max_age_days=max_age_days)
-    if technical.status != "accepted":
+    if technical.status == "rejected" or technical.reason in ("empty_text", "short_text", "rss_preview_only"):
         return technical
-    return semantic_decision(article)
+    semantic = semantic_decision(article)
+    # Obvious junk remains junk regardless of age. Valuable older stories
+    # go to review instead of being dropped as off-topic.
+    if semantic.status == "rejected":
+        return semantic
+    if technical.status == "review":
+        return technical
+    return semantic
