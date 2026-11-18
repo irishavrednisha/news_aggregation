@@ -184,10 +184,20 @@ _OBVIOUS_SPORTS = re.compile(
 )
 _OBVIOUS_UNRELATED = re.compile(r"\b(?:маньяк\w*|аукцион\w* картин\w*|картин\w* .{0,60} аукцион\w*)\b")
 # HR, PR and governance mentions are not proof of a production event.
+_EVENT_ANNOUNCEMENT = re.compile(
+    r"\b(?:до .{0,70} выставк\w* осталось|"
+    r"(?:приглаша\w* на|приглаша\w* к участию в) .{0,70}(?:форум\w*|выставк\w*)|"
+    r"анонс (?:форум\w*|выставк\w*))\b"
+)
+_LABOR_PROTEST = re.compile(
+    r"\b(?:протест\w* рабоч\w*|рабоч\w* .{0,45} протест\w*)\b"
+)
+
 _ORG_ONLY = re.compile(
     r"\b(?:обучени\w*|наставничеств\w*|стажировк\w*|олимпиад\w*|"
     r"чемпионат\w*|фестивал\w*|конкурс\w*|"
-    r"преми\w*|наград\w*|призов\w* мест\w*|"
+    r"преми\w*|наград\w*|призов\w* мест\w*|наставник\w*|будущ\w* корабел\w*|"
+    r"сотрудник\w* .{0,90} отмечен\w*|"
     r"совет директоров|собрани\w* акционер\w*|"
     r"акционер\w*|дивиденд\w*|мастер.класс\w*)\b"
 )
@@ -217,6 +227,10 @@ def semantic_decision(article) -> IntakeDecision:
         _INDUSTRY_ACTORS.search(title) and _ACTOR_TECHNICAL_OUTPUT.search(title)
     ))
     event = bool(_EVENT.search(title))
+    if _EVENT_ANNOUNCEMENT.search(title):
+        return IntakeDecision("rejected", "event_announcement", "semantic")
+    if _LABOR_PROTEST.search(title):
+        return IntakeDecision("rejected", "offtopic_event", "semantic")
     if _FINANCE_ONLY.search(title):
         return IntakeDecision("rejected", "financial_markets", "semantic")
     if _CONSUMER_PRICES.search(title):
