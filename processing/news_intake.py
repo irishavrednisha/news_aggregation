@@ -79,8 +79,8 @@ _ADVERTISEMENT = re.compile(
     r"\b(?:скидк\w*|кешбэк\w*|промокод\w*|распродаж\w*|розыгрыш\w*|"
     r"программа лояльности|акция для покупател\w*|выгодн\w* предложени\w*)\b")
 _CONGRATULATIONS = re.compile(
-    r"\b(?:поздравля\w*|поздравлени\w*|с днем рожден\w*|с юбилеем|"
-    r"отмечает \d{1,3}.?(?:летие|лет)|юбиле\w*|торжеств\w* юбиле\w*)\b")
+    r"\b(?:поздравил\w*|поздравля\w*|поздравлени\w*|с днем рожден\w*|с юбилеем|"
+    r"отмечает \d{1,3}.?(?:летие|лет)|отмечает юбилей|юбилей (?:завода|предприяти\w*|компани\w*|флот\w*)|торжеств\w* юбиле\w*)\b")
 _VACANCY = re.compile(
     r"\b(?:ваканси\w*|требуются сотрудник\w*|приглашаем на работу|"
     r"открыт набор персонала|ищем специалист\w*|ярмарка вакансий|центр подбора персонала)\b")
@@ -104,13 +104,15 @@ _INDUSTRIAL = re.compile(
     r"нефт\w*|газов\w*|энергетик\w*|электростанц\w*|электросет\w*|"
     r"оборудовани\w*|станк\w*|инженер\w*|технологи\w*|комбинат\w*|цех\w*|"
     r"судн\w*|суда|судов|сухогруз\w*|краболов\w*|корабл\w*|станци\w*|линия\w*|атомн\w*|робот\w*|"
-    r"руд\w*|угл\w*|скважин\w*|золот\w*|электродвигател\w*|автокран\w*|дрон\w*|бпла|беспилот\w*|фанер\w*|металл\w*|нефтехими\w*|реактор\w*|pvd|покрыти\w*|инструмент\w*)\b")
+    r"руд\w*|угл\w*|скважин\w*|золот\w*|электродвигател\w*|автокран\w*|дрон\w*|бпла|беспилот\w*|фанер\w*|металл\w*|нефтехими\w*|реактор\w*|pvd|покрыти\w*|инструмент\w*|"
+    r"энергопотреблен\w*|электроэнерг\w*|генераци\w*|трансформатор\w*|турбин\w*|истребител\w*|вертолет\w*)\b")
 _EVENT = re.compile(
     r"\b(?:запуст\w*|ввел\w*|ввели|введ\w*|открыл\w*|создал\w*|"
     r"разработ\w*|произвел\w*|изготов\w*|испыт\w*|модернизир\w*|модернизац\w*|создан\w*|"
     r"постро\w*|инвестир\w*|влож\w*|обновил\w*|добы\w*|спуст\w*|представ\w*|отгруз\w*|отправ\w*|нараст\w*|достиг\w*|"
     r"расшир\w*|начал выпуск\w*|поставил\w*|заработал\w*|внедри\w*|увеличил\w*|выпуст\w*|выпуск\w*|сертифицир\w*|одобр\w*|"
-    r"освоил\w*|контракт\w*|проект\w*|оснащ\w*|оснаст\w*|собрал\w*|сборк\w*|переработ\w*|восстанов\w*|мощност\w*)\b")
+    r"освоил\w*|контракт\w*|проект\w*|оснащ\w*|оснаст\w*|собрал\w*|сборк\w*|переработ\w*|восстанов\w*|мощност\w*|"
+    r"перевыполн\w*|вывел\w* из эксплуатации|ликвидир\w*|перезапуст\w*|заверш\w*|превыс\w*|сократил\w*|снизил\w*)\b")
 
 
 # Industrial organizations may anchor a specific technical/production story
@@ -119,6 +121,24 @@ _INDUSTRY_ACTORS = re.compile(
     r"\b(?:оск|одк|оак|ростех|росэл|крэ т|крет|норникел\w*|"
     r"свеза|алроса|селигдар|русолово|швабе|тмк|гмк|уралхимпласт|"
     r"лукойл|газпром|р.флот)\b"
+)
+# A company name alone cannot turn a social or medical story into an
+# industrial event; require a material, component or technical output.
+_ACTOR_TECHNICAL_OUTPUT = re.compile(
+    r"\b(?:панел\w* для чист\w* помещени\w*|ии.лаборатори\w*|"
+    r"нов\w* материал\w*|промышленн\w* издели\w*|"
+    r"серийн\w* выпуск\w*|техническ\w* решени\w*|"
+    r"комплектующ\w* для оборудовани\w*)\b"
+)
+_INDUSTRY_REPORT = re.compile(
+    r"\b(?:итоги|результат\w*) производственн\w* деятельност\w*|"
+    r"\bпроизводственн\w* показател\w*"
+)
+_CONSUMER_PRICES = re.compile(
+    r"\b(?:цен\w*|рост\w* цен) на (?:красную )?икру\b"
+)
+_HYPOTHETICAL_ONLY = re.compile(
+    r"\bмодел\w* добыч\w* .{0,50}\bастерои\w*"
 )
 # HR, PR and governance mentions are not proof of a production event.
 _ORG_ONLY = re.compile(
@@ -149,10 +169,16 @@ def semantic_decision(article) -> IntakeDecision:
     ):
         if pattern.search(title):
             return IntakeDecision("rejected", reason, "semantic")
-    industrial = bool(_INDUSTRIAL.search(title) or _INDUSTRY_ACTORS.search(title))
+    industrial = bool(_INDUSTRIAL.search(title) or (
+        _INDUSTRY_ACTORS.search(title) and _ACTOR_TECHNICAL_OUTPUT.search(title)
+    ))
     event = bool(_EVENT.search(title))
     if _FINANCE_ONLY.search(title):
         return IntakeDecision("rejected", "financial_markets", "semantic")
+    if _CONSUMER_PRICES.search(title):
+        return IntakeDecision("rejected", "consumer_only", "semantic")
+    if _HYPOTHETICAL_ONLY.search(title):
+        return IntakeDecision("review", "speculative_industry", "semantic")
     if _CRIME_ONLY.search(title):
         return IntakeDecision("rejected", "offtopic_event", "semantic")
     if _ORG_ONLY.search(title):
@@ -164,6 +190,8 @@ def semantic_decision(article) -> IntakeDecision:
         return IntakeDecision("rejected", "offtopic_event", "semantic")
     if _CONSUMER.search(title) and _CONSUMER_ACTION.search(title) and not (industrial and event):
         return IntakeDecision("rejected", "consumer_only", "semantic")
+    if industrial and _INDUSTRY_REPORT.search(title):
+        return IntakeDecision("accepted", "industrial_report", "semantic")
     if industrial and event:
         return IntakeDecision("accepted", "industrial_event", "semantic")
     if industrial:
