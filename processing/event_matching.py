@@ -182,6 +182,30 @@ class EventDecision:
     reason: str
 
 
+def technical_specs(row: object) -> frozenset[tuple[str, float]]:
+    """Distinctive measurements from an article opening, excluding bare years.
+
+    2500 W + 600 kg are stronger evidence than a shared industry name.
+    These are NOT used without company, action and object corroboration.
+    """
+    text = normalize(_field(row, "title")) + " " + normalize(_field(row, "text"))[:2200]
+    pattern = re.compile(
+        r"\b(\d+(?:[.,]\d+)?)\s*(квт|вт|мвт|гвт|кг|грамм\w*|мм|"
+        r"л\.?\s*с\.?|километр\w*|метр\w*)\b"
+    )
+    result = set()
+    for raw, unit in pattern.findall(text):
+        value = float(raw.replace(",", "."))
+        if unit.startswith("грамм"):
+            unit = "г"
+        if unit.startswith("кило"):
+            unit = "км"
+        if unit.startswith("метр"):
+            unit = "м"
+        result.add((unit, value))
+    return frozenset(result)
+
+
 def same_event(a: object, b: object, similarity: float,
                *, candidate_threshold: float = CANDIDATE_THRESHOLD,
                merge_threshold: float = MERGE_THRESHOLD) -> EventDecision:
@@ -190,6 +214,8 @@ def same_event(a: object, b: object, similarity: float,
     if not math.isfinite(score) or score < candidate_threshold:
         return EventDecision(False, score if math.isfinite(score) else 0.0, "low_embedding")
     left, right = extract_facts(a), extract_facts(b)
+    corroborating_specs = technical_specs(a) & technical_specs(b)
+    strong_specs = len(corroborating_specs) >= 2
     if left.companies and right.companies and not left.companies.intersection(right.companies):
         return EventDecision(False, score, "different_company")
     if left.event_date and right.event_date and left.event_date != right.event_date:
@@ -204,7 +230,7 @@ def same_event(a: object, b: object, similarity: float,
         # Product development reported as a presentation can describe the
         # same unveiling. Require strong embedding + all remaining hard gates.
         compatible = (left.actions | right.actions) == {"development", "presentation"}
-        if not compatible or score < 0.88:
+        if not compatible or (score < 0.88 and not (strong_specs and score >= 0.71)):
             return EventDecision(False, score, "different_action")
     if left.objects and right.objects and not left.objects.intersection(right.objects):
         return EventDecision(False, score, "different_object")
@@ -235,12 +261,14 @@ def same_event(a: object, b: object, similarity: float,
         return EventDecision(False, score, "insufficient_action_object_evidence")
     if not company_ok and score < 0.90:
         return EventDecision(False, score, "company_not_confirmed")
-    if len(common_tokens) < 2 and score < 0.90:
+    if len(common_tokens) < 2 and score < 0.90 and not strong_specs:
         return EventDecision(False, score, "weak_headline_evidence")
     threshold = merge_threshold if company_ok else max(0.90, merge_threshold)
+    if company_ok and action_ok and object_ok and strong_specs:
+        threshold = min(threshold, 0.71)
     if score < threshold:
         return EventDecision(False, score, "below_merge_threshold")
-    return EventDecision(True, score, "event_facts_agree")
+    return EventDecision(True, score, "shared_technical_specs" if strong_specs else "event_facts_agree")
 
 
 def embedding_text(row: object) -> str:
