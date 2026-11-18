@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install lightweight audit and DB test dependencies
-        run: python -m pip install sqlalchemy numpy psycopg2-binary
+        run: python -m pip install sqlalchemy numpy psycopg2-binary python-dotenv
       - name: Compile stage 3 modules
         run: python -m py_compile processing/event_matching.py processing/clustering.py scripts/audit_stage3.py tests/test_stage3_clustering.py main.py
       - name: Event identity and atomic DB regressions
