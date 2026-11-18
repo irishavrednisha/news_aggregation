@@ -17,12 +17,14 @@ class NewsIntakeRecord(Base):
         Index("ix_intake_url_sha256", "url_sha256"),
         Index("ix_intake_status", "status"),
         Index("ix_intake_duplicate", "duplicate_of_news_id"),
+        Index("ix_intake_duplicate_raw", "duplicate_of_intake_id"),
     )
 
     id = Column(Integer, primary_key=True)
     source_id = Column(Integer, ForeignKey("sources.id"), nullable=False)
     news_id = Column(Integer, ForeignKey("news.id"), nullable=True)
     duplicate_of_news_id = Column(Integer, ForeignKey("news.id"), nullable=True)
+    duplicate_of_intake_id = Column(Integer, ForeignKey("news_intake_records.id"), nullable=True)
     raw_url = Column(Text, nullable=False)
     raw_title = Column(Text, nullable=False)
     raw_text = Column(Text, nullable=False)
