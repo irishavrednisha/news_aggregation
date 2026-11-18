@@ -35,10 +35,11 @@ def collect(limit: int = 10) -> int:
                 filtered = filter_articles(articles)
                 saved_now = save_articles(session, filtered)
                 saved += saved_now
+                stat = diagnostics.get(source.name, {})
                 LOG.info("%s: candidates=%s articles=%s filtered=%s saved=%s status=%s",
-                         source.name, diagnostics[source.name]["candidates"],
+                         source.name, stat.get("candidates", "?"),
                          len(articles), len(filtered), saved_now,
-                         diagnostics[source.name]["status"])
+                         stat.get("status", "unknown"))
             except Exception:
                 session.rollback()
                 LOG.exception("Source %s failed; continuing", source.name)
