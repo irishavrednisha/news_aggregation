@@ -85,11 +85,35 @@ def prepare(limit: int = 30) -> int:
         session.close()
 
 
+def status() -> dict:
+    """Read existing PostgreSQL work states; no new schema or ML imports."""
+    from sqlalchemy import func
+    from database.db import get_session
+    from database.models import Source, News, Cluster, Post
+    from database.moderation_models import ModerationItem
+
+    session = get_session()
+    try:
+        stats = {
+            "sources_total": session.query(Source).count(),
+            "sources_active": session.query(Source).filter(Source.is_active.is_(True)).count(),
+            "news_awaiting_model": session.query(News).filter(News.cluster_id.is_(None)).count(),
+            "cluster_statuses": dict(session.query(Cluster.status, func.count(Cluster.id)).group_by(Cluster.status).all()),
+            "post_statuses": dict(session.query(Post.status, func.count(Post.id)).group_by(Post.status).all()),
+            "moderation_statuses": dict(session.query(ModerationItem.status, func.count(ModerationItem.id)).group_by(ModerationItem.status).all()),
+        }
+        import json
+        print(json.dumps(stats, ensure_ascii=False, indent=2))
+        return stats
+    finally:
+        session.close()
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Independent news pipeline workers")
     parser.add_argument(
         "stage", nargs="?", default="collect",
-        choices=("collect", "process", "prepare", "telegram", "max"),
+        choices=("collect", "process", "prepare", "telegram", "max", "status"),
         help="Each stage is a separate process; collect is the safe default",
     )
     parser.add_argument("--limit", type=int, default=10)
@@ -104,6 +128,8 @@ def main(argv=None) -> int:
         process(args.hours)
     elif args.stage == "prepare":
         prepare(args.limit)
+    elif args.stage == "status":
+        status()
     elif args.stage == "telegram":
         from moderation.bot import main as run_bot
         run_bot()
