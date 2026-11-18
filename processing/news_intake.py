@@ -146,6 +146,20 @@ _CONSUMER_PRICES = re.compile(
 _HYPOTHETICAL_ONLY = re.compile(
     r"\bмодел\w* добыч\w* .{0,50}\bастерои\w*"
 )
+# An intention to extract or build something is not a completed industrial
+# event. Keep unconfirmed plans for editorial review rather than publishing.
+_UNCONFIRMED_PLAN = re.compile(r"\b(?:планиру\w*|намерен\w*|собирает\w*)\b")
+_PROJECT_COMMITTED = re.compile(
+    r"\b(?:профинансир\w*|финансировани\w* выделен\w*|"
+    r"инвестир\w*|вложил\w*|начал\w* строител\w*|подписа\w* контракт)\b"
+)
+# A border decision is not a factory launch even when the headline's
+# background contains the word 'factory'. Keep it as review when industrial
+# consequences may still exist.
+_OFFTOPIC_PRIMARY = re.compile(
+    r"^.{0,90}\b(?:решил\w* закрыть границ\w*|закрыл\w* границ\w*)\b"
+)
+
 # HR, PR and governance mentions are not proof of a production event.
 _ORG_ONLY = re.compile(
     r"\b(?:обучени\w*|наставничеств\w*|стажировк\w*|олимпиад\w*|"
@@ -196,6 +210,10 @@ def semantic_decision(article) -> IntakeDecision:
         return IntakeDecision("rejected", "offtopic_event", "semantic")
     if _CONSUMER.search(title) and _CONSUMER_ACTION.search(title) and not (industrial and event):
         return IntakeDecision("rejected", "consumer_only", "semantic")
+    if _OFFTOPIC_PRIMARY.search(title):
+        return IntakeDecision("review", "offtopic_primary_event", "semantic")
+    if industrial and _UNCONFIRMED_PLAN.search(title) and not _PROJECT_COMMITTED.search(title):
+        return IntakeDecision("review", "industrial_plan_unconfirmed", "semantic")
     if industrial and _INDUSTRY_REPORT.search(title):
         return IntakeDecision("accepted", "industrial_report", "semantic")
     if industrial and event:
