@@ -37,6 +37,8 @@ jobs:
         run: python -m alembic heads
       - name: Stage 2 labeled and DB tests
         run: python -m unittest discover -s tests -p "test_stage2_intake.py" -v
+      - name: Verify raw review/rejected exact duplicates and persistence
+        run: python -m unittest discover -s tests -p "test_stage2_review_duplicates.py" -v
       - name: Validate real audit headline regressions
         run: python -m unittest discover -s tests -p "test_stage2_real_title_regressions.py" -v
       - name: Stage 2 follow-up real-world and URL regressions
