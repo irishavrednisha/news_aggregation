@@ -16,9 +16,20 @@ from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsp
 TRACKING = frozenset({
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
     "utm_id", "fbclid", "gclid", "yclid", "mc_cid", "mc_eid",
-    "from", "ref", "referrer", "igshid",
+    "igshid",
 })
-MIRRORS = frozenset({"военное.рф", "отраслевое.рф", "flot.com", "flotprom.ru"})
+MIRRORS = frozenset({"военное.рф", "отраслевое.рф", "flot.com", "flotprom.ru", "mil.press"})
+
+
+def _canonical_path(path: str) -> str:
+    """Decode only URI unreserved escapes, never %2F or %3F delimiters."""
+    def replace(match):
+        ch = chr(int(match.group(1), 16))
+        if ch.isascii() and (ch.isalnum() or ch in "-._~"):
+            return ch
+        return "%" + match.group(1).upper()
+    path = re.sub(r"%([0-9A-Fa-f]{2})", replace, path or "/")
+    return quote(path, safe="/-._~!def normalize_url(url: str) -> str:'()*+,;=:@%")
 
 
 def normalize_url(url: str) -> str:
@@ -32,7 +43,7 @@ def normalize_url(url: str) -> str:
         port = parts.port
         if port and (parts.scheme.lower(), port) not in (("http", 80), ("https", 443)):
             host += f":{port}"
-        path = quote(unquote(parts.path or "/"), safe="/-._~!$&'()*+,;=:@")
+        path = _canonical_path(parts.path)
         if path != "/":
             path = path.rstrip("/")
         query = []
@@ -131,7 +142,8 @@ def match_exact(article, candidate) -> str | None:
     if m1 and m1 == m2 and _dates_close(
         getattr(article, "published_at", None),
         getattr(candidate, "published_at", None), 3
-    ):
+    ) and (body1 is not None and body1 == body2 or _content_similarity(article, candidate) >= 0.85):
+        # Shared dated mirror path alone can be reused for different articles.
         return "duplicate_mirror"
     # Identical headline alone is not proof. Require nearly-identical body
     # and aligned publication dates, not merely a shared generic event name.
