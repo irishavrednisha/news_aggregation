@@ -1,6 +1,6 @@
 """Atomic stage 2 ingestion; old News table remains the sole ML input.
 
-Rejected/reviewed/duplicate raw articles stay in news_intake_records. Every
+Rejected and accepted raw articles (including exact copies) remain in news_intake_records. Every
 accepted article has both an intake snapshot and one News row. No publisher.
 """
 from __future__ import annotations
@@ -123,7 +123,8 @@ def save_intake_batch(session, articles, *, now=None, max_age_days=30) -> Intake
         index.add(existing)
     raw_index = ExactDuplicateIndex()
     for old in session.query(NewsIntakeRecord).order_by(NewsIntakeRecord.id):
-        if old.status == "duplicate" or not old.canonical_url or len(old.raw_text or "") < 250:
+        if (old.status == "duplicate" or (old.reason or "").startswith("duplicate_")
+                or not old.canonical_url or len(old.raw_text or "") < 250):
             continue
         raw_index.add(SimpleNamespace(
             id=old.id, url=old.raw_url, title=old.raw_title,
@@ -164,9 +165,9 @@ def save_intake_batch(session, articles, *, now=None, max_age_days=30) -> Intake
             news = None
             status, reason, stage = decision.status, decision.reason, decision.stage
             if match is not None:
-                status, reason, stage = "duplicate", match.reason, "exact_duplicate"
+                status, reason, stage = "rejected", match.reason, "exact_duplicate"
             elif decision.status != "accepted" and raw_match is not None:
-                status, reason, stage = "duplicate", raw_match.reason, "exact_duplicate"
+                status, reason, stage = "rejected", raw_match.reason, "exact_duplicate"
             elif decision.status == "accepted":
                 news = News(
                     source_id=source.id, title=article.title, text=article.text,
@@ -181,7 +182,7 @@ def save_intake_batch(session, articles, *, now=None, max_age_days=30) -> Intake
                 news_id=news.id if news else None,
                 duplicate_of_news_id=match.news_id if match else None,
                 duplicate_of_intake_id=(
-                    raw_match.news_id if status == "duplicate" and raw_match else None
+                    raw_match.news_id if stage == "exact_duplicate" and raw_match else None
                 ),
                 raw_url=raw_url, raw_title=str(getattr(article, "title", "") or ""),
                 raw_text=str(getattr(article, "text", "") or ""),
@@ -197,7 +198,7 @@ def save_intake_batch(session, articles, *, now=None, max_age_days=30) -> Intake
                 index.add(news)
                 stats.saved += 1
                 _store_image_after_commit(session, article, news)
-            if status != "duplicate" and canonical and len(
+            if stage != "exact_duplicate" and canonical and len(
                 str(getattr(article, "text", "") or "")
             ) >= 250:
                 raw_index.add(SimpleNamespace(
@@ -207,6 +208,8 @@ def save_intake_batch(session, articles, *, now=None, max_age_days=30) -> Intake
                 ))
             stats.counts[status] += 1
             stats.counts[reason] += 1
+            if stage == "exact_duplicate":
+                stats.counts["exact_duplicates"] += 1
         except IntegrityError as exc:
             session.rollback()
             # Concurrent write/unique URL collision cannot silently lose the
