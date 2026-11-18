@@ -160,5 +160,50 @@ class Stage1StabilityTests(unittest.TestCase):
         requests_mock.assert_called_once()
 
 
+    def test_second_run_does_not_duplicate_news_or_erase_prior_insert(self):
+        """Use real SQLAlchemy/SQLite constraints, no PostgreSQL mutation."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from database.db import Base
+        from database.models import Cluster, News, Source
+        from database.repository import save_articles
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(
+            bind=engine,
+            tables=[Source.__table__, Cluster.__table__, News.__table__],
+        )
+        session = sessionmaker(bind=engine)()
+        try:
+            session.add(Source(
+                name="Example", url="https://example.org", source_type="html",
+                is_active=True,
+            ))
+            session.commit()
+            first = Article(
+                source="Example", title="Российское предприятие запустило завод",
+                url="https://example.org/n1",
+                published_at=datetime(2026, 11, 18),
+                text="Новое производственное оборудование. " * 20,
+                text_source="html",
+            )
+            second = Article(
+                source="Example", title="Российское предприятие расширило завод",
+                url="https://example.org/n2",
+                published_at=datetime(2026, 11, 18),
+                text="Производственная мощность нового оборудования. " * 20,
+                text_source="html",
+            )
+            with patch.dict(os.environ, {"NEWS_IMAGES_ENABLED": "false"}):
+                self.assertEqual(save_articles(session, [first]), 1)
+                self.assertEqual(save_articles(session, [first, second]), 1)
+            self.assertEqual(session.query(News).count(), 2)
+            self.assertEqual({n.url for n in session.query(News).all()},
+                             {first.url, second.url})
+        finally:
+            session.close()
+            engine.dispose()
+
+
 if __name__ == "__main__":
     unittest.main()
