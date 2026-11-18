@@ -147,6 +147,36 @@ class ExactDuplicateTests(unittest.TestCase):
         match = index.find(duplicate)
         self.assertEqual((match.news_id, match.reason), (9, "duplicate_url"))
 
+    def test_title_with_changed_production_numbers_must_not_merge(self):
+        base = BODY + " За период предприятие выпустило 1200 двигателей."
+        changed = BODY + " За период предприятие выпустило 1300 двигателей."
+        a = article("Завод запустил новую линию", url="https://example.org/news/one",
+                    text=base)
+        b = article("Завод запустил новую линию", url="https://example.org/news/two",
+                    text=changed)
+        self.assertIsNone(match_exact(a, b))
+
+
+class Stage2AuditTests(unittest.TestCase):
+    def test_json_gold_report_has_50_labeled_cases_without_mismatches(self):
+        from scripts.audit_stage2 import _gold_report
+        report = _gold_report(today=TODAY)
+        self.assertEqual(report["metrics"]["control_total"], 50)
+        self.assertEqual(report["metrics"]["correct_status"], 50)
+        self.assertEqual(report["metrics"]["correct_reason"], 50)
+        self.assertEqual(report["mismatches"], [])
+
+    def test_read_only_replay_zero_new_articles(self):
+        from scripts.audit_stage2 import audit_real
+        a = article("Завод запустил новый цех", url="https://example.org/news/abc")
+        b = article("Завод запустил новый цех", url="https://example.org/news/abc?utm_source=mail")
+        outcome = audit_real([a, b], today=TODAY)
+        self.assertEqual(outcome["counts"]["accepted"], 1)
+        self.assertEqual(outcome["counts"]["duplicate"], 1)
+        self.assertEqual(outcome["repeatability"]["replay_new_news"], 0)
+        self.assertIsNone(outcome["gold_real_metrics"])
+
+
 
 class DatabaseIntakeTests(unittest.TestCase):
     def setUp(self):
