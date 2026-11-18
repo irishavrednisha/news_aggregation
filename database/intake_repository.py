@@ -23,11 +23,16 @@ from processing.news_intake import classify_intake
 
 
 def require_intake_schema(session):
-    if not inspect(session.get_bind()).has_table("news_intake_records"):
+    inspector = inspect(session.get_bind())
+    if not inspector.has_table("news_intake_records") or not any(
+        col["name"] == "duplicate_of_intake_id"
+        for col in inspector.get_columns("news_intake_records")
+        if inspector.has_table("news_intake_records")
+    ):
         raise RuntimeError(
-            "Stage 2 schema missing. Back up PostgreSQL and run "
-            "'python -m alembic upgrade head' before collecting. "
-            "No automatic table creation or legacy fallback."
+            "Stage 2 raw-duplicate schema missing (revision 20261118_03). "
+            "Back up PostgreSQL and run 'python -m alembic upgrade head' "
+            "before collecting. No legacy fallback or table recreation."
         )
 
 
