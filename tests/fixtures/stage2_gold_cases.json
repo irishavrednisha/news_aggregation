@@ -1,0 +1,455 @@
+{
+  "description": "Curated synthetic boundary cases, not an independently labeled real sample.",
+  "cases": [
+    {
+      "id": "S2-01",
+      "title": "Завод запустил новый цех станков",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-1"
+    },
+    {
+      "id": "S2-02",
+      "title": "Верфь построила новый ледокол",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-2"
+    },
+    {
+      "id": "S2-03",
+      "title": "ОДК испытала двигатель для авиации",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-3"
+    },
+    {
+      "id": "S2-04",
+      "title": "На месторождении начали добычу меди",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-4"
+    },
+    {
+      "id": "S2-05",
+      "title": "Газпром инвестировал в газоперерабатывающий завод",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-5"
+    },
+    {
+      "id": "S2-06",
+      "title": "Металлургический завод обновил прокатный стан",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-6"
+    },
+    {
+      "id": "S2-07",
+      "title": "Инженеры разработали технологию производства",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-7"
+    },
+    {
+      "id": "S2-08",
+      "title": "В Китае построили новую фабрику",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-8"
+    },
+    {
+      "id": "S2-09",
+      "title": "Производитель смартфонов открыл завод микросхем",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-9"
+    },
+    {
+      "id": "S2-10",
+      "title": "Предприятие внедрило новую систему контроля",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-10"
+    },
+    {
+      "id": "S2-11",
+      "title": "Норникель увеличил добычу никеля",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-11"
+    },
+    {
+      "id": "S2-12",
+      "title": "Производство запустили после форума",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-12"
+    },
+    {
+      "id": "S2-13",
+      "title": "Предприятие создало оборудование для экспорта",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-13"
+    },
+    {
+      "id": "S2-14",
+      "title": "Завод построил цех в Германии",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-14"
+    },
+    {
+      "id": "S2-15",
+      "title": "Новые электросети построили в регионе",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-15"
+    },
+    {
+      "id": "S2-16",
+      "title": "Компания испытала атомный реактор",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-16"
+    },
+    {
+      "id": "S2-17",
+      "title": "Авиазавод выпустил новую партию двигателей",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-17"
+    },
+    {
+      "id": "S2-18",
+      "title": "Новый цех заработал на заводе",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-18"
+    },
+    {
+      "id": "S2-19",
+      "title": "Горнодобывающее предприятие модернизировало технику",
+      "expected_status": "accepted",
+      "expected_reason": "industrial_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-19"
+    },
+    {
+      "id": "S2-20",
+      "title": "Завод обсуждает инновационные программы",
+      "expected_status": "review",
+      "expected_reason": "industry_without_clear_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-20"
+    },
+    {
+      "id": "S2-21",
+      "title": "Посещение верфи учащимися",
+      "expected_status": "review",
+      "expected_reason": "industry_without_clear_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-21"
+    },
+    {
+      "id": "S2-22",
+      "title": "Власти обсуждают экономическую программу",
+      "expected_status": "review",
+      "expected_reason": "uncertain_industry",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-22"
+    },
+    {
+      "id": "S2-23",
+      "title": "Объявлен конкурс инженеров",
+      "expected_status": "review",
+      "expected_reason": "industry_without_clear_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-23"
+    },
+    {
+      "id": "S2-24",
+      "title": "На заводе прошли обыски",
+      "expected_status": "review",
+      "expected_reason": "offtopic_event_with_industry",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-24"
+    },
+    {
+      "id": "S2-25",
+      "title": "Вице-премьер посетил производство",
+      "expected_status": "review",
+      "expected_reason": "industry_without_clear_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-25"
+    },
+    {
+      "id": "S2-26",
+      "title": "Развитие сырьевого комплекса",
+      "expected_status": "review",
+      "expected_reason": "uncertain_industry",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-26"
+    },
+    {
+      "id": "S2-27",
+      "title": "Новая производственная линия",
+      "expected_status": "review",
+      "expected_reason": "industry_without_clear_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-27"
+    },
+    {
+      "id": "S2-28",
+      "title": "Завод запустил короткую заметку",
+      "expected_status": "review",
+      "expected_reason": "short_text",
+      "body_kind": "short",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-28"
+    },
+    {
+      "id": "S2-29",
+      "title": "Завод запустил оборудование",
+      "expected_status": "review",
+      "expected_reason": "rss_preview_only",
+      "body_kind": "rss",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-29"
+    },
+    {
+      "id": "S2-30",
+      "title": "Завод запустил старое оборудование",
+      "expected_status": "review",
+      "expected_reason": "stale_article",
+      "body_kind": "full",
+      "published_at": "2026-08-01",
+      "url": "https://sample.example/news/test-30"
+    },
+    {
+      "id": "S2-31",
+      "title": "Завод запустил оборудование завтра",
+      "expected_status": "review",
+      "expected_reason": "future_date",
+      "body_kind": "full",
+      "published_at": "2026-11-30",
+      "url": "https://sample.example/news/test-31"
+    },
+    {
+      "id": "S2-32",
+      "title": "Завод запустил оборудование без текста",
+      "expected_status": "review",
+      "expected_reason": "empty_text",
+      "body_kind": "empty",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-32"
+    },
+    {
+      "id": "S2-33",
+      "title": "Скидки на бензин на АЗС",
+      "expected_status": "rejected",
+      "expected_reason": "advertisement",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-33"
+    },
+    {
+      "id": "S2-34",
+      "title": "Завод объявил распродажу товаров",
+      "expected_status": "rejected",
+      "expected_reason": "advertisement",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-34"
+    },
+    {
+      "id": "S2-35",
+      "title": "Поздравление с днем рождения сотрудника",
+      "expected_status": "rejected",
+      "expected_reason": "congratulation",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-35"
+    },
+    {
+      "id": "S2-36",
+      "title": "Завод отмечает юбилей",
+      "expected_status": "rejected",
+      "expected_reason": "congratulation",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-36"
+    },
+    {
+      "id": "S2-37",
+      "title": "Предприятие поздравляет ветеранов",
+      "expected_status": "rejected",
+      "expected_reason": "congratulation",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-37"
+    },
+    {
+      "id": "S2-38",
+      "title": "Вакансии на промышленном заводе",
+      "expected_status": "rejected",
+      "expected_reason": "vacancy",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-38"
+    },
+    {
+      "id": "S2-39",
+      "title": "Ищем специалистов на предприятие",
+      "expected_status": "rejected",
+      "expected_reason": "vacancy",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-39"
+    },
+    {
+      "id": "S2-40",
+      "title": "Дайджест промышленности за неделю",
+      "expected_status": "rejected",
+      "expected_reason": "digest",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-40"
+    },
+    {
+      "id": "S2-41",
+      "title": "Главное в отраслевых СМИ",
+      "expected_status": "rejected",
+      "expected_reason": "digest",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-41"
+    },
+    {
+      "id": "S2-42",
+      "title": "ЕГЭ по математике состоится в июне",
+      "expected_status": "rejected",
+      "expected_reason": "offtopic_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-42"
+    },
+    {
+      "id": "S2-43",
+      "title": "Полиция провела обыски в квартире",
+      "expected_status": "rejected",
+      "expected_reason": "offtopic_event",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-43"
+    },
+    {
+      "id": "S2-44",
+      "title": "Купить новый смартфон в магазине",
+      "expected_status": "rejected",
+      "expected_reason": "consumer_only",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-44"
+    },
+    {
+      "id": "S2-45",
+      "title": "Смартфон подорожал после презентации",
+      "expected_status": "rejected",
+      "expected_reason": "consumer_only",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-45"
+    },
+    {
+      "id": "S2-46",
+      "title": "Инженеры разработали технологию и контакты",
+      "expected_status": "rejected",
+      "expected_reason": "navigation_page",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/about"
+    },
+    {
+      "id": "S2-47",
+      "title": "Новые инвестиции в промышленный завод",
+      "expected_status": "rejected",
+      "expected_reason": "site_boilerplate",
+      "body_kind": "boiler",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-47"
+    },
+    {
+      "id": "S2-48",
+      "title": "НедраДВ опубликовало материал в меню",
+      "expected_status": "rejected",
+      "expected_reason": "navigation_page",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/tenders"
+    },
+    {
+      "id": "S2-49",
+      "title": "",
+      "expected_status": "rejected",
+      "expected_reason": "missing_title",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "https://sample.example/news/test-49"
+    },
+    {
+      "id": "S2-50",
+      "title": "Завод запустил оборудование и стандарты",
+      "expected_status": "rejected",
+      "expected_reason": "invalid_url",
+      "body_kind": "full",
+      "published_at": "2026-11-18",
+      "url": "javascript:alert(1)"
+    }
+  ]
+}
