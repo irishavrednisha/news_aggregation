@@ -111,8 +111,6 @@ def _gold_report(*, today):
             counts["false_junk_pass"] += 1
         if row["expected_status"] == "accepted" and prediction.status == "rejected":
             counts["false_useful_reject"] += 1
-        if row["expected_status"] == "accepted" and prediction.status == "review":
-            counts["useful_awaits_review"] += 1
         if prediction.status != row["expected_status"] or prediction.reason != row["expected_reason"]:
             mismatches.append({
                 "case": row["id"], "title": row["title"],
@@ -145,13 +143,13 @@ def audit_real(articles, *, today=None, expected_labels=None, excluded=None):
             article.text or ""
         ) >= 250 else None
         duplicate = match or (raw_match if decision.status != "accepted" else None)
-        status = "duplicate" if duplicate is not None else decision.status
+        status = "rejected" if duplicate is not None else decision.status
         reason = duplicate.reason if duplicate is not None else decision.reason
         target = next(
             (u for u, n in article_by_url.items() if match is not None and n == match.news_id),
             None,
         )
-        if target is None and status == "duplicate" and raw_match is not None:
+        if target is None and duplicate is not None and raw_match is not None:
             target = raw_by_id.get(raw_match.news_id)
         row = {
             "source": article.source,
@@ -170,11 +168,13 @@ def audit_real(articles, *, today=None, expected_labels=None, excluded=None):
         counts["evaluated_total"] += 1
         counts[status] += 1
         counts["reason:" + reason] += 1
+        if duplicate is not None:
+            counts["exact_duplicates"] += 1
         if status == "accepted":
             index.add(SimpleNamespace(id=next_id, **vars(article)))
             article_by_url[canonical] = next_id
             next_id += 1
-        if status != "duplicate" and canonical and len(article.text or "") >= 250:
+        if duplicate is None and canonical and len(article.text or "") >= 250:
             raw_index.add(SimpleNamespace(id=raw_next_id, **vars(article)))
             raw_by_id[raw_next_id] = canonical
             raw_next_id += 1
@@ -200,33 +200,40 @@ def audit_real(articles, *, today=None, expected_labels=None, excluded=None):
         if not gold:
             continue
         expected = gold.get("expected_status")
-        if expected not in ("accepted", "rejected", "review", "duplicate"):
+        # Two output statuses only. Older manual gold may identify copies
+        # with expected_status=duplicate; retain compatibility for evaluation.
+        if expected not in ("accepted", "rejected", "duplicate"):
             continue
+        expected_duplicate = (
+            expected == "duplicate" or
+            str(gold.get("expected_reason") or "").startswith("duplicate_") or
+            gold.get("expected_duplicate") is True
+        )
+        expected_binary = "rejected" if expected_duplicate else expected
         label_counts["labeled_real_count"] += 1
         predicted = row["status"]
-        if expected == "rejected" and predicted == "accepted":
+        actual_duplicate = row["stage"] == "exact_duplicate"
+        if expected_binary == "rejected" and predicted == "accepted":
             label_counts["false_junk_pass"] += 1
-        if expected == "accepted" and predicted == "rejected":
+        if expected_binary == "accepted" and predicted == "rejected":
             label_counts["false_useful_reject"] += 1
-        if expected == "accepted" and predicted == "review":
-            label_counts["useful_awaits_review"] += 1
-        if expected == "duplicate":
-            if predicted == "duplicate":
-                label_counts["duplicate_tp"] += 1
-            else:
-                label_counts["duplicate_fn"] += 1
-        elif predicted == "duplicate":
+        if expected_duplicate:
+            label_counts["duplicate_tp" if actual_duplicate else "duplicate_fn"] += 1
+        elif actual_duplicate:
             label_counts["duplicate_fp"] += 1
-        if expected != predicted:
+        if expected_binary != predicted or expected_duplicate != actual_duplicate:
             labeled.append({
                 "title": row["title"], "url": row["url"],
-                "expected": expected, "predicted": predicted,
+                "expected": expected_binary, "predicted": predicted,
+                "expected_duplicate": expected_duplicate,
+                "predicted_duplicate": actual_duplicate,
                 "reason": row["reason"],
             })
     return {
         "counts": dict(counts),
         "repeatability": {"replay_new_news": replay_new_news},
         "duplicate_audit_scope": "all_raw_statuses_with_eligible_text",
+        "status_contract": ["accepted", "rejected"],
         "gold_real_metrics": dict(label_counts) if label_counts else None,
         "labeled_mistakes": labeled,
         "articles": rows,
