@@ -2,7 +2,7 @@
 
 No ML, database, network, geographical restrictions or destructive deletion.
 The legacy topic_filter API remains available for older diagnostics; the
-production intake path uses this tri-state contract.
+production intake path uses a binary accepted/rejected contract.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from processing.topic_filter import has_bad_content, has_bad_url
 
 @dataclass(frozen=True)
 class IntakeDecision:
-    status: str  # accepted | review | rejected
+    status: str  # accepted | rejected
     reason: str
     stage: str  # technical | semantic
     @property
@@ -54,13 +54,13 @@ def technical_decision(article, *, now: date | datetime | None = None,
     if has_bad_url(url):
         return IntakeDecision("rejected", "navigation_page", "technical")
     if not text:
-        return IntakeDecision("review", "empty_text", "technical")
+        return IntakeDecision("rejected", "empty_text", "technical")
     if has_bad_content(text):
         return IntakeDecision("rejected", "site_boilerplate", "technical")
     if len(text) < min_text_len:
-        return IntakeDecision("review", "short_text", "technical")
+        return IntakeDecision("rejected", "short_text", "technical")
     if getattr(article, "text_source", "html") != "html":
-        return IntakeDecision("review", "rss_preview_only", "technical")
+        return IntakeDecision("rejected", "rss_preview_only", "technical")
     published = _published(getattr(article, "published_at", None))
     if now is None:
         today = datetime.now(timezone.utc).date()
@@ -68,9 +68,9 @@ def technical_decision(article, *, now: date | datetime | None = None,
         today = now.date() if isinstance(now, datetime) else now
     if published is not None:
         if published > today + timedelta(days=1):
-            return IntakeDecision("review", "future_date", "technical")
+            return IntakeDecision("rejected", "future_date", "technical")
         if max_age_days > 0 and published < today - timedelta(days=max_age_days):
-            return IntakeDecision("review", "stale_article", "technical")
+            return IntakeDecision("accepted", "stale_article", "technical")
     return IntakeDecision("accepted", "technical_ok", "technical")
 
 
@@ -222,24 +222,24 @@ def semantic_decision(article) -> IntakeDecision:
     if _CONSUMER_PRICES.search(title):
         return IntakeDecision("rejected", "consumer_only", "semantic")
     if _HYPOTHETICAL_ONLY.search(title):
-        return IntakeDecision("review", "speculative_industry", "semantic")
+        return IntakeDecision("accepted", "speculative_industry", "semantic")
     if _CRIME_ONLY.search(title):
         return IntakeDecision("rejected", "offtopic_event", "semantic")
     if not industrial and (_OBVIOUS_SPORTS.search(title) or _OBVIOUS_UNRELATED.search(title)):
         return IntakeDecision("rejected", "offtopic_event", "semantic")
     if _ORG_ONLY.search(title):
-        return IntakeDecision("review", "corporate_or_hr_event", "semantic")
+        return IntakeDecision("rejected", "corporate_or_hr_event", "semantic")
     if _OFFTOPIC.search(title):
         # Industrial safety investigations can be relevant, unlike a generic raid.
         if industrial:
-            return IntakeDecision("review", "offtopic_event_with_industry", "semantic")
+            return IntakeDecision("rejected", "offtopic_event_with_industry", "semantic")
         return IntakeDecision("rejected", "offtopic_event", "semantic")
     if _CONSUMER.search(title) and _CONSUMER_ACTION.search(title) and not (industrial and event):
         return IntakeDecision("rejected", "consumer_only", "semantic")
     if _OFFTOPIC_PRIMARY.search(title):
-        return IntakeDecision("review", "offtopic_primary_event", "semantic")
+        return IntakeDecision("rejected", "offtopic_primary_event", "semantic")
     if industrial and _UNCONFIRMED_PLAN.search(title) and not _PROJECT_COMMITTED.search(title):
-        return IntakeDecision("review", "industrial_plan_unconfirmed", "semantic")
+        return IntakeDecision("accepted", "industrial_plan_unconfirmed", "semantic")
     if _TECH_APPLIED_TITLE.search(title) and _TECH_APPLIED_LEAD.search(lead):
         return IntakeDecision("accepted", "industrial_application_confirmed", "semantic")
     if industrial and _PRODUCTION_PROGRESS_LEAD.search(lead) and (
@@ -253,22 +253,32 @@ def semantic_decision(article) -> IntakeDecision:
     if industrial and event:
         return IntakeDecision("accepted", "industrial_event", "semantic")
     if industrial:
-        return IntakeDecision("review", "industry_without_clear_event", "semantic")
-    # Do not conflate lack of a keyword with proof of non-industry.
-    return IntakeDecision("review", "uncertain_industry", "semantic")
+        return IntakeDecision("accepted", "industry_without_clear_event", "semantic")
+    # Do not reject a useful article merely because its headline is opaque:
+    # use the opening paragraph as corroboration. Purely off-topic stories
+    # without industrial evidence are rejected instead of being parked.
+    if _INDUSTRIAL.search(lead):
+        return IntakeDecision("accepted", "industry_in_lead", "semantic")
+    return IntakeDecision("rejected", "offtopic_no_industry_evidence", "semantic")
 
 
 def classify_intake(article, *, now: date | datetime | None = None,
                     min_text_len: int = 250, max_age_days: int = 30) -> IntakeDecision:
-    technical = technical_decision(article, now=now, min_text_len=min_text_len,
-                                   max_age_days=max_age_days)
-    if technical.status == "rejected" or technical.reason in ("empty_text", "short_text", "rss_preview_only"):
+    """Binary triage: reject unusable data and clear junk, accept other news.
+
+    Duplicate detection runs separately and always retains the original raw
+    article with its reason and link. No review or silent deletion.
+    """
+    technical = technical_decision(
+        article, now=now, min_text_len=min_text_len, max_age_days=max_age_days
+    )
+    if technical.status == "rejected":
         return technical
     semantic = semantic_decision(article)
-    # Obvious junk remains junk regardless of age. Valuable older stories
-    # go to review instead of being dropped as off-topic.
     if semantic.status == "rejected":
         return semantic
-    if technical.status == "review":
+    # Stale stories may be useful; keep them with a technical reason rather
+    # than removing them. Publication recency is a later policy decision.
+    if technical.reason == "stale_article":
         return technical
     return semantic
