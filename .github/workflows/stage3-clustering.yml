@@ -39,7 +39,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh run download 44283065624 --repo irishavrednisha/news_aggregation --name stage2-live-231-replay-ubuntu-latest --dir collector_test_results
       - name: Real news audit smoke (lexical vectors; no SBERT quality claims)
-        run: python scripts/audit_stage3.py --input collector_test_results/stage2_live_231_latest.json --backend lexical --min-decisions 100 --output collector_test_results/stage3_lexical_smoke.json
+        run: python scripts/audit_stage3.py --input collector_test_results/stage2_live_231_latest.json --gold tests/fixtures/stage3_real_pairs_100_provisional.json --backend lexical --min-decisions 100 --output collector_test_results/stage3_lexical_smoke.json
       - name: Export deterministic audit
         if: always()
         uses: actions/upload-artifact@v4
@@ -71,7 +71,7 @@ jobs:
         run: gh run download 44283065624 --repo irishavrednisha/news_aggregation --name stage2-live-231-replay-ubuntu-latest --dir collector_test_results
       - name: Compare actual SBERT legacy vs conservative event gate on >=100 real articles
         run: |
-          python scripts/audit_stage3.py --input collector_test_results/stage2_live_231_latest.json --backend sbert --min-decisions 100 --output collector_test_results/stage3_sbert_real.json
+          python scripts/audit_stage3.py --input collector_test_results/stage2_live_231_latest.json --gold tests/fixtures/stage3_real_pairs_100_provisional.json --backend sbert --min-decisions 100 --output collector_test_results/stage3_sbert_real.json
       - name: Save real SBERT audit (gold metrics remain unknown without manual labels)
         if: always()
         uses: actions/upload-artifact@v4
