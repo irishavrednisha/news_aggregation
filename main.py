@@ -12,6 +12,17 @@ import os
 
 LOG = logging.getLogger("news_pipeline")
 
+# The operator explicitly accepts a browser-style certificate warning for
+# these three official sources. No other sources or HTTPS requests inherit it.
+CERT_WARNING_SOURCES = frozenset({"Ростех", "Роснефть", "Газпром"})
+
+
+def _browser_cert_warning_enabled() -> bool:
+    """Set NEWS_BROWSER_CERT_WARNING_FALLBACK=0 to opt out immediately."""
+    return os.getenv("NEWS_BROWSER_CERT_WARNING_FALLBACK", "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
 
 def collect(limit: int = 10) -> int:
     from collectors.data_collector import collect_news
@@ -30,12 +41,23 @@ def collect(limit: int = 10) -> int:
                 # Per-source isolation: one failed website cannot interrupt others.
                 articles = collect_news(
                     [source], limit_per_source=limit, session=session,
-                    diagnostics=diagnostics, allow_unverified_tls=False,
+                    diagnostics=diagnostics,
+                    allow_unverified_tls=(
+                        _browser_cert_warning_enabled()
+                        and source.name in CERT_WARNING_SOURCES
+                    ),
                 )
                 filtered = filter_articles(articles)
                 saved_now = save_articles(session, filtered)
                 saved += saved_now
                 stat = diagnostics.get(source.name, {})
+                if stat.get("unverified_tls_urls"):
+                    LOG.warning(
+                        "%s: Chromium accepted an untrusted certificate for %d "
+                        "official-site URLs (source-specific browser fallback); "
+                        "MAX publication remains disabled",
+                        source.name, len(stat["unverified_tls_urls"]),
+                    )
                 LOG.info("%s: candidates=%s articles=%s filtered=%s saved=%s status=%s",
                          source.name, stat.get("candidates", "?"),
                          len(articles), len(filtered), saved_now,
