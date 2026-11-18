@@ -14,6 +14,16 @@ import requests
 import re
 import urllib3
 
+# Windows consoles may use a codepage that cannot encode Cyrillic headlines.
+# Escape unsupported characters instead of crashing the entire collection.
+if os.name == "nt":
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            try:
+                _stream.reconfigure(errors="backslashreplace")
+            except (OSError, ValueError):
+                pass
+
 from bs4 import BeautifulSoup
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
