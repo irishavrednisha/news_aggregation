@@ -103,6 +103,13 @@ def _content_similarity(a, b) -> float:
     return len(ta & tb) / max(len(ta), len(tb))
 
 
+def _numbers(article):
+    """Changes to quantities, model IDs or dates block title-based merging."""
+    return sorted(re.findall(r"\\d+(?:[.,]\\d+)*", normalize_text(
+        getattr(article, "text", "")
+    )))
+
+
 @dataclass(frozen=True)
 class DuplicateMatch:
     news_id: int
@@ -131,7 +138,7 @@ def match_exact(article, candidate) -> str | None:
     if t1 and t1 == t2 and _dates_close(
         getattr(article, "published_at", None),
         getattr(candidate, "published_at", None), 1
-    ) and _content_similarity(article, candidate) >= 0.97:
+    ) and _numbers(article) == _numbers(candidate) and _content_similarity(article, candidate) >= 0.97:
         return "duplicate_title_content"
     return None
 
