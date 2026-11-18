@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feat/stage3-event-clustering-2026-11-18
+      - feat/stage3-audit-hardening-2026-11-18
   workflow_dispatch:
 
 permissions:
@@ -32,6 +33,8 @@ jobs:
         run: python -m py_compile processing/event_matching.py processing/clustering.py scripts/audit_stage3.py tests/test_stage3_clustering.py main.py
       - name: Event identity and atomic DB regressions
         run: python -m unittest discover -s tests -p "test_stage3_clustering.py" -v
+      - name: Validate independent gold pair integrity
+        run: python -m unittest discover -s tests -p "test_stage3_gold_validation.py" -v
       - name: Verify CLI and no DB connection
         run: python scripts/audit_stage3.py --help
       - name: Retrieve reproducible stage 2 accepted corpus
