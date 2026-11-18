@@ -5,6 +5,10 @@ on:
       - feat/stage2-filter-exact-dedupe-2026-11-18
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   offline-intake:
     strategy:
@@ -43,3 +47,19 @@ jobs:
         run: python -m unittest discover -s tests -p "test_topic_filter.py" -v
       - name: Verify read-only audit CLI
         run: python scripts/audit_stage2.py --help
+      - name: Download stored live corpus of 231 articles (read-only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 44224642774 --repo irishavrednisha/news_aggregation --name stage2-live-real-news-20261118 --dir collector_test_results
+      - name: Replay 231 real articles against this exact commit
+        run: |
+          python scripts/audit_stage2.py --input collector_test_results/stage2_live_250.json --date 2026-11-18 --target 250 --require-coverage --output collector_test_results/stage2_live_231_latest.json
+      - name: Upload reproducible read-only replay report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage2-live-231-replay-${{ matrix.os }}
+          path: collector_test_results/stage2_live_231_latest.json
+          retention-days: 14
+          if-no-files-found: warn
