@@ -54,6 +54,55 @@ class Stage1StabilityTests(unittest.TestCase):
         session.rollback.assert_called()
         session.close.assert_called_once()
 
+    def test_normal_collection_uses_browser_warning_only_for_three_sources(self):
+        import main
+        names = ("Ростех", "Роснефть", "Газпром", "ИАПН", "Норильский никель")
+        sources = [SimpleNamespace(name=name, source_type="html") for name in names]
+        with patch("database.db.get_session", return_value=MagicMock()), \
+             patch("database.repository.get_active_sources", return_value=sources), \
+             patch("collectors.data_collector.collect_news", return_value=[]) as collector, \
+             patch("processing.topic_filter.filter_articles", side_effect=lambda items: items), \
+             patch("database.repository.save_articles", return_value=0), \
+             patch.dict(os.environ, {"NEWS_BROWSER_CERT_WARNING_FALLBACK": "1"}):
+            main.collect(limit=1)
+        self.assertEqual(collector.call_count, len(sources))
+        flags = {
+            names[i]: call.kwargs["allow_unverified_tls"]
+            for i, call in enumerate(collector.call_args_list)
+        }
+        self.assertEqual(flags, {
+            "Ростех": True, "Роснефть": True, "Газпром": True,
+            "ИАПН": False, "Норильский никель": False,
+        })
+
+    def test_certificate_warning_can_be_disabled_with_environment(self):
+        import main
+        for setting in ("0", "false", "off"):
+            with self.subTest(setting=setting), \
+                 patch.dict(os.environ, {"NEWS_BROWSER_CERT_WARNING_FALLBACK": setting}):
+                self.assertFalse(main._browser_cert_warning_enabled())
+
+    def test_untrusted_browser_never_crosses_official_site_boundaries(self):
+        from collectors.data_collector import _cert_warning_same_source
+        self.assertTrue(_cert_warning_same_source(
+            "https://www.rosneft.ru/press/news/", "https://limited.rosneft.ru/press/news/2026/",
+        ))
+        self.assertTrue(_cert_warning_same_source(
+            "https://rostec.ru/media/news/", "https://www.rostec.ru/media/file.jpg",
+        ))
+        for url in (
+            "https://rostec.ru.evil.invalid/steal",
+            "https://www.rosneft.ru/press/news/",
+            "https://cdn.rostec.ru/file.js",
+            "http://rostec.ru/media/news/",
+            "https://user:password@rostec.ru/media/news/",
+            "file:///etc/passwd",
+        ):
+            with self.subTest(url=url):
+                self.assertFalse(_cert_warning_same_source(
+                    "https://rostec.ru/media/news/", url,
+                ))
+
     def test_error_pages_never_count_as_news(self):
         for text in (
             "",
