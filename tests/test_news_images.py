@@ -101,6 +101,16 @@ class ImagePipelineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _image_metadata(b"not an image")
 
+    def test_image_ca_bundle_does_not_leak_to_unrelated_cdn(self):
+        from processing.image_downloader import _verify_tls
+
+        with tempfile.TemporaryDirectory() as directory:
+            ca = Path(directory) / "trusted.pem"
+            ca.write_text("fixture only", encoding="utf-8")
+            with patch.dict(os.environ, {"NEWS_CA_BUNDLE": str(ca), "NEWS_SOURCE_CA_BUNDLES": ""}):
+                self.assertEqual(_verify_tls("https://www.rostec.ru/media/news/photo.jpg"), str(ca))
+                self.assertTrue(_verify_tls("https://images.third-party.example/photo.jpg") is True)
+
     def test_private_address_is_rejected(self):
         with patch("processing.image_downloader.socket.getaddrinfo",
                    return_value=[(2, 1, 6, "", ("127.0.0.1", 443))]):
