@@ -621,6 +621,7 @@ class CollectorTests(unittest.TestCase):
         )
         browser = MagicMock()
         browser.new_context.return_value.new_page.return_value.content.return_value = "<html>unverified</html>"
+        browser.new_context.return_value.new_page.return_value.url = "https://rostec.ru/media/news/"
         browser.new_page.return_value.content.return_value = "<html>verified</html>"
         p = MagicMock()
         p.chromium.launch.return_value = browser
