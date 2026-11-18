@@ -64,6 +64,20 @@ class Stage3FactsTests(unittest.TestCase):
         b = row("Ростех разработал двигатель для судна")
         self.assertEqual(same_event(a, b, 0.99).reason, "different_company")
 
+    def test_real_seligdar_paraphrase(self):
+        a = row('"Селигдар" достиг отметки в 8 тонн по производству золота',
+                text='Холдинг Селигдар произвел золото, плановые показатели на Рябиновом.')
+        b = row('8 тонн золота произвел «Селигдар» с начала 2026 года',
+                text='Показатели месторождений Рябиновое и Самолазовское.')
+        self.assertTrue(same_event(a, b, 0.842).merge)
+
+    def test_real_kret_shared_technical_specifications(self):
+        a = row("В России разработали компактные электродвигатели для дронов и роботов",
+                text="Ростех, КРЭТ: бесколлекторные модели, 2500 Вт и 600 кг.")
+        b = row("КРЭТ представил линейку ультралегких электродвигателей для БПЛА и робототехники",
+                text="Концерн КРЭТ, входящий в Ростех: бесколлекторные модели, 2500 Вт и 600 кг.")
+        self.assertTrue(same_event(a, b, 0.72759).merge)
+
     def test_low_similarity_gate(self):
         a = row("ЧМЗ выпустил партию автокранов")
         b = row("ЧМЗ изготовил партию автокранов")
