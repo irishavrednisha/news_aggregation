@@ -105,6 +105,7 @@ class Stage3DatabaseTests(unittest.TestCase):
         from sqlalchemy.orm import sessionmaker
         from database.db import Base
         import database.models  # noqa
+        import database.intake_models  # noqa: stage 2 raw-mirror compatibility
         self.engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(self.engine)
         self.session = sessionmaker(bind=self.engine)()
@@ -125,6 +126,34 @@ class Stage3DatabaseTests(unittest.TestCase):
         self.session.add(instance)
         self.session.commit()
         return instance
+
+    def test_exact_mirror_source_urls_remain_available(self):
+        from database.models import Cluster, Source
+        from database.intake_models import NewsIntakeRecord
+        from processing.clustering import get_cluster_source_links
+        news = self.add("ОСК усовершенствовала систему подготовки наставников",
+                        "Подробная статья", "https://test.example/original")
+        cluster = Cluster(title=news.title, status="new", cluster_size=1)
+        self.session.add(cluster)
+        self.session.flush()
+        news.cluster_id = cluster.id
+        source = self.session.query(Source).first()
+        mirror = NewsIntakeRecord(
+            source_id=source.id, duplicate_of_news_id=news.id,
+            raw_url="https://flotprom.ru/2026/Судостроение48/",
+            raw_title=news.title, raw_text=news.text,
+            canonical_url="https://flotprom.ru/2026/Судостроение48/",
+            url_sha256="a" * 64, payload_sha256="b" * 64,
+            status="rejected", reason="duplicate_text",
+            decision_stage="exact_duplicate"
+        )
+        self.session.add(mirror)
+        self.session.commit()
+        links = get_cluster_source_links(self.session, cluster.id)
+        self.assertEqual(len(links), 2)
+        self.assertEqual(links[0]["link_type"], "accepted_event_article")
+        self.assertEqual(links[1]["link_type"], "stage2_exact_copy")
+        self.assertEqual(self.session.query(NewsIntakeRecord).count(), 1)
 
     def test_legacy_fulltext_embedding_cannot_block_true_event(self):
         from database.models import Cluster, News
