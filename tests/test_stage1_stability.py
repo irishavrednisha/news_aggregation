@@ -205,5 +205,89 @@ class Stage1StabilityTests(unittest.TestCase):
             engine.dispose()
 
 
+    def test_iapn_tries_configured_rss_when_html_listing_fails(self):
+        from collectors.data_collector import ArticlePreview, collect_news
+        source = SimpleNamespace(
+            name="ИАПН", source_type="html", url="https://iapn.ru",
+            rss_url="https://iapn.ru/feed/", is_active=True,
+        )
+        preview = ArticlePreview(
+            source="ИАПН", title="Российский завод выпустил новую линию станков",
+            url="https://iapn.ru/article-123/", published_at=datetime(2026, 11, 18),
+            preview_text="",
+        )
+        article = Article(
+            source="ИАПН", title=preview.title, url=preview.url,
+            published_at=preview.published_at, text="На заводе запустили станки. " * 18,
+            text_source="html",
+        )
+        diagnostics = {}
+        with patch("collectors.data_collector.collect_html_previews", return_value=[]), \
+             patch("collectors.data_collector.collect_rss_previews", return_value=[preview]) as rss, \
+             patch("collectors.data_collector.build_full_article", return_value=article), \
+             patch("collectors.data_collector.time.sleep"):
+            collected = collect_news(
+                [source], limit_per_source=1, diagnostics=diagnostics,
+                apply_filters=False,
+            )
+        self.assertEqual(len(collected), 1)
+        self.assertTrue(diagnostics["ИАПН"]["rss_fallback_attempted"])
+        self.assertTrue(diagnostics["ИАПН"]["rss_fallback_succeeded"])
+        self.assertEqual(diagnostics["ИАПН"]["status"], "ok")
+        rss.assert_called_once()
+
+    def test_rss_fetch_uses_verified_tls_first_and_truststore_on_failure(self):
+        from requests.exceptions import SSLError
+        from collectors.data_collector import collect_rss_previews
+        source = SimpleNamespace(
+            name="ИАПН", url="https://iapn.ru", rss_url="https://iapn.ru/feed/",
+        )
+        feed_xml = b"""<?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0"><channel><title>News</title><item>
+          <title>Российский завод ввёл новую производственную линию</title>
+          <link>https://iapn.ru/test-industrial-news/</link>
+          <description>Российский производитель оборудования</description>
+          </item></channel></rss>"""
+        response = MagicMock()
+        response.content = feed_xml
+        response.raise_for_status.return_value = None
+        with patch("collectors.data_collector.requests.get",
+                   side_effect=SSLError("untrusted CA")) as request, \
+             patch("collectors.data_collector.retry_with_trusted_roots",
+                   return_value=response) as trusted:
+            previews = collect_rss_previews(source, 2, apply_filters=False)
+        self.assertEqual(len(previews), 1)
+        self.assertEqual(previews[0].url, "https://iapn.ru/test-industrial-news/")
+        self.assertIs(request.call_args.kwargs["verify"], True)
+        trusted.assert_called_once()
+
+    def test_diagnostics_does_not_call_old_news_fresh(self):
+        old_news = Article(
+            source="Вестник промышленности",
+            title="Модернизацию машиностроения обсудят летом в Казани",
+            url="https://vestnikprom.ru/2026/04/21/industry/",
+            published_at=datetime(2026, 4, 20),
+            text="Выпуск промышленных машин. " * 20,
+            text_source="html",
+        )
+        metric = article_metrics(old_news)
+        self.assertTrue(metric["date_valid"])
+        self.assertFalse(metric["fresh_within_30_days"])
+        self.assertGreater(metric["age_days"], 30)
+        self.assertIn("older_than_30_days", metric["issues"])
+
+    def test_gazprom_tls_diagnostic_is_explicit_and_exact_host_only(self):
+        from collectors.data_collector import _ALLOW_UNVERIFIED_TLS, _may_ignore_https_errors
+        self.assertFalse(_may_ignore_https_errors("https://www.gazprom.ru/press/news/"))
+        token = _ALLOW_UNVERIFIED_TLS.set(True)
+        try:
+            self.assertTrue(_may_ignore_https_errors("https://www.gazprom.ru/press/news/"))
+            self.assertFalse(_may_ignore_https_errors("https://www.gazprom.ru.attacker.net/"))
+            self.assertFalse(_may_ignore_https_errors("http://www.gazprom.ru/press/news/"))
+            self.assertFalse(_may_ignore_https_errors("https://u:p@www.gazprom.ru/press/news/"))
+        finally:
+            _ALLOW_UNVERIFIED_TLS.reset(token)
+
+
 if __name__ == "__main__":
     unittest.main()
