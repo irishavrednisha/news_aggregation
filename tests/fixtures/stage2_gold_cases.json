@@ -203,7 +203,7 @@
       "id": "S2-23",
       "title": "Объявлен конкурс инженеров",
       "expected_status": "review",
-      "expected_reason": "industry_without_clear_event",
+      "expected_reason": "corporate_or_hr_event",
       "body_kind": "full",
       "published_at": "2026-11-18",
       "url": "https://sample.example/news/test-23"
