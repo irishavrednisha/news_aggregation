@@ -617,7 +617,7 @@ class CollectorTests(unittest.TestCase):
     def test_browser_proceed_anyway_only_with_explicit_opt_in(self):
         from unittest.mock import MagicMock
         from collectors.data_collector import (
-            _ALLOW_UNVERIFIED_TLS, fetch_html_with_browser,
+            _ALLOW_UNVERIFIED_TLS, _FETCH_AUDIT, fetch_html_with_browser,
         )
         browser = MagicMock()
         browser.new_context.return_value.new_page.return_value.content.return_value = "<html>unverified</html>"
@@ -636,7 +636,21 @@ class CollectorTests(unittest.TestCase):
             )
             browser.new_context.assert_not_called()
             token = _ALLOW_UNVERIFIED_TLS.set(True)
+            audit_token = None
             try:
+                # Even with opt-in, no unverified browser without a TLS error.
+                self.assertIn(
+                    "verified", fetch_html_with_browser(
+                        "https://rostec.ru/media/news/", ignore_https_errors=True
+                    )
+                )
+                browser.new_context.assert_not_called()
+                audit_token = _FETCH_AUDIT.set({
+                    "fetch_failures": [{
+                        "url": "https://rostec.ru/media/news/",
+                        "kind": "ssl_certificate_error",
+                    }]
+                })
                 self.assertIn(
                     "unverified", fetch_html_with_browser(
                         "https://rostec.ru/media/news/", ignore_https_errors=True
@@ -653,6 +667,8 @@ class CollectorTests(unittest.TestCase):
                 )
                 browser.new_context.assert_not_called()
             finally:
+                if audit_token is not None:
+                    _FETCH_AUDIT.reset(audit_token)
                 _ALLOW_UNVERIFIED_TLS.reset(token)
 
     def test_explicit_test_only_collect_news_uses_browser_bypass(self):
