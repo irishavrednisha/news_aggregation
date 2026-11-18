@@ -35,6 +35,8 @@ jobs:
         run: python -m unittest discover -s tests -p "test_stage2_intake.py" -v
       - name: Validate real audit headline regressions
         run: python -m unittest discover -s tests -p "test_stage2_real_title_regressions.py" -v
+      - name: Stage 2 follow-up real-world and URL regressions
+        run: python -m unittest discover -s tests -p "test_stage2_followup.py" -v
       - name: Preserve stage 1 collector contracts
         run: python -m unittest discover -s tests -p "test_stage1_stability.py" -v
       - name: Preserve old filter diagnostics
