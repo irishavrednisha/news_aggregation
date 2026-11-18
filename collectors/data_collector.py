@@ -214,10 +214,24 @@ def fetch_html_with_requests(url: str) -> str:
     return ""
 
 
+def _confirmed_certificate_failure(url: str) -> bool:
+    audit = _FETCH_AUDIT.get() or {}
+    return any(
+        failure.get("kind") == "ssl_certificate_error" or (
+            failure.get("kind") == "browser_error" and (
+                "ERR_CERT_AUTHORITY_INVALID" in failure.get("detail", "")
+                or "CERTIFICATE_VERIFY_FAILED" in failure.get("detail", "")
+            )
+        )
+        for failure in audit.get("fetch_failures", [])
+        if failure.get("url") == url
+    )
+
+
 def fetch_html_with_browser(url: str, ignore_https_errors: bool = False) -> str:
-    # Даже если вызывающий код ошибочно передал True, разрешён
-    # строго явный opt-in для конкретных хостов, не для других сайтов.
-    bypass = ignore_https_errors and _may_ignore_https_errors(url)
+    # The direct browser API also requires a confirmed certificate error.
+    bypass = (ignore_https_errors and _may_ignore_https_errors(url)
+              and _confirmed_certificate_failure(url))
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -286,18 +300,7 @@ def fetch_html(url: str) -> str:
         browser_verified = fetch_html_with_browser(url)
         if browser_verified and not is_error_page_text(BeautifulSoup(browser_verified, "html.parser").get_text(" ", strip=True)):
             return browser_verified
-        audit = _FETCH_AUDIT.get() or {}
-        confirmed_ssl = any(
-            failure.get("kind") == "ssl_certificate_error" or (
-                failure.get("kind") == "browser_error" and (
-                    "ERR_CERT_AUTHORITY_INVALID" in failure.get("detail", "")
-                    or "CERTIFICATE_VERIFY_FAILED" in failure.get("detail", "")
-                )
-            )
-            for failure in audit.get("fetch_failures", [])
-            if failure.get("url") == url
-        )
-        if not confirmed_ssl:
+        if not _confirmed_certificate_failure(url):
             return ""
         return fetch_html_with_browser(url, ignore_https_errors=True)
 
