@@ -123,5 +123,43 @@ class Stage1StabilityTests(unittest.TestCase):
         self.assertFalse(article_metrics(rss)["full_text_heuristic"])
 
 
+    def test_rss_excerpt_is_not_saved_as_a_complete_article(self):
+        from collectors.data_collector import collect_news, ArticlePreview
+        source = SimpleNamespace(name="ТАСС", source_type="rss",
+                                 url="https://tass.ru/", rss_url="https://tass.ru/rss/v2.xml")
+        preview = ArticlePreview(source="ТАСС", title="Российский завод изготовил новое оборудование",
+                                 url="https://tass.ru/example", published_at=None,
+                                 preview_text="Текст из RSS")
+        article = Article(source="ТАСС", title=preview.title, url=preview.url,
+                          published_at=None, text="Длинное описание из RSS. " * 30,
+                          text_source="rss")
+        with patch("collectors.data_collector.collect_rss_previews", return_value=[preview]), \
+             patch("collectors.data_collector.build_full_article", return_value=article), \
+             patch("collectors.data_collector.time.sleep"):
+            diagnostic = {}
+            raw = collect_news([source], limit_per_source=1, diagnostics=diagnostic,
+                               apply_filters=False)
+            self.assertEqual(len(raw), 1)
+            self.assertEqual(diagnostic["ТАСС"]["status"], "rss_preview_only")
+            self.assertEqual(diagnostic["ТАСС"]["full_html_accepted"], 0)
+            stored = collect_news([source], limit_per_source=1, apply_filters=True)
+            self.assertEqual(stored, [])
+            self.assertFalse(article_metrics(article)["full_text_heuristic"])
+
+    def test_browser_first_source_has_verified_requests_fallback(self):
+        from collectors.data_collector import fetch_html
+        html = "<html><body><h1>Новости Торгово-промышленной палаты</h1>" + (
+            "<p>Промышленное оборудование произведено на отечественном заводе.</p>" * 5
+        ) + "</body></html>"
+        with patch("collectors.data_collector.fetch_html_with_browser",
+                   return_value="") as browser, \
+             patch("collectors.data_collector.fetch_html_with_requests",
+                   return_value=html) as requests_mock:
+            text = fetch_html("https://news.tpprf.ru/ru/main/")
+        self.assertEqual(text, html)
+        browser.assert_called_once()
+        requests_mock.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
