@@ -154,6 +154,72 @@ class Stage2CorroboratedLeadRegressions(unittest.TestCase):
                                  expected)
 
 
+
+class Stage2BinaryRealCorpusRegressions(unittest.TestCase):
+    def test_avoid_incidental_industry_words_in_unrelated_news(self):
+        # Taken from real corpus errors; a keyword in a quote or body is not
+        # proof that this is a primary industrial news event.
+        titles = [
+            "В Кемеровской области упал военно-транспортный Ан-12",
+            "Силы ПВО отражают атаку БПЛА над Краснодаром",
+            "Российские регионы захлестнула рекордная волна украинских дронов",
+            "Работа Кандинского эпохи Баухауса установила рекорд на аукционе Christie's",
+            "В аэропорту Краснодара введены дополнительные ограничения",
+            "Песков сообщил, что прямая линия с Путиным пройдет в декабре",
+            "Оттава выделила дополнительные средства на военную помощь Киеву",
+            "Армия Кувейта сообщила, что ведет отражение налета беспилотников",
+            "Первопричина, приведшая к сбою в аэропортах США, пока не установлена",
+            "Американские силы на Ближнем Востоке дополнила третья авианосная ударная группа",
+            "Си Цзиньпин призвал развивать партнерство в сфере технологических инноваций",
+            "Beget лишился статуса регистратора доменных имен в Рунете",
+            "В Якутии обратили три бриллианта в доход государства",
+        ]
+        for title in titles:
+            with self.subTest(title=title):
+                article = news(title, text=(title + " В сообщении указаны "
+                                             "технологические аспекты, "
+                                             "средства производства, организации "
+                                             "и промышленность. ") * 5)
+                self.assertEqual(classify_intake(article, now=TODAY).status,
+                                 "rejected")
+
+    def test_industrial_news_not_lost(self):
+        cases = [
+            "В 2026 году вложения в химическую отрасль составят 2,3 трлн рублей",
+            "Владимир Цитцер: Птицезащита должна закладываться в проекты ЛЭП изначально — это снизит затраты на 20%",
+            "ОСК начала ходовые испытания головного круизного лайнера «Николай Жарков»",
+            "Ростех оснастил аэродром в Санкт-Петербурге новым комплексом управления полетами",
+            "Импортозамещенный МС-21 прошел больше половины сертификационных испытаний",
+            "СОЛЛЕРС запустил серийное производство бензиновых турбодвигателей в Елабуге",
+            "АриaneGroup представила баллистическую противокорабельную ракету",
+        ]
+        for title in cases:
+            with self.subTest(title=title):
+                article = news(title, text=(title + " Предприятия производят "
+                                             "оборудование, проводят внедрение и "
+                                             "инженерную работу в отрасли. ") * 5)
+                self.assertEqual(classify_intake(article, now=TODAY).status,
+                                 "accepted")
+
+    def test_event_invitation_is_not_new_industrial_project(self):
+        cases = [
+            "Международные специализированные выставки «Металлоконструкции», «Металлургия.Литмаш», «Сервисные Металлоцентры»",
+            "KIOSH 2026: ключевая площадка по охране труда и промышленной безопасности в Центральной Азии",
+            "«Рексофт» проведёт бесплатный вебинар о внедрении компьютерного зрения в добывающей отрасли",
+            "Модернизацию машиностроения обсудят летом в Казани",
+        ]
+        for title in cases:
+            with self.subTest(title=title):
+                text = ("С 26 по 28 мая состоится выставка промышленного "
+                        "оборудования. Организаторы приглашают компании и "
+                        "рассказывают о программе мероприятия. ") * 5
+                self.assertEqual(
+                    classify_intake(news(title, text=text, published="2026-11-17"),
+                                    now=TODAY).status,
+                    "rejected",
+                )
+
+
 class Stage2URLConservativeRegressions(unittest.TestCase):
     def test_keep_nedradv_obj_and_semantic_ref(self):
         self.assertNotEqual(normalize_url("https://nedradv.ru/nedradv/ru/news?obj=1"),
