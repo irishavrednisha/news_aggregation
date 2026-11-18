@@ -46,11 +46,17 @@ def article_metrics(article, include_text=False):
     title = (article.title or "").strip()
     text = (article.text or "").strip()
     published = article.published_at
+    age_days = None
+    fresh_30_days = False
     if published is not None:
         try:
             dated = published.date() if hasattr(published, "date") else published
             from datetime import date
-            date_ok = date(1995, 1, 1) <= dated <= (datetime.now(timezone.utc) + timedelta(days=2)).date()
+            today = datetime.now(timezone.utc).date()
+            date_ok = date(1995, 1, 1) <= dated <= (today + timedelta(days=2))
+            if date_ok:
+                age_days = (today - dated).days
+                fresh_30_days = 0 <= age_days <= 30
         except (TypeError, ValueError, AttributeError):
             date_ok = False
     else:
@@ -68,6 +74,8 @@ def article_metrics(article, include_text=False):
         "title_valid": title_ok,
         "published_at": published.isoformat() if hasattr(published, "isoformat") else None,
         "date_valid": date_ok,
+        "age_days": age_days,
+        "fresh_within_30_days": fresh_30_days,
         "text_chars": len(text),
         "text_method": article.text_source,
         "full_text_heuristic": full_text,
@@ -76,6 +84,7 @@ def article_metrics(article, include_text=False):
         "issues": (
             ([] if title_ok else ["invalid_title"]) +
             ([] if date_ok else ["missing_or_implausible_date"]) +
+            (["older_than_30_days"] if age_days is not None and age_days > 30 else []) +
             ([] if full_text else ["missing_or_short_full_html_text"]) +
             (["error_or_access_page"] if placeholder else [])
         ),
@@ -120,6 +129,9 @@ def inspect_source(source, limit, allow_unverified_tls=False, include_text=False
         "full_html_texts_250_plus": sum(bool(x["full_text_heuristic"]) for x in metrics),
         "valid_titles": sum(bool(x["title_valid"]) for x in metrics),
         "valid_dates": sum(bool(x["date_valid"]) for x in metrics),
+        "articles_fresh_within_30_days": sum(bool(x["fresh_within_30_days"]) for x in metrics),
+        "rss_fallback_attempted": stat.get("rss_fallback_attempted", False),
+        "rss_fallback_succeeded": stat.get("rss_fallback_succeeded", False),
         "articles_with_image_candidates": sum(bool(x["image_candidates"]) for x in metrics),
         "short_or_empty": stat.get("short_or_empty", 0),
         "error_page_rejections": stat.get("error_page_rejections", 0),
@@ -186,6 +198,8 @@ def main(argv=None):
         "source_origin": "seed_configuration_not_database" if args.from_config else "postgresql_sources_table",
         "source_count_from_database": None if args.from_config else len(sources),
         "source_count_checked": len(sources),
+        "active_source_count": sum(bool(s.is_active) for s in sources),
+        "inactive_source_count": sum(not bool(s.is_active) for s in sources),
         "read_only": True,
         "max_publishing_enabled": False,
         "limit_per_source": args.limit,
@@ -200,7 +214,9 @@ def main(argv=None):
     for r in results:
         print(f"{r['name']}: {r['status']} | links={r['links_found']}, "
               f"extracted={r['articles_extracted']}, full={r['full_html_texts_250_plus']}, "
-              f"dated={r['valid_dates']}, images={r['articles_with_image_candidates']}")
+              f"dated={r['valid_dates']}, recent30d={r['articles_fresh_within_30_days']}, "
+              f"images={r['articles_with_image_candidates']}, "
+              f"active={r['configured_active']}")
         if r["errors"]:
             print("    " + "; ".join(r["errors"][:2]))
     good = sum(r["articles_extracted"] > 0 for r in results)
