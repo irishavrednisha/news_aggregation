@@ -46,6 +46,7 @@ def _snapshot_hash(article):
     published = getattr(article, "published_at", None)
     timestamp = published.isoformat() if hasattr(published, "isoformat") else str(published or "")
     return checksum("\n".join((
+        str(getattr(article, "url", "") or ""),
         str(getattr(article, "title", "") or ""),
         str(getattr(article, "text", "") or ""),
         timestamp,
