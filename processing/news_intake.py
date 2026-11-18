@@ -125,7 +125,7 @@ _INDUSTRY_ACTORS = re.compile(
 # A company name alone cannot turn a social or medical story into an
 # industrial event; require a material, component or technical output.
 _ACTOR_TECHNICAL_OUTPUT = re.compile(
-    r"\b(?:панел\w* для чист\w* помещени\w*|ии.лаборатори\w*|"
+    r"\b(?:панел\w* для .{0,3}чист\w* помещени\w*|ии.лаборатори\w*|"
     r"нов\w* материал\w*|промышленн\w* издели\w*|"
     r"серийн\w* выпуск\w*|техническ\w* решени\w*|"
     r"комплектующ\w* для оборудовани\w*)\b"
