@@ -80,9 +80,25 @@ def process(hours: int = 48) -> None:
 
     session = get_session()
     try:
-        cluster_recent_news(session=session, hours=hours, threshold=0.7)
+        cluster_recent_news(session=session, hours=hours, threshold=0.79)
         summarize_new_clusters(session=session, sentence_count=4, max_chars=800)
         tag_new_clusters(session=session, min_score=0.35)
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def cluster_only(hours: int = 48) -> int:
+    """Stage 3 only: no summaries, tagging, Telegram, MAX, or migrations."""
+    from database.db import get_session
+    from processing.clustering import cluster_recent_news
+    session = get_session()
+    try:
+        changed = cluster_recent_news(session, hours=hours)
+        LOG.info("Cluster-only completed: %d changed clusters", len(changed))
+        return len(changed)
     except Exception:
         session.rollback()
         raise
@@ -135,7 +151,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Independent news pipeline workers")
     parser.add_argument(
         "stage", nargs="?", default="collect",
-        choices=("collect", "process", "prepare", "telegram", "max", "status"),
+        choices=("collect", "cluster", "process", "prepare", "telegram", "max", "status"),
         help="Each stage is a separate process; collect is the safe default",
     )
     parser.add_argument("--limit", type=int, default=10)
@@ -146,7 +162,14 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.stage == "collect":
         collect(args.limit)
+    elif args.stage == "cluster":
+        cluster_only(args.hours)
     elif args.stage == "process":
+        if os.getenv("NEWS_STAGE3_ALLOW_DOWNSTREAM", "false").lower() not in ("true", "1"):
+            raise SystemExit(
+                "Stage 3 blocks process (summarizer/tagger). "
+                "Run 'python main.py cluster --hours 48' instead."
+            )
         process(args.hours)
     elif args.stage == "prepare":
         prepare(args.limit)

@@ -1,0 +1,82 @@
+name: Stage 3 event clustering (read-only audit)
+on:
+  push:
+    branches:
+      - feat/stage3-event-clustering-2026-11-18
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    env:
+      MAX_PUBLISHING_ENABLED: "false"
+      NEWS_IMAGES_ENABLED: "false"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install lightweight audit and DB test dependencies
+        run: python -m pip install sqlalchemy numpy psycopg2-binary python-dotenv
+      - name: Compile stage 3 modules
+        run: python -m py_compile processing/event_matching.py processing/clustering.py scripts/audit_stage3.py tests/test_stage3_clustering.py main.py
+      - name: Event identity and atomic DB regressions
+        run: python -m unittest discover -s tests -p "test_stage3_clustering.py" -v
+      - name: Verify CLI and no DB connection
+        run: python scripts/audit_stage3.py --help
+      - name: Retrieve reproducible stage 2 accepted corpus
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 44283065624 --repo irishavrednisha/news_aggregation --name stage2-live-231-replay-ubuntu-latest --dir collector_test_results
+      - name: Real news audit smoke (lexical vectors; no SBERT quality claims)
+        run: python scripts/audit_stage3.py --input collector_test_results/stage2_live_231_latest.json --gold tests/fixtures/stage3_real_pairs_100_provisional.json --backend lexical --min-decisions 100 --output collector_test_results/stage3_lexical_smoke.json
+      - name: Export deterministic audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage3-lexical-smoke-${{ matrix.os }}
+          path: collector_test_results/stage3_lexical_smoke.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  sbert-real:
+    needs: regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MAX_PUBLISHING_ENABLED: "false"
+      NEWS_IMAGES_ENABLED: "false"
+      PYTHONIOENCODING: "utf-8"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install CPU SBERT runtime (no local Windows change)
+        run: python -m pip install sentence-transformers numpy
+      - name: Fetch same real accepted stage 2 news corpus
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 44283065624 --repo irishavrednisha/news_aggregation --name stage2-live-231-replay-ubuntu-latest --dir collector_test_results
+      - name: Compare actual SBERT legacy vs conservative event gate on >=100 real articles
+        run: |
+          python scripts/audit_stage3.py --input collector_test_results/stage2_live_231_latest.json --gold tests/fixtures/stage3_real_pairs_100_provisional.json --backend sbert --min-decisions 100 --output collector_test_results/stage3_sbert_real.json
+      - name: Save real SBERT audit (gold metrics remain unknown without manual labels)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage3-sbert-accepted-20261118
+          path: collector_test_results/stage3_sbert_real.json
+          retention-days: 14
+          if-no-files-found: warn
