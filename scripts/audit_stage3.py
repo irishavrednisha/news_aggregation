@@ -232,6 +232,10 @@ def compare_pair_labels(rows, baseline, revised, path, input_path):
             "recall": round(tp / (tp + fn), 4) if tp + fn else None,
             "mistakes": mistakes,
         }
+    result["annotation_status"] = (
+        data.get("verification_status", "unspecified")
+        if isinstance(data, dict) else "unspecified"
+    )
     return result
 
 
@@ -271,9 +275,13 @@ def run(path, *, gold=None, backend="sbert", model=MODEL_NAME,
         "delta_singletons": new_stats["singleton_clusters"] - old_stats["singleton_clusters"],
         "gold_real_metrics": gold_report,
         "quality_caveat": (
-            "Precision, false merges, missed merges and recall are UNKNOWN without "
-            "independent manually labeled pairs. Cluster counts alone do not show quality."
-        ) if gold_report is None else None,
+            "No labeled real pairs: FP/FN precision and recall unknown."
+            if gold_report is None else (
+                "Real pair labels are provisional and NOT independently verified. "
+                "Error counts are preliminary; cluster counts do not prove quality."
+                if gold_report.get("annotation_status") != "independently_verified" else None
+            )
+        ),
         "decisions": new_decisions,
         "baseline_decisions": old_decisions,
         "examples": {
