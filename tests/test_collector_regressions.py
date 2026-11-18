@@ -652,6 +652,8 @@ class CollectorTests(unittest.TestCase):
                 _ALLOW_UNVERIFIED_TLS.reset(token)
 
     def test_explicit_test_only_collect_news_uses_browser_bypass(self):
+        """Only after verified TLS fails; never on an arbitrary successful page."""
+        from requests.exceptions import SSLError
         from collectors.data_collector import collect_news
         source = type("Source", (), {
             "name": "Ростех",
@@ -674,27 +676,30 @@ class CollectorTests(unittest.TestCase):
         </article>
         """
         def html_for_url(url, **kwargs):
-            if url == source.url:
-                return listing
-            if url.endswith("/media/news/new-factory/"):
-                return body
-            return ""
+            if not kwargs.get("ignore_https_errors"):
+                return ""
+            return listing if url == source.url else body
 
         diag = {}
-        with patch("collectors.data_collector.fetch_html_with_browser",
-                   side_effect=html_for_url) as browser:
-            with patch("collectors.data_collector.fetch_html_with_requests",
-                       side_effect=AssertionError("requests must not be used")):
-                articles = collect_news([source], limit_per_source=1,
-                                        diagnostics=diag,
-                                        allow_unverified_tls=True)
+        with patch("collectors.data_collector.requests.get",
+                   side_effect=SSLError("untrusted root")):
+            with patch("collectors.data_collector.retry_with_trusted_roots",
+                       return_value=None):
+                with patch("collectors.data_collector.fetch_html_with_browser",
+                           side_effect=html_for_url) as browser:
+                    with patch("collectors.data_collector.time.sleep"):
+                        articles = collect_news([source], limit_per_source=1,
+                                                diagnostics=diag,
+                                                allow_unverified_tls=True)
         self.assertEqual(len(articles), 1)
-        self.assertGreaterEqual(len(browser.call_args_list), 2)
-        self.assertTrue(all(
-            call.kwargs == {"ignore_https_errors": True}
-            for call in browser.call_args_list
+        self.assertTrue(any(
+            c.kwargs.get("ignore_https_errors") is True for c in browser.call_args_list
+        ))
+        self.assertTrue(any(
+            c.kwargs.get("ignore_https_errors") is not True for c in browser.call_args_list
         ))
         self.assertEqual(diag["Ростех"]["status"], "ok")
+
 
     def test_rostec_datetime_before_headline_and_ignore_unrelated_dates(self):
         from collectors.data_collector import _parse_published
