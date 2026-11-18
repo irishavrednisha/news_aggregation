@@ -172,12 +172,22 @@ def group_summary(groups):
     }
 
 
-def compare_pair_labels(rows, baseline, revised, path):
+def compare_pair_labels(rows, baseline, revised, path, input_path):
     """Independent manually curated same_event labels on genuine article URLs."""
     if path is None:
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
     pairs = data.get("pairs", []) if isinstance(data, dict) else data
+    file_sha = hashlib.sha256(input_path.read_bytes()).hexdigest()
+    if isinstance(data, dict) and data.get("corpus_sha256"):
+        if data["corpus_sha256"] != file_sha:
+            raise ValueError("Gold labels belong to a different immutable real corpus")
+    input_data = json.loads(input_path.read_text(encoding="utf-8"))
+    raw = (input_data.get("real_sample", {}).get("articles", [])
+           if isinstance(input_data, dict) else input_data)
+    original_urls = [r["url"] for r in raw if isinstance(r, dict)
+                     and r.get("status", "accepted") == "accepted"
+                     and r.get("url") and r.get("title")]
     if not isinstance(pairs, list):
         raise ValueError("Gold file must contain pairs")
     urls = {r["url"] for r in rows}
@@ -188,7 +198,10 @@ def compare_pair_labels(rows, baseline, revised, path):
         counts = Counter()
         mistakes = []
         for entry in pairs:
-            a, b = entry["a"], entry["b"]
+            # Compact human-reviewed fixtures may use original accepted row
+            # indices, guarded by the SHA256 of the entire source report.
+            a = entry.get("a") or original_urls[entry["a_index"]]
+            b = entry.get("b") or original_urls[entry["b_index"]]
             if a not in urls or b not in urls or a == b:
                 raise ValueError(f"Gold URL not in accepted corpus or identical: {a} ; {b}")
             if type(entry.get("same_event")) is not bool:
@@ -233,7 +246,7 @@ def run(path, *, gold=None, backend="sbert", model=MODEL_NAME,
     old_vectors, new_vectors = embeddings(rows, backend=backend, model_name=model)
     old_groups, old_decisions = baseline_cluster(rows, old_vectors, baseline_threshold)
     new_groups, new_decisions = conservative_cluster(rows, new_vectors, threshold)
-    gold_report = compare_pair_labels(rows, old_decisions, new_decisions, gold)
+    gold_report = compare_pair_labels(rows, old_decisions, new_decisions, gold, path)
     old_stats, new_stats = group_summary(old_groups), group_summary(new_groups)
     return {
         "stage": "stage3_event_clustering",
