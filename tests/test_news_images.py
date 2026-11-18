@@ -79,6 +79,20 @@ class ImagePipelineTests(unittest.TestCase):
         )
         self.assertEqual(len(images), 1)
 
+    def test_nornickel_og_logo_folder_is_not_an_article_photo(self):
+        html = """<html><head><meta property="og:image"
+            content="https://nornickel.ru/images/logo/ru.png"></head>
+            <body><article><figure><img
+            src="https://nornickel.com/upload/medialibrary/3c2/051126.jpg"
+            alt="Лаборатория новых материалов"></figure></article></body></html>"""
+        images = extract_image_candidates(
+            BeautifulSoup(html, "html.parser"),
+            "https://www.nornickel.ru/news-and-media/press-releases-and-news/item/",
+        )
+        self.assertEqual(len(images), 1)
+        self.assertIn("051126.jpg", images[0].url)
+        self.assertFalse(any("/logo/" in im.url for im in images))
+
     def test_format_dimensions_and_small_image_rejection(self):
         valid = _png()
         self.assertEqual(_image_metadata(valid), ("image/png", ".png", 600, 400))
