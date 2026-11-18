@@ -204,7 +204,8 @@ def main(argv=None):
         if r["errors"]:
             print("    " + "; ".join(r["errors"][:2]))
     good = sum(r["articles_extracted"] > 0 for r in results)
-    print(f"Checked {len(results)} DB sources; {good} yielded articles. JSON: {out}")
+    origin = "configured URLs (NOT PostgreSQL)" if args.from_config else "PostgreSQL rows"
+    print(f"Checked {len(results)} {origin}; {good} yielded HTML articles. JSON: {out}")
     return int(args.strict and good < len(results))
 
 
