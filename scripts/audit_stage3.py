@@ -51,6 +51,38 @@ def load_articles(path: Path):
     return len(rows), unique
 
 
+def raw_exact_copy_links(path: Path, accepted_rows: list[dict]) -> dict[str, list[dict]]:
+    """Stage-2 rejected exact mirrors are references, never clustering inputs.
+
+    Return them under their accepted canonical News URL, including translated
+    Cyrillic/punycode paths. Duplicate links do not increase cluster_size.
+    """
+    from processing.exact_duplicates import normalize_url
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict) and isinstance(data.get("real_sample"), dict):
+        raw = data["real_sample"].get("articles", [])
+    elif isinstance(data, dict):
+        raw = data.get("articles", data.get("news", []))
+    else:
+        raw = data
+    index = {normalize_url(row["url"]): row["url"] for row in accepted_rows}
+    links: dict[str, list[dict]] = {}
+    for row in raw:
+        if not isinstance(row, dict) or not str(row.get("reason", "")).startswith("duplicate_"):
+            continue
+        original_url = index.get(normalize_url(row.get("duplicate_of_url", "")))
+        if not original_url or not row.get("url") or row["url"] == original_url:
+            continue
+        links.setdefault(original_url, []).append({
+            "source": row.get("source") or "",
+            "url": row["url"],
+            "link_type": "stage2_exact_copy",
+        })
+    for refs in links.values():
+        refs.sort(key=lambda ref: (ref["url"], ref["source"]))
+    return links
+
+
 def _lexical_embedding(text, dimensions=1024):
     """Hashing char 4-grams. NOT SBERT; only for deterministic CI smoke tests."""
     import math
@@ -146,15 +178,27 @@ def conservative_cluster(rows, vectors, threshold):
     return groups, decisions
 
 
-def group_summary(groups):
+def group_summary(groups, *, exact_copy_links=None):
+    exact_copy_links = exact_copy_links or {}
     histogram = Counter(len(g["rows"]) for g in groups)
     singles = histogram.get(1, 0)
     multisource = sum(
         len({row.get("source") for row in g["rows"]}) >= 2
         for g in groups
     )
+    multi_source_with_exact = sum(
+        len({r.get("source") for r in group["rows"]} |
+            {r.get("source") for article in group["rows"]
+             for r in exact_copy_links.get(article["url"], [])}) >= 2
+        for group in groups
+    )
     return {
         "cluster_count": len(groups),
+        "multi_source_clusters_including_exact_copies": multi_source_with_exact,
+        "raw_exact_copy_links": sum(
+            len(exact_copy_links.get(article["url"], []))
+            for group in groups for article in group["rows"]
+        ),
         "singleton_clusters": singles,
         "multi_article_clusters": len(groups) - singles,
         "multi_source_clusters": multisource,
@@ -166,8 +210,12 @@ def group_summary(groups):
             "id": g["id"],
             "size": len(g["rows"]),
             "primary_url": min(g["rows"], key=representative_key)["url"],
-            "source_urls": [{"source": row.get("source"), "url": row["url"]}
-                            for row in g["rows"]],
+            "source_urls": (
+                [{"source": row.get("source"), "url": row["url"],
+                  "link_type": "accepted_event_article"} for row in g["rows"]]
+                + [ref for row in g["rows"]
+                   for ref in exact_copy_links.get(row["url"], [])]
+            ),
         } for g in groups],
     }
 
@@ -251,7 +299,11 @@ def run(path, *, gold=None, backend="sbert", model=MODEL_NAME,
     old_groups, old_decisions = baseline_cluster(rows, old_vectors, baseline_threshold)
     new_groups, new_decisions = conservative_cluster(rows, new_vectors, threshold)
     gold_report = compare_pair_labels(rows, old_decisions, new_decisions, gold, path)
-    old_stats, new_stats = group_summary(old_groups), group_summary(new_groups)
+    exact_links = raw_exact_copy_links(path, rows)
+    old_stats, new_stats = (
+        group_summary(old_groups, exact_copy_links=exact_links),
+        group_summary(new_groups, exact_copy_links=exact_links)
+    )
     return {
         "stage": "stage3_event_clustering",
         "read_only": True,
