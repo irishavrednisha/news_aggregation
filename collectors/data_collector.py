@@ -154,6 +154,7 @@ def _may_ignore_https_errors(url: str) -> bool:
         and host in {
             "rostec.ru", "www.rostec.ru",
             "rosneft.ru", "www.rosneft.ru", "limited.rosneft.ru",
+            "gazprom.ru", "www.gazprom.ru",
         }
         and urlsplit(url).scheme == "https"
     )
@@ -1074,12 +1075,19 @@ def collect_rss_previews(
     print(f"RSS: {source.rss_url}")
 
     try:
-        response = requests.get(
-            source.rss_url,
-            headers=HEADERS,
-            timeout=(10, 30),
-            verify=_request_ca_bundle(),
-        )
+        try:
+            # Apply the same per-host verified TLS ladder as article HTML.
+            response = requests.get(
+                source.rss_url, headers=HEADERS, timeout=(10, 30), verify=True,
+            )
+        except requests.exceptions.SSLError as exc:
+            _record_fetch_problem(source.rss_url, "rss_ssl_certificate_error", type(exc).__name__)
+            response = retry_with_trusted_roots(
+                source.rss_url, HEADERS, (10, 30),
+                record_issue=_record_fetch_problem,
+            )
+            if response is None:
+                return previews
         response.raise_for_status()
     except requests.RequestException as exc:
         print(f"Ошибка RSS {source.name}: {type(exc).__name__}: {exc}")
@@ -3072,7 +3080,7 @@ def collect_news(
 
         audit_token = _FETCH_AUDIT.set(stat)
         unverified_token = _ALLOW_UNVERIFIED_TLS.set(
-            bool(allow_unverified_tls) and source.name in ("Ростех", "Роснефть")
+            bool(allow_unverified_tls) and source.name in ("Ростех", "Роснефть", "Газпром")
         )
         try:
             try:
@@ -3116,6 +3124,17 @@ def collect_news(
                         else min(limit_per_source * 3, 30)
                     )
                     previews = fn(source, limit=preview_limit)
+                    # The database may already hold an official RSS feed for
+                    # an HTML source. Use it only if the HTML listing failed.
+                    # Never silently change source_type or persist fallback data.
+                    if not previews and getattr(source, "rss_url", None):
+                        stat["rss_fallback_attempted"] = True
+                        previews = collect_rss_previews(
+                            source, limit=preview_limit,
+                            apply_filters=apply_filters,
+                        )
+                        if previews:
+                            stat["rss_fallback_succeeded"] = True
                 else:
                     message = f"Неизвестный тип источника: {source.source_type}"
                     stat["errors"].append(message)
