@@ -1,113 +1,116 @@
-import sys
-from pathlib import Path
+"""Independent entry points for the five pipeline roles.
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
+Default invocation is collection only. Neither import nor the collect subcommand
+imports ML libraries, creates tables, changes configured sources, or publishes.
+Run each role in its own OS process (Windows collector, optional WSL ML worker).
+"""
+from __future__ import annotations
 
-from collectors.data_collector import collect_news
-from database.db import create_tables, get_session
-from database.repository import (
-    seed_sources,
-    get_active_sources,
-    save_articles,
-)
+import argparse
+import logging
+import os
 
-from database.models import News
-
-from processing.topic_filter import (
-    filter_articles,
-    print_filter_report,
-)
-
-from processing.clustering import (
-    cluster_recent_news,
-    print_recent_clusters,
-)
-
-from processing.summarizer import summarize_new_clusters
-from processing.tagger import tag_new_clusters
+LOG = logging.getLogger("news_pipeline")
 
 
-def main():
-    print("Создание таблиц...")
-    create_tables()
+def collect(limit: int = 10) -> int:
+    from collectors.data_collector import collect_news
+    from database.db import get_session
+    from database.repository import get_active_sources, save_articles
+    from processing.topic_filter import filter_articles
 
     session = get_session()
-
+    diagnostics = {}
+    saved = 0
     try:
-        print("Подготовка источников...")
-        seed_sources(session)
-
-        print("Получение активных источников...")
         sources = get_active_sources(session)
-
-        news_count = session.query(News).count()
-        is_first_run = news_count == 0
-
-        if is_first_run:
-            limit_per_source = 10
-            clustering_hours = 48
-        else:
-            limit_per_source = 10
-            clustering_hours = 6
-
-        print(f"Новостей в базе: {news_count}")
-        print(f"Режим запуска: {'первичный' if is_first_run else 'регулярный'}")
-        print(f"Лимит на источник: {limit_per_source}")
-        print(f"Окно кластеризации: {clustering_hours} ч.")
-
-        print(f"Активных источников: {len(sources)}")
-
-        print("Сбор новостей...")
-        articles = collect_news(
-            sources=sources,
-            limit_per_source=limit_per_source,
-            session=session
-        )
-
-        print(f"\nСобрано материалов: {len(articles)}")
-
-        print("\nФильтрация служебных и нерелевантных материалов...")
-        filtered_articles = filter_articles(articles)
-
-        print_filter_report(articles, filtered_articles)
-
-        print("\nСохранение новостей в базу данных...")
-        saved_count = save_articles(session, filtered_articles)
-
-        print(f"Сохранено новых новостей: {saved_count}")
-
-        print("\nКластеризация свежих новостей...")
-        cluster_recent_news(
-            session=session,
-            hours=clustering_hours,
-            threshold=0.7
-        )
-
-        print_recent_clusters(
-            session=session,
-            limit=20
-        )
-        print("\nСуммаризация новых кластеров...")
-        summarize_new_clusters(
-            session=session,
-            sentence_count=4,
-            max_chars=800
-        )
-        print("\nТегирование новых кластеров...")
-        tag_new_clusters(
-            session=session,
-            min_score=0.35,
-
-        )
-
-        print("\nГотовые материалы сохранены. Отправка в MAX не производится.")
-        print("Все публикации должны пройти Telegram-модерацию.")
-        print("Очередь модерации будет подключена на следующем этапе.")
-
+        LOG.info("Collecting from %s active sources (database is authoritative)", len(sources))
+        for source in sources:
+            try:
+                # Per-source isolation: one failed website cannot interrupt others.
+                articles = collect_news(
+                    [source], limit_per_source=limit, session=session,
+                    diagnostics=diagnostics, allow_unverified_tls=False,
+                )
+                filtered = filter_articles(articles)
+                saved_now = save_articles(session, filtered)
+                saved += saved_now
+                LOG.info("%s: candidates=%s articles=%s filtered=%s saved=%s status=%s",
+                         source.name, diagnostics[source.name]["candidates"],
+                         len(articles), len(filtered), saved_now,
+                         diagnostics[source.name]["status"])
+            except Exception:
+                session.rollback()
+                LOG.exception("Source %s failed; continuing", source.name)
+        LOG.info("Collection complete: %s new articles; ML not imported; MAX disabled", saved)
+        return saved
     finally:
         session.close()
 
 
+def process(hours: int = 48) -> None:
+    # The only role that imports PyTorch / scikit-learn-dependent modules.
+    from database.db import get_session
+    from processing.clustering import cluster_recent_news
+    from processing.summarizer import summarize_new_clusters
+    from processing.tagger import tag_new_clusters
+
+    session = get_session()
+    try:
+        cluster_recent_news(session=session, hours=hours, threshold=0.7)
+        summarize_new_clusters(session=session, sentence_count=4, max_chars=800)
+        tag_new_clusters(session=session, min_score=0.35)
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def prepare(limit: int = 30) -> int:
+    # Draft snapshots require migration 20261112_01 and do NOT send to MAX.
+    from database.db import get_session
+    from moderation.service import create_pending_items
+
+    session = get_session()
+    try:
+        count = create_pending_items(session, limit=limit)
+        LOG.info("Created %s moderation drafts; nothing published", count)
+        return count
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Independent news pipeline workers")
+    parser.add_argument(
+        "stage", nargs="?", default="collect",
+        choices=("collect", "process", "prepare", "telegram", "max"),
+        help="Each stage is a separate process; collect is the safe default",
+    )
+    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--hours", type=int, default=48)
+    args = parser.parse_args(argv)
+    if args.limit < 1 or args.hours < 1:
+        parser.error("--limit and --hours must be positive")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if args.stage == "collect":
+        collect(args.limit)
+    elif args.stage == "process":
+        process(args.hours)
+    elif args.stage == "prepare":
+        prepare(args.limit)
+    elif args.stage == "telegram":
+        from moderation.bot import main as run_bot
+        run_bot()
+    elif args.stage == "max":
+        # Hard stop for this stabilization stage, even if the local env is misconfigured.
+        raise SystemExit("Stage 1: MAX publication is disabled. No requests sent.")
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
