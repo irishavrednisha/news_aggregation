@@ -210,8 +210,10 @@ class DatabaseIntakeTests(unittest.TestCase):
     def test_store_accept_review_reject_and_exact_copy(self):
         from database.intake_repository import save_intake_batch
         first = article("Завод запустил новый цех", url="https://first.example/a")
-        review = article("Завод обсуждает планы", url="https://first.example/b")
-        rejected = article("Скидки на товары", url="https://first.example/c")
+        review = article("Завод обсуждает планы", url="https://first.example/b",
+                         text=BODY + " Это отдельный материал о консультациях.")
+        rejected = article("Скидки на товары", url="https://first.example/c",
+                           text=BODY + " Иная рекламная акция со скидками.")
         copy = article("Завод запустил новый цех", source="ФлотПром",
                        url="https://second.example/a")
         with patch.dict(os.environ, {"NEWS_IMAGES_ENABLED": "false"}):
