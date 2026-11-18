@@ -126,6 +126,26 @@ class Stage3DatabaseTests(unittest.TestCase):
         self.session.commit()
         return instance
 
+    def test_legacy_fulltext_embedding_cannot_block_true_event(self):
+        from database.models import Cluster, News
+        from processing.clustering import cluster_recent_news
+        older = self.add("ЧМЗ выпустил партию автокранов 25 тонн",
+                         "Текст компании " * 80, "https://test.example/legacy")
+        # Before stage 3 this was encoded from a DIFFERENT representation.
+        group = Cluster(title=older.title, status="new", cluster_size=1,
+                        embedding=[0.0, 1.0])
+        self.session.add(group)
+        self.session.flush()
+        older.cluster_id = group.id
+        older.embedding = [0.0, 1.0]
+        self.session.commit()
+        incoming = self.add("Челябинский механический завод изготовил партию автокранов 25 тонн",
+                            "Краткое описание события", "https://test.example/fresh")
+        with patch("processing.clustering.build_embedding", return_value=[1.0, 0.0]):
+            cluster_recent_news(self.session)
+        self.assertEqual(incoming.cluster_id, older.cluster_id)
+        self.assertEqual(self.session.get(Cluster, group.id).cluster_size, 2)
+
     def test_atomic_merge_primary_freeze_and_rerun(self):
         from database.models import News, Cluster, Post
         from processing.clustering import cluster_recent_news
