@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 import os
 
 from sqlalchemy import inspect
@@ -52,6 +52,24 @@ def _snapshot_hash(article):
         timestamp,
         str(getattr(article, "text_source", "") or ""),
     )))
+
+
+def _database_datetime(value):
+    """Keep PostgreSQL's timestamp-without-timezone and SQLite both safe."""
+    if isinstance(value, datetime):
+        moment = value
+    elif isinstance(value, date):
+        moment = datetime.combine(value, time.min)
+    elif isinstance(value, str):
+        try:
+            moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if moment.tzinfo:
+        moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
+    return moment
 
 
 def _store_image_after_commit(session, article, news):
@@ -130,7 +148,7 @@ def save_intake_batch(session, articles, *, now=None, max_age_days=30) -> Intake
             elif decision.status == "accepted":
                 news = News(
                     source_id=source.id, title=article.title, text=article.text,
-                    url=article.url, published_at=article.published_at,
+                    url=article.url, published_at=_database_datetime(getattr(article, "published_at", None)),
                     cluster_id=None, is_primary=False,
                 )
                 session.add(news)
@@ -142,7 +160,7 @@ def save_intake_batch(session, articles, *, now=None, max_age_days=30) -> Intake
                 duplicate_of_news_id=match.news_id if match else None,
                 raw_url=raw_url, raw_title=str(getattr(article, "title", "") or ""),
                 raw_text=str(getattr(article, "text", "") or ""),
-                raw_published_at=getattr(article, "published_at", None),
+                raw_published_at=_database_datetime(getattr(article, "published_at", None)),
                 text_source=getattr(article, "text_source", None),
                 canonical_url=canonical, url_sha256=url_sha,
                 payload_sha256=payload_sha,
