@@ -16,9 +16,11 @@ from processing.abstractive_validator import (
     check_semantic_verdict, normalize, sentences, validate_summary,
 )
 from processing.extractive_rewriter import ollama_rewrite
+from processing.stage4_evidence import extract_grounded_facts
 
 ALLOWED_MODELS = frozenset({"gemma3:4b", "gemma3:1b", "gemma2:2b"})
 DEFAULT_MODEL = "gemma3:4b"
+PIPELINE_VERSION = "stage4-literal-evidence-v2"
 PARAMETERS = {"temperature": 0, "num_ctx": 4096, "num_predict": 1024}
 KINDS = frozenset({"organization", "event", "object", "location", "date", "number", "outcome"})
 FACT_FORMAT = {
@@ -185,6 +187,9 @@ class SummaryOutcome:
     validation: dict
     attempts: list[dict]
     created_utc: str
+    pipeline_version: str
+    working_source_materials: list[dict]
+    source_cleanup_notes: list[dict]
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -194,32 +199,39 @@ def summarize_event_cluster(
     cluster_id: int | str, materials: list[dict], textrank_summary: str,
     *, model: str = DEFAULT_MODEL, request: Callable | None = None,
     max_retries: int = 2,
+    working_materials: list[dict] | None = None,
+    cleanup_notes: list[dict] | None = None,
 ) -> SummaryOutcome:
     """Return an auditable draft or summary_review; never approve publication."""
     _model_check(model)
     if not 0 <= max_retries <= 2:
         raise ValueError("max_retries must be 0..2")
     materials = canonical_materials(materials)
+    # Never overwrite the original article snapshot with a cleaned working view.
+    working = canonical_materials(working_materials if working_materials is not None else materials)
     digest = source_digest(materials)
     created = datetime.now(timezone.utc).isoformat()
     outcome = SummaryOutcome(
         cluster_id=cluster_id, source_materials=materials, source_sha256=digest,
         facts=[], textrank_summary=textrank_summary or "", gemma_summary="",
         status="summary_review", model=model, model_parameters=dict(PARAMETERS),
-        validation={"passed": False, "issues": []}, attempts=[], created_utc=created)
-    if (not materials or not any(len((m["text"] or "").strip()) >= 120
-                                 for m in materials)):
+        validation={"passed": False, "issues": []}, attempts=[], created_utc=created,
+        pipeline_version=PIPELINE_VERSION, working_source_materials=working,
+        source_cleanup_notes=list(cleanup_notes or []))
+    if (not working or not any(len((m["text"] or "").strip()) >= 120
+                                 for m in working)):
         outcome.validation["issues"] = ["insufficient_source_material"]
         return outcome
     call = request if request is not None else ollama_rewrite
-    try:
-        raw = call(_messages_for_facts(materials), FACT_FORMAT, model=model)
-        facts, fact_issues = _validate_facts(raw, materials)
-    except Exception as exc:
-        facts, fact_issues = [], ["fact_extraction_error:" + type(exc).__name__ + ":" + str(exc)[:160]]
+    # No Gemma-authored evidence quotes: select exact original text fragments.
+    facts, fact_issues = extract_grounded_facts(working)
+    # Still apply the earlier strict span and source-ID verifier as a defense.
+    if not fact_issues:
+        facts, fact_issues = _validate_facts({"facts": facts}, working)
     outcome.facts = facts
     if fact_issues:
         outcome.validation["issues"] = fact_issues
+        outcome.validation["source_cleanup_notes"] = outcome.source_cleanup_notes
         return outcome
 
     prior_issues: list[str] = []
@@ -228,7 +240,7 @@ def summarize_event_cluster(
                        "semantic_verdict": None}
         outcome.attempts.append(entry)
         try:
-            result = call(_messages_for_summary(facts, materials, prior_issues),
+            result = call(_messages_for_summary(facts, working, prior_issues),
                           SUMMARY_FORMAT, model=model)
             if not isinstance(result, dict) or not isinstance(result.get("summary"), str):
                 raise ValueError("summary_bad_json_schema")
@@ -239,8 +251,10 @@ def summarize_event_cluster(
             prior_issues = entry["validation"]["issues"]
             continue
         entry["summary"] = candidate
-        check = validate_summary(candidate, materials)
+        check = validate_summary(candidate, working)
         entry["validation"] = check.to_dict()
+        if outcome.source_cleanup_notes:
+            entry["validation"]["source_cleanup_notes"] = outcome.source_cleanup_notes
         issues = list(check.issues)
         if not candidate:
             issues.append("empty_generation")
@@ -248,10 +262,10 @@ def summarize_event_cluster(
             issues.append("mostly_extractive")
         if not issues:
             try:
-                verdict = call(_messages_for_verdict(candidate, materials),
+                verdict = call(_messages_for_verdict(candidate, working),
                                VERDICT_FORMAT, model=model)
                 entry["semantic_verdict"] = verdict
-                issues += check_semantic_verdict(verdict, candidate, materials)
+                issues += check_semantic_verdict(verdict, candidate, working)
             except Exception as exc:
                 issues.append("semantic_verifier_error:" + type(exc).__name__ + ":" + str(exc)[:160])
         if issues:
