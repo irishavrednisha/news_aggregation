@@ -290,7 +290,7 @@ def _corroborated_same_event(a: object, b: object, score: float) -> str | None:
     def regulatory_facts(t: str) -> bool:
         return (bool(re.search(r"россып\w*", t)) and
                 bool(re.search(r"золот\w*", t)) and
-                bool(re.search(r"категори\w*\s+риска", t)) and
+                bool(re.search(r"категори\w*(?:\s+(?:высок\w*|чрезвычайн\w*))?\s+риска", t)) and
                 "обсужд" in t and "постановлен" in t)
     first_deadline, second_deadline = _consultation_day(left), _consultation_day(right)
     if (first_deadline and first_deadline == second_deadline and
