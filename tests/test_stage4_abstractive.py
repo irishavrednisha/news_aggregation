@@ -74,7 +74,7 @@ class ValidatorTests(unittest.TestCase):
         self.assertIn("number_unit_mismatch:40", issues)
 
     def test_invented_technical_object(self):
-        candidate = DRAFT.replace("линия металлообработки", "ядерный реактор")
+        candidate = DRAFT.replace("линию металлообработки", "ядерный реактор")
         issues = validate_summary(candidate, MATERIAL).issues
         self.assertTrue(any(x.startswith("unsupported_technical_object:реактор") for x in issues))
 
