@@ -70,9 +70,9 @@ def source_integrity_issues(materials: list[dict]) -> list[str]:
             if value <= 0:
                 continue
             ratio = max(value, title_value) / min(value, title_value)
-            # 10x threshold avoids near-equal rounding or kg/tonne revisions.
+            # 100x threshold avoids unrelated figures and near-equal rounding.
             # A title about 7.3 thousand tonnes and body about 7288.4
             # thousand tonnes is an unambiguous source consistency risk.
-            if ratio > 10 and (value > 0.1 * title_value):
+            if ratio > 100:
                 return ["source_internal_tonnage_magnitude_conflict"]
     return []
