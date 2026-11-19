@@ -157,6 +157,20 @@ def _model_check(model: str):
         raise ValueError("Only local 1B/2B/4B Gemma tags are allowed; no cloud/large model")
 
 
+def canonical_materials(materials: list[dict]) -> list[dict]:
+    """Stable source snapshots shared with the resumable CLI."""
+    return [{"id": str(m.get("id")), "url": str(m.get("url") or ""),
+             "source": str(m.get("source") or ""), "title": str(m.get("title") or ""),
+             "text": str(m.get("text") or ""),
+             "published_at": str(m.get("published_at") or ""),
+             "is_primary": bool(m.get("is_primary"))} for m in materials]
+
+
+def source_digest(materials: list[dict]) -> str:
+    data = json.dumps(canonical_materials(materials), ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
 @dataclass
 class SummaryOutcome:
     cluster_id: int | str
@@ -185,13 +199,8 @@ def summarize_event_cluster(
     _model_check(model)
     if not 0 <= max_retries <= 2:
         raise ValueError("max_retries must be 0..2")
-    materials = [{"id": str(m.get("id")), "url": str(m.get("url") or ""), "source": str(m.get("source") or ""),
-                  "title": str(m.get("title") or ""), "text": str(m.get("text") or ""),
-                  "published_at": str(m.get("published_at") or ""),
-                  "is_primary": bool(m.get("is_primary"))}
-                 for m in materials]
-    digest = hashlib.sha256(json.dumps(materials, ensure_ascii=False,
-                                      sort_keys=True).encode("utf-8")).hexdigest()
+    materials = canonical_materials(materials)
+    digest = source_digest(materials)
     created = datetime.now(timezone.utc).isoformat()
     outcome = SummaryOutcome(
         cluster_id=cluster_id, source_materials=materials, source_sha256=digest,
@@ -207,7 +216,7 @@ def summarize_event_cluster(
         raw = call(_messages_for_facts(materials), FACT_FORMAT, model=model)
         facts, fact_issues = _validate_facts(raw, materials)
     except Exception as exc:
-        facts, fact_issues = [], ["fact_extraction_error:" + type(exc).__name__]
+        facts, fact_issues = [], ["fact_extraction_error:" + type(exc).__name__ + ":" + str(exc)[:160]]
     outcome.facts = facts
     if fact_issues:
         outcome.validation["issues"] = fact_issues
@@ -226,7 +235,7 @@ def summarize_event_cluster(
             candidate = result["summary"].strip()
         except Exception as exc:
             entry["validation"] = {"passed": False, "issues": [
-                "generation_error:" + type(exc).__name__]}
+                "generation_error:" + type(exc).__name__ + ":" + str(exc)[:160]]}
             prior_issues = entry["validation"]["issues"]
             continue
         entry["summary"] = candidate
@@ -244,7 +253,7 @@ def summarize_event_cluster(
                 entry["semantic_verdict"] = verdict
                 issues += check_semantic_verdict(verdict, candidate, materials)
             except Exception as exc:
-                issues.append("semantic_verifier_error:" + type(exc).__name__)
+                issues.append("semantic_verifier_error:" + type(exc).__name__ + ":" + str(exc)[:160])
         if issues:
             entry["validation"]["issues"] = list(dict.fromkeys(issues))
         entry["validation"]["passed"] = not issues
