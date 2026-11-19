@@ -181,8 +181,8 @@ def validate_summary(summary: str, materials: list[dict],
                 issues.append("unsupported_proper_name:" + name)
     for month in MONTHS:
         if month in {"мая", "мае", "май"}:
-            if (re.search(r"\\b(?:мая|мае|май)\\b", normalize(summary))
-                    and not re.search(r"\\b(?:мая|мае|май)\\b", norm_source)):
+            if (re.search(r"\b(?:мая|мае|май)\b", normalize(summary))
+                    and not re.search(r"\b(?:мая|мае|май)\b", norm_source)):
                 issues.append("unsupported_month:май")
             continue
         if month in normalize(summary) and month not in norm_source:
@@ -191,12 +191,12 @@ def validate_summary(summary: str, materials: list[dict],
     # They catch completed-vs-ongoing claims missed by the same LLM verifier.
     main_title = normalize(str(materials[0].get("title") or "")) if materials else ""
     first_sentence = normalize(parts[0]) if parts else ""
-    if (re.search(r"\\bзаверша(?:ется|ются|ют|ет)\\b", main_title)
-            and re.search(r"\\b(?:завершил\\w*|закончил\\w*|окончил\\w*)\\b",
+    if (re.search(r"\bзаверша(?:ется|ются|ют|ет)\b", main_title)
+            and re.search(r"\b(?:завершил\w*|закончил\w*|окончил\w*)\b",
                           first_sentence)):
         issues.append("main_event_ongoing_changed_to_completed")
-    if (re.search(r"\\b(?:прогнозиру\\w*|ожида\\w*|планиру\\w*)\\b", main_title)
-            and re.search(r"\\b(?:зафиксировал\\w*|достиг\\w*|составил\\w*|получил\\w*)\\b",
+    if (re.search(r"\b(?:прогнозиру\w*|ожида\w*|планиру\w*)\b", main_title)
+            and re.search(r"\b(?:зафиксировал\w*|достиг\w*|составил\w*|получил\w*)\b",
                           first_sentence)):
         issues.append("forecast_changed_to_observed_result")
     # These are coarse global guards. A claim-by-claim verification follows.
