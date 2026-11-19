@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import unittest
 from processing.abstractive_summary import (
-    FACT_FORMAT, SUMMARY_FORMAT, VERDICT_FORMAT, summarize_event_cluster,
+    FACT_FORMAT, SUMMARY_FORMAT, VERDICT_FORMAT, source_digest,
+    summarize_event_cluster,
 )
 from processing.abstractive_validator import validate_summary
 from scripts.run_stage4_summaries import assemble, metrics, representative
@@ -146,6 +147,12 @@ class PipelineTests(unittest.TestCase):
         result = summarize_event_cluster(1, MATERIAL, "", request=request)
         self.assertEqual(result.status, "summary_review")
         self.assertIn("fact_1_unverifiable_source_quote", result.validation["issues"])
+
+    def test_fingerprint_stable_and_invalidated_when_source_changes(self):
+        before = source_digest(MATERIAL)
+        self.assertEqual(before, source_digest([dict(MATERIAL[0])]))
+        changed = [dict(MATERIAL[0], text=SOURCE + " Новая информация.")]
+        self.assertNotEqual(before, source_digest(changed))
 
     def test_refuse_cloud_and_oversized_model(self):
         for model in ("gemma3:cloud", "gemma3:12b", "qwen3.5:4b"):
