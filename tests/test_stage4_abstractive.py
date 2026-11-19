@@ -12,6 +12,8 @@ from processing.abstractive_summary import (
     summarize_event_cluster,
 )
 from processing.abstractive_validator import validate_summary
+from processing.stage4_quality import source_integrity_issues, quality_issues
+from processing.stage4_verification import evidence_bank, check_indexed_verdict
 from processing.stage4_evidence import shared_boilerplate, clean_working_materials, extract_grounded_facts
 from scripts.run_stage4_summaries import assemble, metrics, representative, run
 
@@ -92,6 +94,87 @@ class ValidatorTests(unittest.TestCase):
         candidate = DRAFT.replace("линию металлообработки", "ядерный реактор")
         issues = validate_summary(candidate, MATERIAL).issues
         self.assertTrue(any(x.startswith("unsupported_technical_object:реактор") for x in issues))
+
+    def test_tonnage_inconsistent_between_headline_and_lead(self):
+        # Real regression class: 7.3k tonnes vs 7,288.4k tonnes.
+        record = [{"id": 83, "title": "Выпустили 7,3 тысячи тонн цветного металла",
+                   "text": ("В регионе выпустили 7,3 тысячи тонн цветного металла. "
+                            "Суммарный объём выпуска составил 7 288,4 тыс. тонн. "
+                            "Компания продолжает добычу свинца и цинка." * 4)}]
+        self.assertIn("source_internal_tonnage_magnitude_conflict",
+                      source_integrity_issues(record))
+        r = summarize_event_cluster(83, record, "", request=lambda *a, **kw:
+                                    self.fail("Gemma must NOT process inconsistent source"))
+        self.assertEqual(r.status, "summary_review")
+        self.assertFalse(r.attempts)
+        self.assertIn("source_internal_tonnage_magnitude_conflict",
+                      r.validation["issues"])
+
+    def test_small_tonnage_rounding_is_not_inconsistent(self):
+        materials = [{"title": "Выпустили 7,3 тысячи тонн металла",
+                      "text": "В январе-сентябре предприятия произвели 7 288,4 тонны металла."}]
+        self.assertFalse(source_integrity_issues(materials))
+
+    def test_editorial_grammar_errors_block_draft(self):
+        samples = [
+            "После спуска на воду судно будет достроен, оснащен и подготовлен.",
+            "ЛУКОЙЛ заключил XII Соглашение на годы.",
+            "Награждение отмело значимость предприятия.",
+            "Компания стала основной активом холдинга.",
+            'Литера "О"."Трансмашхолдинг" сообщил об этом.',
+        ]
+        for sample in samples:
+            with self.subTest(sample=sample):
+                self.assertTrue(quality_issues(sample), sample)
+
+    def test_equivalent_percentage_and_currency_unit(self):
+        material = [{"title": "Предприятие сообщило о результатах",
+                     "text": ("Урожай увеличится на 15 процентов. "
+                              "Средняя зарплата составила 125 000 ₽. " * 3)}]
+        candidate = ("Рост урожая составит 15%. "
+                     "Средняя зарплата достигла 125 000 рублей. "
+                     "Компания сообщила о выплатах персоналу.")
+        issues = validate_summary(candidate, material).issues
+        self.assertNotIn("number_unit_mismatch:15", issues)
+        self.assertNotIn("number_unit_mismatch:125000", issues)
+
+    def test_cost_reduction_not_mistaken_for_decline_in_production(self):
+        material = [{"title": "Компания расширяет производство",
+                     "text": ("Холдинг расширяет производство оборудования. "
+                              "Проект позволит снизить себестоимость изделий. " * 3)}]
+        candidate = ("Холдинг наращивает выпуск оборудования. "
+                     "Модернизация направлена на снижение себестоимости изделий. "
+                     "Компания обновляет производственные линии.")
+        self.assertNotIn("growth_changed_to_decline",
+                         validate_summary(candidate, material).issues)
+
+    def test_numeric_evidence_late_in_source_is_prioritized(self):
+        delayed = ("Предприятие представило новое оборудование и объявило о "
+                   "модернизации промышленного объекта. " * 32)
+        source = [{"id": "90", "title": "Завод модернизировал оборудование",
+                   "text": delayed + "Производительность выросла на 23 процента."}]
+        bank = evidence_bank(source, [], "Производительность выросла на 23 процента.")
+        self.assertTrue(any("23 процента" in x["text"] for x in bank))
+
+    def test_extra_model_sentence_ids_cannot_skip_real_claims(self):
+        summary = ("Компания запустила цех. "
+                   "На предприятии установлен новый станок. "
+                   "Сотрудники завершили испытания оборудования.")
+        bank = [
+            {"id": 1, "source_id": "1", "text": "Компания запустила цех."},
+            {"id": 2, "source_id": "1",
+             "text": "На предприятии установлен новый станок."},
+            {"id": 3, "source_id": "1",
+             "text": "Сотрудники завершили испытания оборудования."},
+        ]
+        valid = [{"sentence_id": i, "verdict": "supported", "evidence_ids": [i]}
+                 for i in range(1, 4)]
+        self.assertFalse(check_indexed_verdict(
+            {"claims": valid + [{"sentence_id": 9, "verdict": "uncertain",
+                                  "evidence_ids": []}]}, summary, bank))
+        self.assertTrue(check_indexed_verdict(
+            {"claims": valid[:2] + [{"sentence_id": 9, "verdict": "supported",
+                                     "evidence_ids": [1]}]}, summary, bank))
 
     def test_inflected_company_name_is_not_a_new_organization(self):
         original = [{"title": "«Гиредмет» разработал технологию",
