@@ -22,7 +22,7 @@ from processing.stage4_quality import quality_issues, source_integrity_issues
 
 ALLOWED_MODELS = frozenset({"gemma3:4b", "gemma3:1b", "gemma2:2b"})
 DEFAULT_MODEL = "gemma3:4b"
-PIPELINE_VERSION = "stage4-verified-quality-v4"
+PIPELINE_VERSION = "stage4-source-date-roles-v5"
 PARAMETERS = {"temperature": 0, "num_ctx": 4096, "num_predict": 1024}
 KINDS = frozenset({"organization", "event", "object", "location", "date", "number", "outcome"})
 FACT_FORMAT = {
