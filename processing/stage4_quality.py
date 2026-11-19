@@ -25,7 +25,7 @@ GARBLED_LANGUAGE = (
         r'\."(?=[А-ЯЁA-Z])')),
     ("dangling_passive_gerund", re.compile(
         r"\b(?:цех|оборудование|завод|производство)\b.{0,90}"
-        r"\b(?:был|была|было)\s+\w+\s*,\s*вложив\b", re.I | re.S)),
+        r"\b(?:был|была|было)\s+(?:\w+\s+){0,3}\w+\s*,\s*вложив\b", re.I | re.S)),
     ("misspelled_metro", re.compile(r"\bметрополитнов\b", re.I)),
     ("tax_debt_attributed_to_private_company", re.compile(
         r"\b(?:задолженн\w*|долг\w*)\s+по\s+налогам\s+перед\s+"
