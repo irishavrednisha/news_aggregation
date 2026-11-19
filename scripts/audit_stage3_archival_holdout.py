@@ -14,6 +14,11 @@ import json
 import math
 from pathlib import Path
 import re
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from processing.event_matching import MODEL_NAME, cosine, embedding_text, same_event
 
