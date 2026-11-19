@@ -6,7 +6,7 @@ News.text, Cluster.summary_text, moderator decisions, or the MAX queue.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import hashlib
 import json
 import re
@@ -217,6 +217,7 @@ def summarize_event_cluster(
     max_retries: int = 2,
     working_materials: list[dict] | None = None,
     cleanup_notes: list[dict] | None = None,
+    as_of_date: date | None = None,
 ) -> SummaryOutcome:
     """Return an auditable draft or summary_review; never approve publication."""
     _model_check(model)
@@ -249,7 +250,7 @@ def summarize_event_cluster(
         outcome.validation["issues"] = fact_issues
         outcome.validation["source_cleanup_notes"] = outcome.source_cleanup_notes
         return outcome
-    source_issues = source_integrity_issues(working)
+    source_issues = source_integrity_issues(working, as_of=as_of_date)
     if source_issues:
         outcome.validation["issues"] = source_issues
         outcome.validation["source_cleanup_notes"] = outcome.source_cleanup_notes
