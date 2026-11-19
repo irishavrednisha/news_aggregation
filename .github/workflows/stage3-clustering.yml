@@ -39,6 +39,8 @@ jobs:
         run: python -m unittest discover -s tests -p "test_stage3_gold_validation.py" -v
       - name: Real missed-merge and strict false-positive guards
         run: python -m unittest discover -s tests -p "test_stage3_evidence_recall.py" -v
+      - name: Verify archived false negatives and same-company hard negatives
+        run: python -m unittest discover -s tests -p "test_stage3_holdout_regression.py" -v
       - name: Validate archival holdout labels and read-only replay
         run: python -m unittest discover -s tests -p "test_stage3_archival_holdout.py" -v
       - name: Verify CLI and no DB connection
