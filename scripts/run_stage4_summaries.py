@@ -62,6 +62,10 @@ def metrics(rows: list[dict], min_clusters: int) -> dict:
             any(str(x).startswith("source_internal_")
                 for x in row.get("validation", {}).get("issues", []))
             for row in rows),
+        "source_stale_announcement_review": sum(
+            "source_stale_upcoming_event_date" in
+            row.get("validation", {}).get("issues", [])
+            for row in rows),
         "language_quality_review": sum(
             any(str(x).startswith("language_")
                 for x in row.get("validation", {}).get("issues", []))
