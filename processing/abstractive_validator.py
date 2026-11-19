@@ -24,8 +24,8 @@ UNITS = ("млн", "млрд", "тыс", "руб", "тонн", "кг", "км", "
 FUTURE_RE = re.compile(r"\b(?:планиру\w*|намерен\w*|предстоит|планах|планируется|собирается)\b", re.I)
 DONE_RE = re.compile(r"\b(?:запустил\w*|начал\w* работу|вв[её]л\w*|построил\w*|выпустил\w*|завершил\w*|открыл\w*|создал\w*)\b", re.I)
 NEGATION_RE = re.compile(r"\b(?:не|нет|без|отменил\w*|отказал\w*)\b", re.I)
-RISE_RE = re.compile(r"\b(?:выросл\w*|увеличил\w*|повысил\w*|рост|увеличени\w*)\b", re.I)
-FALL_RE = re.compile(r"\b(?:сократил\w*|снизил\w*|уменьшил\w*|падени\w*|снижени\w*)\b", re.I)
+RISE_RE = re.compile(r"\b(?:вырос\w*|увелич\w*|повыс\w*|рост|увеличени\w*)\b", re.I)
+FALL_RE = re.compile(r"\b(?:сократ\w*|сокращ\w*|сниз\w*|уменьш\w*|падени\w*|снижени\w*)\b", re.I)
 CAUSE_RE = re.compile(r"\b(?:из-за|благодаря|поскольку|вследствие|по причине)\b", re.I)
 COMMON_STARTS = {"Компания", "Предприятие", "Завод", "Производство", "Организация",
                  "В", "На", "Для", "По", "Также", "Кроме", "Это", "При", "Согласно"}
@@ -87,9 +87,13 @@ def _unit_after(source: str, match: re.Match) -> str:
     tail = source[match.end():match.end()+38].lower().lstrip(" .,;:()-\n")
     if source[match.start():match.end()].strip().endswith("%"):
         return "%"
+    if tail.startswith(("₽", "р.")):
+        return "руб"
     for token in re.findall(r"[а-яёa-z%]+", tail, re.I)[:3]:
         for unit in UNITS:
             if token.startswith(unit):
+                if unit == "процент":
+                    return "%"
                 return unit
         if token in {"около", "более", "почти", "свыше", "до", "от", "и", "на", "в"}:
             continue
