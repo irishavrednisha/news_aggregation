@@ -25,9 +25,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from processing.abstractive_summary import (
-    ALLOWED_MODELS, DEFAULT_MODEL, source_digest, summarize_event_cluster,
+    ALLOWED_MODELS, DEFAULT_MODEL, PIPELINE_VERSION, source_digest, summarize_event_cluster,
 )
 from processing.abstractive_validator import normalize
+from processing.stage4_evidence import shared_boilerplate, clean_working_materials
 
 DEFAULT_OUTPUT = ROOT / "collector_test_results" / "stage4_abstractive_100.json"
 
@@ -36,6 +37,8 @@ def metrics(rows: list[dict], min_clusters: int) -> dict:
     statuses = Counter(row["status"] for row in rows)
     attempted = [row for row in rows if row.get("attempts")]
     valid = [row for row in rows if row["status"] == "summary_draft"]
+    cleaned = sum(bool(row.get("source_cleanup_notes")) for row in rows)
+    no_event = sum("no_supported_news_event" in row.get("validation", {}).get("issues", []) for row in rows)
     failing = Counter(issue for row in rows
                       for issue in row.get("validation", {}).get("issues", []))
     copied = [row.get("validation", {}).get("copied_sentence_ratio", 0)
@@ -53,6 +56,8 @@ def metrics(rows: list[dict], min_clusters: int) -> dict:
         "minimum_sample_met": len(rows) >= min_clusters,
         "summary_drafts": statuses["summary_draft"],
         "summary_review": statuses["summary_review"],
+        "source_cleanup_clusters": cleaned,
+        "no_supported_news_event": no_event,
         "model_generation_attempted": len(attempted),
         "validator_passed_with_llm_advisory": len(valid),
         "validator_pass_rate_of_all": round(len(valid)/max(1, len(rows)), 4),
@@ -101,7 +106,7 @@ def assemble(rows: list[dict], *, min_clusters: int, model: str,
              started_utc: str, persisted: bool) -> dict:
     return {
         "stage": 4, "created_utc": started_utc,
-        "model": model,
+        "model": model, "pipeline_version": PIPELINE_VERSION,
         "local_only": True, "training_started": False,
         "changed_legacy_news_or_posts": False,
         "persist_audit_to_db": persisted,
@@ -178,7 +183,8 @@ def run(*, limit: int, min_clusters: int, model: str, max_retries: int,
         if not output.is_file():
             raise FileNotFoundError("Cannot resume: no existing JSON report")
         report = json.loads(output.read_text(encoding="utf-8"))
-        if report.get("stage") != 4 or report.get("model") != model:
+        if (report.get("stage") != 4 or report.get("model") != model
+                or report.get("pipeline_version") != PIPELINE_VERSION):
             raise ValueError("Cannot resume: model/stage mismatch")
         if persist and not report.get("persist_audit_to_db"):
             raise ValueError("Cannot resume with --persist from a read-only report")
@@ -192,18 +198,23 @@ def run(*, limit: int, min_clusters: int, model: str, max_retries: int,
         if cluster_ids:
             query = query.filter(Cluster.id.in_(cluster_ids))
         ids = [x[0] for x in query.limit(limit).all()]
+        source_sets = {cluster_id: _materials(session, cluster_id) for cluster_id in ids}
+        shared = shared_boilerplate(list(source_sets.values()))
         for idx, cluster_id in enumerate(ids, 1):
-            materials = _materials(session, cluster_id)
+            materials = source_sets[cluster_id]
             cached = previous.get(str(cluster_id))
             if (cached and cached.get("source_sha256") == source_digest(materials)
-                    and cached.get("model") == model):
+                    and cached.get("model") == model
+                    and cached.get("pipeline_version") == PIPELINE_VERSION):
                 rows.append(cached)
                 print(f"[{idx}/{len(ids)}] #{cluster_id} resumed, source unchanged", flush=True)
                 continue
-            baseline, textrank_flags = _textrank(materials)
+            working, cleanup_notes = clean_working_materials(materials, shared)
+            baseline, textrank_flags = _textrank(working)
             outcome = summarize_event_cluster(
                 cluster_id, materials, baseline, model=model,
-                max_retries=max_retries,
+                max_retries=max_retries, working_materials=working,
+                cleanup_notes=cleanup_notes,
             ).to_dict()
             if textrank_flags:
                 outcome["validation"].setdefault("flags", []).extend(textrank_flags)
