@@ -6,6 +6,7 @@ grammatical or semantic proof and must not approve publication on their own.
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, timezone
 
 TONNAGE_RE = re.compile(
     r"(?<!\w)(\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?)\s*"
@@ -22,6 +23,13 @@ GARBLED_LANGUAGE = (
         r"\bотмел\w*\s+значимост\w*\b", re.I)),
     ("missing_sentence_separator", re.compile(
         r'\."(?=[А-ЯЁA-Z])')),
+    ("dangling_passive_gerund", re.compile(
+        r"\b(?:цех|оборудование|завод|производство)\b.{0,90}"
+        r"\b(?:был|была|было)\s+\w+\s*,\s*вложив\b", re.I | re.S)),
+    ("misspelled_metro", re.compile(r"\bметрополитнов\b", re.I)),
+    ("tax_debt_attributed_to_private_company", re.compile(
+        r"\b(?:задолженн\w*|долг\w*)\s+по\s+налогам\s+перед\s+"
+        r"(?:компани\w*|ООО|АО|ПАО|«)", re.I)),
 )
 
 
@@ -47,13 +55,61 @@ def _tons(text: str, max_chars: int | None = None) -> list[tuple[float, str]]:
     return result
 
 
-def source_integrity_issues(materials: list[dict]) -> list[str]:
+
+MONTH_NUMBERS = {
+    "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
+    "мая": 5, "июня": 6, "июля": 7, "августа": 8,
+    "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+}
+EVENT_DATE_RE = re.compile(
+    r"\b(?:(?:\d{1,2})\s*(?:[-–—]|по)\s*)?"
+    r"(\d{1,2})\s+(" + "|".join(MONTH_NUMBERS)
+    + r")(?:\s+(20\d{2})(?:\s*г(?:ода|\.)?)?)?\b", re.I)
+UPCOMING_RE = re.compile(
+    r"\b(?:пройд\w*|состоится|состоятся|представят|будут\s+представлен\w*|"
+    r"приглашаем|осталось\s+(?:всего\s+)?\d+\s+месяц\w*)\b", re.I)
+PAST_EVENT_RE = re.compile(r"\b(?:прошл[аои]|состоял\w*|завершил\w*)\b", re.I)
+
+
+def stale_upcoming_event_issues(materials: list[dict],
+                                *, as_of: date | None = None) -> list[str]:
+    """Identify obsolete event invitations, not historical news reports."""
+    as_of = as_of or datetime.now(timezone.utc).date()
+    for material in materials[:3]:
+        lead = str(material.get("title") or "") + ". " + str(material.get("text") or "")[:1200]
+        for match in EVENT_DATE_RE.finditer(lead[:850]):
+            before = lead[max(0, match.start() - 280):match.start()]
+            context = before + lead[match.start():match.end() + 95]
+            if not UPCOMING_RE.search(context):
+                continue
+            year = match.group(3)
+            if not year:
+                # E.g. "в 2026 году пройдет ... 28 – 29 апреля".
+                previous = re.search(r"\b(20\d{2})\s+году\b", before, re.I)
+                if not previous:
+                    continue
+                year = previous.group(1)
+            try:
+                event_day = date(int(year), MONTH_NUMBERS[match.group(2).lower()],
+                                 int(match.group(1)))
+            except ValueError:
+                continue
+            if event_day < as_of:
+                return ["source_stale_upcoming_event_date"]
+    return []
+
+
+def source_integrity_issues(materials: list[dict],
+                            *, as_of: date | None = None) -> list[str]:
     """Flag extreme magnitude contradictions between article headline and lead.
 
     A strong discrepancy is review-only because headline and body could refer
     to different projects. Do not repair or silently pick one number.
     Only compare TONNAGES, not dates, generic percentages or unrelated units.
     """
+    stale = stale_upcoming_event_issues(materials, as_of=as_of)
+    if stale:
+        return stale
     for material in materials[:3]:
         title = str(material.get("title") or "")
         body = str(material.get("text") or "")
