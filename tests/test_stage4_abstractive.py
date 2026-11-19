@@ -201,6 +201,37 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(facts, [])
         self.assertIn("no_supported_news_event", errors)
 
+    def test_ownership_event_and_inflected_collaboration_count_as_news(self):
+        headings = [
+            "Спиртзавод «Амбер» перешел в собственность инвестора",
+            "«Норникель» и партнёр усиливают научное сотрудничество",
+            "В ТПП прошла дискуссия «Налоги как инструмент управления капиталом»",
+        ]
+        for n, title in enumerate(headings):
+            with self.subTest(title=title):
+                source = [{"id": n, "title": title,
+                           "text": ("Завод и партнёры сообщили о работе на "
+                                    "промышленном предприятии региона. " * 7)}]
+                facts, errors = extract_grounded_facts(source)
+                self.assertNotIn("no_supported_news_event", errors)
+                self.assertTrue(any(x["kind"] == "event" for x in facts), errors)
+
+    def test_literal_year_quote_contains_full_year(self):
+        title = "Правительство предлагает усилить промышленный контроль"
+        # A date located across the old 260-character slice boundary.
+        long_sentence = ("Согласно материалам ведомства новый законопроект "
+                         + "включает несколько предложений об оборудовании " * 7
+                         + "и по итогам 2026 года предусматривает проверки.")
+        materials = [{"id": 46, "title": title,
+                      "text": long_sentence + " " +
+                      "Документ касается новых требований к заводам и промышленности. " * 4}]
+        facts, errors = extract_grounded_facts(materials)
+        for fact in facts:
+            if fact["kind"] == "date":
+                self.assertIn("2026", fact["quote"])
+                self.assertIn("2026", fact["value"])
+        self.assertNotIn("fact_7_unverifiable_source_quote", errors)
+
     def test_cleaned_working_sources_leave_originals_unchanged(self):
         raw = dict(MATERIAL[0], text=SOURCE + " Услуга чужого сайта.")
         shared = {"" : {"услуга чужого сайта."}}
