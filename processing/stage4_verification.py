@@ -9,6 +9,10 @@ import re
 from processing.abstractive_validator import normalize, sentences, NUMBER_RE
 
 TOKEN = re.compile(r"[а-яёa-z]{5,}", re.I)
+
+
+def _number_key(value: str) -> str:
+    return normalize(value).replace(" ", "").replace("\u00a0", "").rstrip("%")
 STOP = {"который", "которые", "также", "будет", "после", "сейчас",
         "этого", "новые", "новых", "стало", "может", "частью", "годов",
         "компания", "сообщили", "сообщила", "сообщает", "предприятия",
@@ -16,7 +20,8 @@ STOP = {"который", "которые", "также", "будет", "пос�
 
 
 def evidence_bank(materials: list[dict], facts: list[dict],
-                  max_chars: int = 4700, max_items: int = 32) -> list[dict]:
+                  summary: str = "", max_chars: int = 4900,
+                  max_items: int = 34) -> list[dict]:
     """Build numbered, immutable, directly sourced evidence passages."""
     seen, result, used = set(), [], 0
     source_by_id = {str(m.get("id")): m for m in materials}
@@ -40,6 +45,29 @@ def evidence_bank(materials: list[dict], facts: list[dict],
     for fact in facts:
         sid = str(fact.get("source_id") or "")
         add(str(fact.get("quote") or ""), sid)
+    # For numeric claims, retrieve matching *literal* source passages before
+    # filling the bank with generic early paragraphs. This avoids spurious
+    # "number_not_in_evidence" for numbers later in long source articles.
+    for claim in sentences(summary):
+        keys = {_number_key(x.group()) for x in NUMBER_RE.finditer(claim)}
+        if not keys:
+            continue
+        tokens = {normalize(t)[:5] for t in TOKEN.findall(claim)}
+        matches = []
+        for material in ordered[:5]:
+            sid = str(material.get("id"))
+            for idx, part in enumerate(sentences(str(material.get("text") or ""))):
+                if not 20 <= len(part) <= 290:
+                    continue
+                source_keys = {_number_key(x.group())
+                               for x in NUMBER_RE.finditer(part)}
+                common = keys & source_keys
+                if common:
+                    overlap = len(tokens & {normalize(t)[:5]
+                                            for t in TOKEN.findall(part)})
+                    matches.append((-len(common), -overlap, idx, sid, part))
+        for _, _, _, sid, part in sorted(matches)[:2]:
+            add(part, sid)
     for material in ordered[:5]:
         sid = str(material.get("id"))
         # Only previously selected context is available to the 4B local model.
@@ -63,7 +91,7 @@ def check_indexed_verdict(answer: object, summary: str, bank: list[dict]) -> lis
     if not isinstance(answer, dict) or not isinstance(answer.get("claims"), list):
         return ["semantic_verdict_missing"]
     claims = answer["claims"]
-    if len(claims) != len(parts):
+    if len(claims) < len(parts):
         return ["semantic_claim_count_mismatch"]
     by_id = {x["id"]: x for x in bank}
     encountered = set()
@@ -73,7 +101,12 @@ def check_indexed_verdict(answer: object, summary: str, bank: list[dict]) -> lis
             problems.append("semantic_claim_bad_structure")
             continue
         ident = claim.get("sentence_id")
-        if type(ident) is not int or ident < 1 or ident > len(parts) or ident in encountered:
+        if type(ident) is int and ident > len(parts):
+            # Small models sometimes append extra speculative sentence IDs.
+            # Never let those extra rows invalidate correctly aligned claims;
+            # we still require every actual sentence to be verified below.
+            continue
+        if type(ident) is not int or ident < 1 or ident in encountered:
             problems.append("semantic_claim_bad_sentence_id")
             continue
         encountered.add(ident)
