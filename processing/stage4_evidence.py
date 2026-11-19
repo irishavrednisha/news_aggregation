@@ -40,22 +40,43 @@ def shared_boilerplate(cluster_materials: list[list[dict]], min_documents: int =
                        ) -> dict[str, set[str]]:
     """High-frequency same-source long sentences across DISTINCT clusters."""
     counts: dict[str, Counter] = defaultdict(Counter)
-    for materials in cluster_materials:
+    by_site: dict[str, list[tuple[int, str, list[str]]]] = defaultdict(list)
+    for cluster_idx, materials in enumerate(cluster_materials):
         by_source: dict[str, set[str]] = defaultdict(set)
         for material in materials:
             source = str(material.get("source") or "")
-            for sentence in sentences(str(material.get("text") or "")):
+            text = str(material.get("text") or "")
+            segments = sentences(text)
+            by_site[source].append((cluster_idx, normalize(text), segments))
+            for sentence in segments:
                 key = normalize(sentence)
                 if len(key) >= 45:
                     by_source[source].add(key)
         for source, keys in by_source.items():
             counts[source].update(keys)
-    return {
+    result = {
         src: {s for s, n in counter.items()
               if n >= min_documents and (n >= 4 or repeated_count >= 4)}
         for src, counter in counts.items()
         for repeated_count in [sum(n >= min_documents for n in counter.values())]
     }
+    # Sometimes the sentence immediately BEFORE a detected repeated footer
+    # belongs to another article but is embedded inside its headline+lead.
+    # Mark such sentences only for one-step look-back AFTER the strong
+    # repeated-footer boundary has already been detected.
+    for source, docs in by_site.items():
+        if not result.get(source):
+            continue
+        near_tail = set()
+        for idx, _, segments in docs:
+            for part in segments:
+                key = normalize(part)
+                if (len(key) >= 45 and any(
+                    other_idx != idx and key in other_text
+                    for other_idx, other_text, _ in docs)):
+                    near_tail.add(key)
+        result["__lookback__:" + source] = near_tail
+    return result
 
 
 def clean_working_materials(materials: list[dict],
@@ -78,12 +99,29 @@ def clean_working_materials(materials: list[dict],
                 cut, boundary = position, sentence[:100]
                 break
         if cut is not None and len(original[:cut].strip()) >= 300:
+            # Do not retain the first imported article sentence just before
+            # a duplicated tail, if it also occurs in a distinct same-site
+            # cluster. Raw text stays untouched for audit and reprocessing.
+            initial_cut = cut
+            lookback = shared.get("__lookback__:" +
+                                  str(copy.get("source") or ""), set())
+            for _ in range(2):
+                preceding = sentences(original[:cut])
+                if not preceding:
+                    break
+                previous = preceding[-1]
+                prev_start = original.rfind(previous, 0, cut)
+                if (prev_start < 350
+                        or normalize(previous) not in lookback):
+                    break
+                cut = prev_start
             copy["text"] = original[:cut].rstrip()
             notes.append({
                 "source_id": str(copy.get("id")),
                 "source": copy.get("source"), "reason": "shared_cross_article_tail",
                 "removed_chars": len(original) - cut,
                 "boundary_preview": boundary,
+                "lookback_removed_chars": initial_cut - cut,
             })
         output.append(copy)
     return output, notes
