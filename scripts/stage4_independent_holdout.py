@@ -374,7 +374,27 @@ def run_holdout(*, previous_reports, out_dir, target, minimum, max_days,
         limit=len(manifest["clusters"]), min_clusters=minimum,
         model=model, max_retries=2, output=report_path, persist=False,
         resume=resume and report_path.is_file(), input_json=manifest_path)
-    blind_review_files(report, out_dir)
+    report["source_input_mode"] = "frozen_new_independent_holdout_json"
+    report["holdout_manifest_sha256"] = hashlib.sha256(
+        manifest_path.read_bytes()).hexdigest()
+    atomic_json(report_path, report)
+    # Never destroy a partially completed human review on --resume.
+    packet = out_dir / "blind_review.jsonl"
+    labels = out_dir / "review_labels.csv"
+    key_path = out_dir / "private_review_key.json"
+    if all(p.is_file() for p in (packet, labels, key_path)):
+        key = json.loads(key_path.read_text(encoding="utf-8"))
+        expected = {(str(row["cluster_id"]), row["status"])
+                    for row in report["clusters"]}
+        existing = {(str(item["cluster_id"]), item["automatic_status"])
+                    for item in key.values()}
+        if expected != existing:
+            raise ValueError("Cannot reuse blind labels for a changed sample")
+        print("Existing human review labels preserved; no overwrite.", flush=True)
+    elif any(p.exists() for p in (packet, labels, key_path)):
+        raise FileExistsError("Incomplete review packet exists; back it up first")
+    else:
+        blind_review_files(report, out_dir)
     return report
 
 
