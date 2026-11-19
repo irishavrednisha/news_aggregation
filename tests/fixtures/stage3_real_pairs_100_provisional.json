@@ -1,5 +1,5 @@
 {
-  "description": "Provisional author-reviewed real-news event identity pairs; indexes refer to accepted rows of SHA-pinned stage2 CI report, before sorting. This is NOT an independently validated gold set. True positives reflect shared production facts; negative pairs intentionally include topical hard negatives.",
+  "description": "101 provisional real-news pairs: 4 likely same-event and 97 different-event, including two evidence-checked corrections/additions on 2026-11-19. Only two additions were re-reviewed; all other labels remain provisional. Pair indices refer to accepted rows of SHA-pinned stage2 CI report before sorting. NOT an independently validated gold standard.",
   "corpus_sha256": "ece78995d24069a0198c43e87b43b3354622ea67bb4a108aa3c366b5f4bb9bd3",
   "verification_status": "provisional_needs_second_review",
   "pairs": [
@@ -540,8 +540,9 @@
     {
       "a_index": 15,
       "b_index": 76,
-      "same_event": false,
-      "evidence": "Разные основные события по заголовку; статус требует независимой перепроверки полного текста"
+      "same_event": true,
+      "evidence": "Подтверждено по двум исходным статьям: постановление о ТОР «Колыма», 5 медных предприятий, площадь 159 тыс. га, совпадающие инвестиции РЮГК, Аэрис, Недра-М и дата-центр 150 МВт.",
+      "review_status": "verified_from_stage2_articles_2026-11-19"
     },
     {
       "a_index": 50,
@@ -602,6 +603,13 @@
       "b_index": 84,
       "same_event": false,
       "evidence": "Разные основные события по заголовку; статус требует независимой перепроверки полного текста"
+    },
+    {
+      "a_index": 26,
+      "b_index": 85,
+      "same_event": true,
+      "evidence": "Подтверждено по полным статьям: одно постановление о повышении категории риска для россыпных золотых месторождений; общественное обсуждение до 27 ноября 2026 года.",
+      "review_status": "verified_from_stage2_articles_2026-11-19"
     }
   ]
 }
