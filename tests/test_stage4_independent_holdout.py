@@ -1,15 +1,16 @@
 """Independent holdout: all tests offline; no Ollama, PostgreSQL or scraping."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from scripts.stage4_independent_holdout import (
     blind_review_files, build_manifest, clean_url, fingerprint,
-    new_material, prior_signatures, select_holdout, title_duplicate,
+    new_material, prior_signatures, select_holdout, title_duplicate, run_holdout,
 )
 from scripts.score_stage4_holdout import score, confidence_interval
 
@@ -170,6 +171,73 @@ class HoldoutTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             score(report=result, mapping=key,
                   label_rows=[{"review_id": "B002", "faithful_facts": "na"}])
+
+    def test_short_holdout_must_not_call_local_gemma(self):
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            old = directory/"old.json"
+            old.write_text(json.dumps({"stage": 4, "clusters": [
+                {"cluster_id": 1, "source_materials": [article(1)]}
+            ]}, ensure_ascii=False), encoding="utf-8")
+            diagnostics = directory/"diagnostics.json"
+            diagnostics.write_text(json.dumps({"results": [{
+                "name": "Fresh", "articles": [article(2, "Fresh",
+                    published=datetime.now(timezone.utc).date().isoformat())]
+            }]}, ensure_ascii=False), encoding="utf-8")
+            with patch("scripts.run_stage4_summaries.run") as generate:
+                manifest = run_holdout(
+                    previous_reports=[old], out_dir=directory/"out", target=5,
+                    minimum=4, max_days=30, source_limit=1, source_cap=5,
+                    mode="diagnostics", diagnostics=diagnostics)
+            self.assertFalse(manifest["minimum_sample_met"])
+            self.assertEqual(manifest["sample_size"], 1)
+            generate.assert_not_called()
+
+    def test_resume_cannot_overwrite_independent_editor_labels(self):
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            old = directory/"old.json"
+            old.write_text(json.dumps({"stage": 4, "clusters": [
+                {"cluster_id": 1, "source_materials": [article(1)]}
+            ]}, ensure_ascii=False), encoding="utf-8")
+            diagnostics = directory/"diagnostics.json"
+            diagnostics.write_text(json.dumps({"results": [{
+                "name": "Fresh", "articles": [article(2, "Fresh",
+                    published=datetime.now(timezone.utc).date().isoformat())]
+            }]}, ensure_ascii=False), encoding="utf-8")
+            output = directory/"out"
+
+            def dummy_run(*, input_json, **kwargs):
+                frozen = json.loads(input_json.read_text(encoding="utf-8"))
+                entries = []
+                for row in frozen["clusters"]:
+                    item = dict(row)
+                    item.update({"status": "summary_draft",
+                                 "gemma_summary": "На предприятии запустили новую линию."})
+                    entries.append(item)
+                return {"stage": 4, "pipeline_version": "stage4-source-date-roles-v5",
+                        "model": "gemma3:4b",
+                        "evaluation_date": frozen["evaluation_date"],
+                        "clusters": entries}
+
+            with patch("scripts.run_stage4_summaries.run", side_effect=dummy_run) as call:
+                run_holdout(previous_reports=[old], out_dir=output, target=1,
+                            minimum=1, max_days=30, source_limit=1,
+                            source_cap=5, mode="diagnostics", diagnostics=diagnostics)
+                label_path = output/"review_labels.csv"
+                text_before = label_path.read_text(encoding="utf-8-sig")
+                label_path.write_text(text_before.replace("B001;;;;;;",
+                    "B001;pass;pass;pass;pass;pass;Подтверждено"),
+                    encoding="utf-8-sig")
+                saved_labels = label_path.read_bytes()
+                run_holdout(previous_reports=[old], out_dir=output, target=1,
+                            minimum=1, max_days=30, source_limit=1, source_cap=5,
+                            mode="diagnostics", diagnostics=diagnostics, resume=True)
+                self.assertEqual(label_path.read_bytes(), saved_labels)
+                self.assertEqual(call.call_count, 2)
+                source_mode = json.loads((output/"gemma_holdout.json").read_text(
+                    encoding="utf-8"))["source_input_mode"]
+                self.assertEqual(source_mode, "frozen_new_independent_holdout_json")
 
     def test_wilson_bounds_not_perfect_when_small_sample(self):
         conf = confidence_interval(9, 10)
