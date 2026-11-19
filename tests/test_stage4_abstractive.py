@@ -6,13 +6,14 @@ from unittest.mock import patch
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 from pathlib import Path
+from datetime import date
 import json
 from processing.abstractive_summary import (
     FACT_FORMAT, SUMMARY_FORMAT, VERDICT_FORMAT, source_digest,
     summarize_event_cluster,
 )
 from processing.abstractive_validator import validate_summary
-from processing.stage4_quality import source_integrity_issues, quality_issues
+from processing.stage4_quality import (source_integrity_issues, quality_issues, stale_upcoming_event_issues)
 from processing.stage4_verification import evidence_bank, check_indexed_verdict
 from processing.stage4_evidence import shared_boilerplate, clean_working_materials, extract_grounded_facts
 from scripts.run_stage4_summaries import assemble, metrics, representative, run
@@ -114,6 +115,65 @@ class ValidatorTests(unittest.TestCase):
         materials = [{"title": "Выпустили 7,3 тысячи тонн металла",
                       "text": "В январе-сентябре предприятия произвели 7 288,4 тонны металла."}]
         self.assertFalse(source_integrity_issues(materials))
+
+    def test_stale_future_announcement_is_not_draftable_as_new(self):
+        variants = [
+            ("С 26 по 28 мая 2026 года в Москве состоятся выставки "
+             "промышленной электроники. "),
+            ("В 2026 году пройдет выставка в Санкт-Петербурге "
+             "28 – 29 апреля на площадке конференц-центра. "),
+            ("5 июня 2026 года в Казани состоится форум машиностроителей. "),
+        ]
+        for value in variants:
+            with self.subTest(value=value):
+                material = [{"id": 300, "title": "Анонс делового мероприятия",
+                             "text": value * 5}]
+                self.assertIn("source_stale_upcoming_event_date",
+                              stale_upcoming_event_issues(material,
+                                as_of=date(2026, 11, 20)))
+                self.assertFalse(stale_upcoming_event_issues(material,
+                              as_of=date(2026, 3, 1)))
+
+    def test_historical_completed_event_is_not_stale_announcement(self):
+        material = [{"title": "Завершилась промышленная выставка",
+                     "text": "10 апреля 2026 года завершилась выставка промышленной "
+                             "электроники. Экспоненты представили разработки."}]
+        self.assertFalse(stale_upcoming_event_issues(material,
+                          as_of=date(2026, 11, 20)))
+
+    def test_source_announcement_staleness_blocks_model(self):
+        material = [{"id": 306, "title": "Представят технологические разработки",
+                     "text": ("5 июня 2026 года в Казани состоится форум "
+                              "машиностроителей. " * 8)}]
+        with patch("processing.stage4_quality.datetime") as dt:
+            dt.now.return_value.date.return_value = date(2026, 11, 20)
+            result = summarize_event_cluster(
+                306, material, "", request=lambda *a, **k:
+                self.fail("Stale source must not reach Gemma"))
+        self.assertEqual(result.status, "summary_review")
+        self.assertIn("source_stale_upcoming_event_date",
+                      result.validation["issues"])
+        self.assertFalse(result.attempts)
+
+    def test_tax_to_commercial_creditor_and_passive_gerund_block(self):
+        examples = [
+            ("У завода есть задолженность по налогам перед компанией "
+             "«Северсталь Дистрибуция» в размере 16,7 млн рублей."),
+            ("Цех был полностью обновлен, вложив в это 8,5 млн рублей."),
+            ("Компания производит оборудование для шахт и метрополитнов."),
+        ]
+        for sample in examples:
+            with self.subTest(sample=sample):
+                self.assertTrue(quality_issues(sample), sample)
+
+    def test_generic_explainer_not_mistaken_for_event_due_to_noun(self):
+        material = [{"id": 307, "title": "Земснаряд — друг, товарищ, брат!",
+                     "text": ("Земснаряд — это средство технического флота, "
+                              "которое применяется при дноуглублении и добыче. "
+                              "Земснаряды играют важную роль в обслуживании портов. "
+                              "Это рабочие суда с высоким техническим оснащением. ") * 5}]
+        facts, issues = extract_grounded_facts(material)
+        self.assertIn("no_supported_news_event", issues)
 
     def test_editorial_grammar_errors_block_draft(self):
         samples = [
