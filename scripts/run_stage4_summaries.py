@@ -42,6 +42,8 @@ def metrics(rows: list[dict], min_clusters: int) -> dict:
               for row in rows if row.get("gemma_summary")]
     repeats = [row.get("validation", {}).get("repeated_sentence_count", 0)
                for row in rows if row.get("gemma_summary")]
+    readability = [row.get("validation", {}).get("readability_proxy", 0)
+                   for row in rows if row.get("gemma_summary")]
     baseline_sim = [SequenceMatcher(None, normalize(row.get("textrank_summary", "")),
                                     normalize(row.get("gemma_summary", ""))).ratio()
                     for row in rows if row.get("gemma_summary")]
@@ -56,6 +58,7 @@ def metrics(rows: list[dict], min_clusters: int) -> dict:
         "validator_pass_rate_of_all": round(len(valid)/max(1, len(rows)), 4),
         "mean_copy_sentence_ratio": round(sum(copied)/len(copied), 3) if copied else None,
         "mean_repeated_sentence_pairs": round(sum(repeats)/len(repeats), 3) if repeats else None,
+        "mean_sentence_length_readability_proxy": round(sum(readability)/len(readability), 3) if readability else None,
         "mean_textrank_to_gemma_similarity": round(
             sum(baseline_sim)/len(baseline_sim), 3) if baseline_sim else None,
         "issues": dict(failing.most_common()),
