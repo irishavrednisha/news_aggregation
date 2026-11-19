@@ -1,0 +1,74 @@
+name: Stage 4 independent real-news holdout (offline)
+on:
+  push:
+    branches:
+      - test/stage4-independent-holdout-2026-11-20
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-offline:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      MAX_PUBLISHING_ENABLED: "false"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile holdout, reviewer and Stage 4 contract
+        run: python -m py_compile scripts/stage4_independent_holdout.py scripts/score_stage4_holdout.py scripts/run_stage4_summaries.py tests/test_stage4_independent_holdout.py
+      - name: Independent sample overlap, blind labels and scoring safety
+        run: python -m unittest discover -s tests -p "test_stage4_independent_holdout.py" -v
+      - name: Original Stage 4 generation regression tests
+        run: python -m unittest discover -s tests -p "test_stage4_abstractive.py" -v
+      - name: Ensure command-line entrypoints are usable
+        run: python scripts/stage4_independent_holdout.py --help
+
+  isolated-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: stage4_ci_password
+          POSTGRES_DB: stage4_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d stage4_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_NAME: stage4_ci
+      DB_USER: postgres
+      DB_PASSWORD: stage4_ci_password
+      STAGE4_TEST_URL: postgresql+psycopg2://postgres:stage4_ci_password@127.0.0.1:5432/stage4_ci
+      STAGE4_TEST_WRITE_ACK: ephemeral-only
+      MAX_PUBLISHING_ENABLED: "false"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install isolated DB prerequisites
+        run: python -m pip install sqlalchemy psycopg2-binary python-dotenv alembic
+      - name: Apply real migrations in disposable DB
+        run: python -c "from database.db import create_tables; create_tables()"
+      - run: python -m alembic upgrade head
+      - name: Keep source news and approved posts unchanged
+        run: python -m unittest discover -s tests -p "test_stage4_postgres.py" -v
