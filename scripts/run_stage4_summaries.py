@@ -58,6 +58,18 @@ def metrics(rows: list[dict], min_clusters: int) -> dict:
         "summary_review": statuses["summary_review"],
         "source_cleanup_clusters": cleaned,
         "no_supported_news_event": no_event,
+        "source_integrity_review": sum(
+            any(str(x).startswith("source_internal_")
+                for x in row.get("validation", {}).get("issues", []))
+            for row in rows),
+        "language_quality_review": sum(
+            any(str(x).startswith("language_")
+                for x in row.get("validation", {}).get("issues", []))
+            for row in rows),
+        "semantic_excess_claim_rows_ignored": sum(
+            "semantic_extra_claims_ignored" in
+            row.get("validation", {}).get("flags", [])
+            for row in rows),
         "model_generation_attempted": len(attempted),
         "validator_passed_with_llm_advisory": len(valid),
         "validator_pass_rate_of_all": round(len(valid)/max(1, len(rows)), 4),
@@ -67,6 +79,7 @@ def metrics(rows: list[dict], min_clusters: int) -> dict:
         "mean_textrank_to_gemma_similarity": round(
             sum(baseline_sim)/len(baseline_sim), 3) if baseline_sim else None,
         "issues": dict(failing.most_common()),
+        "automated_quality_metrics_are_not_accuracy": True,
         "manual_factual_accuracy": None,
         "manual_readability": None,
         "manual_event_coverage": None,
