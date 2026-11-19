@@ -117,7 +117,8 @@ def validate_summary(summary: str, materials: list[dict],
     for number, units in new_numbers.items():
         if number not in orig_numbers:
             issues.append("unsupported_number:" + number)
-        elif any(u and u not in orig_numbers[number] for u in units):
+        elif (not (len(number) == 4 and number.isdecimal() and 1900 <= int(number) <= 2100)
+              and any(u and u not in orig_numbers[number] for u in units)):
             issues.append("number_unit_mismatch:" + number)
     for material in materials:
         headline = normalize(str(material.get("title") or ""))
