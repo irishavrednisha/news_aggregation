@@ -125,8 +125,8 @@ def validate_summary(summary: str, materials: list[dict],
             issues.append("headline_copied_verbatim")
             break
     for stem in TECHNICAL_OBJECT_STEMS:
-        if (re.search(r"\\b" + re.escape(stem), normalize(summary))
-                and not re.search(r"\\b" + re.escape(stem), norm_source)):
+        if (re.search(r"\b" + re.escape(stem), normalize(summary))
+                and not re.search(r"\b" + re.escape(stem), norm_source)):
             issues.append("unsupported_technical_object:" + stem)
     for quoted in QUOTES_RE.findall(summary):
         if normalize(quoted) not in norm_source:
