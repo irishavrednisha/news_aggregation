@@ -266,6 +266,23 @@ def _consultation_day(content: str) -> tuple[int, int] | None:
     return (int(match.group(1)), month) if month else None
 
 
+def _overlapping_fivegrams(a: object, b: object) -> tuple[int, float]:
+    """Shared concrete prose, not semantic sector similarity or matching boilerplate.
+
+    This is evidence of a shared report, not a standalone merge condition.
+    Count unique 5-word passages; require quantities/company if only a small
+    part of the articles is shared. Extracted from real raw body, never URL.
+    """
+    def shingles(value: object) -> set[tuple[str, ...]]:
+        words = re.findall(r"[а-яa-z0-9]+", normalize(_field(value, "text"))[:3500])
+        return {tuple(words[i:i+5]) for i in range(max(0, len(words)-4))}
+    left, right = shingles(a), shingles(b)
+    if not left or not right:
+        return 0, 0.0
+    common = len(left & right)
+    return common, common / min(len(left), len(right))
+
+
 def _corroborated_same_event(a: object, b: object, score: float) -> str | None:
     """Two narrowly defined independent-evidence paths; not a threshold waiver.
 
@@ -277,7 +294,20 @@ def _corroborated_same_event(a: object, b: object, score: float) -> str | None:
     left_day, right_day = day(_field(a, "published_at")), day(_field(b, "published_at"))
     if not left_day or not right_day or abs((left_day - right_day).days) > 7:
         return None
+    shared_passages, smaller_share = _overlapping_fivegrams(a, b)
+    if (score >= 0.87 and shared_passages >= 15 and smaller_share >= 0.80):
+        return "near_identical_full_report"
+
+    # A long report can quote the SAME completed 30.5m-ruble project with
+    # a different headline (history of the factory vs investment update).
+    # Require several verbatim nontrivial passages, one verified company,
+    # and >=2 matching precise measurements, never only shared sector.
+    shared_company = bool(extract_facts(a).companies & extract_facts(b).companies)
     left, right = _event_context(a), _event_context(b)
+    common_measures = _specific_measurements(left) & _specific_measurements(right)
+    if (shared_company and shared_passages >= 12 and len(common_measures) >= 2):
+        return "same_company_shared_measures_and_report"
+
     shared_names = _program_names(left) & _program_names(right)
     common_specs = _specific_measurements(left) & _specific_measurements(right)
     independent_units = {unit for unit, _ in common_specs}
