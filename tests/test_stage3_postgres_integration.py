@@ -53,7 +53,7 @@ class Stage3PostgresIntegration(unittest.TestCase):
     def setUp(self):
         # The explicit DB-name and write-ack guards in setUpClass are mandatory.
         with self.engine.begin() as conn:
-            conn.execute(text("TRUNCATE TABLE sources RESTART IDENTITY CASCADE"))
+            conn.execute(text("TRUNCATE TABLE sources, clusters RESTART IDENTITY CASCADE"))
         self.session = Session(bind=self.engine)
         for label in ("MASHNEWS", "Промышленный вестник", "ФлотПром", "Отраслевое.рф"):
             self.session.add(Source(name=label, url=f"https://{label[:3]}.example"))
