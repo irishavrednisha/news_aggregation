@@ -208,6 +208,8 @@ def run(*, limit: int, min_clusters: int, model: str, max_retries: int,
             raise ValueError("Cannot resume with --persist from a read-only report")
         started = report.get("created_utc", started)
         previous = {str(row["cluster_id"]): row for row in report.get("clusters", [])}
+    # Freeze the evaluation date for every row of one resumable run.
+    evaluation_date = datetime.fromisoformat(started.replace("Z", "+00:00")).date()
     session = None
     if input_json:
         original = json.loads(input_json.read_text(encoding="utf-8"))
@@ -253,7 +255,7 @@ def run(*, limit: int, min_clusters: int, model: str, max_retries: int,
             outcome = summarize_event_cluster(
                 cluster_id, materials, baseline, model=model,
                 max_retries=max_retries, working_materials=working,
-                cleanup_notes=cleanup_notes,
+                cleanup_notes=cleanup_notes, as_of_date=evaluation_date,
             ).to_dict()
             if textrank_flags:
                 outcome["validation"].setdefault("flags", []).extend(textrank_flags)
@@ -276,6 +278,7 @@ def run(*, limit: int, min_clusters: int, model: str, max_retries: int,
     final = assemble(rows, min_clusters=min_clusters, model=model,
                      started_utc=started, persisted=persist)
     final["source_input_mode"] = "previous_real_json" if input_json else "postgresql"
+    final["evaluation_date"] = evaluation_date.isoformat()
     checkpoint(output, final)
     return final
 
