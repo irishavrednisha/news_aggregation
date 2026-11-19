@@ -292,6 +292,29 @@ class PipelineTests(unittest.TestCase):
             self.assertLess(len(working[0]["text"]), len(before))
             self.assertNotIn("Справочная заметка", working[0]["text"])
 
+    def test_cross_article_sentence_before_shared_footer_is_removed(self):
+        contamination = ("Инженеры посторонней компании завершили "
+                         "испытания машин в соседнем регионе.")
+        footer = ("Справка из соседней публикации содержит сообщение "
+                  "о другом предприятии и постороннем событии.")
+        source_groups = []
+        for i in range(4):
+            lead = (f"Завод номер {i} запустил уникальный агрегат. "
+                    f"Компания номер {i} завершает монтаж оборудования. ") * 7
+            if i == 0:
+                lead += contamination + " "
+            if i == 1:
+                lead += "Краткая справка: " + contamination + " "
+            source_groups.append([{"id": i, "source": "Пробный сайт",
+                                   "title": f"Завод {i} запустил оборудование",
+                                   "text": lead + footer}])
+        shared = shared_boilerplate(source_groups)
+        cleaned, notes = clean_working_materials(source_groups[0], shared)
+        self.assertTrue(notes)
+        self.assertGreater(notes[0]["lookback_removed_chars"], 0)
+        self.assertNotIn(contamination, cleaned[0]["text"])
+        self.assertIn(contamination, source_groups[0][0]["text"])
+
     def test_refuse_cloud_and_oversized_model(self):
         for model in ("gemma3:cloud", "gemma3:12b", "qwen3.5:4b"):
             with self.subTest(model=model), self.assertRaises(ValueError):
