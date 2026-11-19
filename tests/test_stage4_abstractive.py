@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
+from tempfile import TemporaryDirectory
+from pathlib import Path
+import json
 from processing.abstractive_summary import (
     FACT_FORMAT, SUMMARY_FORMAT, VERDICT_FORMAT, source_digest,
     summarize_event_cluster,
 )
 from processing.abstractive_validator import validate_summary
 from processing.stage4_evidence import shared_boilerplate, clean_working_materials, extract_grounded_facts
-from scripts.run_stage4_summaries import assemble, metrics, representative
+from scripts.run_stage4_summaries import assemble, metrics, representative, run
 
 SOURCE = (
     "АО «Север» сообщило о запуске новой линии обработки металла на предприятии "
@@ -168,6 +173,52 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(before, source_digest([dict(MATERIAL[0])]))
         changed = [dict(MATERIAL[0], text=SOURCE + " Новая информация.")]
         self.assertNotEqual(before, source_digest(changed))
+
+    def test_replay_previous_real_json_without_db_write(self):
+        with TemporaryDirectory() as tmp:
+            source_path = Path(tmp) / "previous.json"
+            output_path = Path(tmp) / "replayed.json"
+            source_path.write_text(json.dumps({
+                "stage": 4,
+                "clusters": [{"cluster_id": 19, "source_materials": MATERIAL}]
+            }, ensure_ascii=False), encoding="utf-8")
+            request, _ = stub()
+            with patch("scripts.run_stage4_summaries._textrank",
+                       return_value=("TextRank", [])), patch(
+                "processing.abstractive_summary.ollama_rewrite", request):
+                report = run(limit=1, min_clusters=1, model="gemma3:4b",
+                             max_retries=0, output=output_path, persist=False,
+                             input_json=source_path)
+            self.assertEqual(report["source_input_mode"], "previous_real_json")
+            self.assertTrue(output_path.exists())
+            self.assertTrue(report["clusters"][0]["source_materials"][0]["text"] == SOURCE)
+            self.assertEqual(report["metrics"]["clusters_processed"], 1)
+            self.assertFalse(report["persist_audit_to_db"])
+            with self.assertRaises(ValueError):
+                run(limit=1, min_clusters=1, model="gemma3:4b",
+                    max_retries=0, output=source_path, persist=False,
+                    input_json=source_path)
+
+    def test_shared_footer_removed_only_from_working_copy(self):
+        common = ("Справочная заметка рассказывает про другой завод, без связи "
+                  "с главным событием. Второе сообщение сообщает о постороннем "
+                  "предприятии. Третья заметка повторяет чужие результаты. "
+                  "Четвёртая заметка не имеет отношения к заголовку.")
+        groups = []
+        for n in range(4):
+            unique = (f"Завод номер {n} запустил уникальную новую производственную линию. "
+                      f"Предприятие номер {n} установило современное оборудование. ") * 6
+            groups.append([{"id": n, "title": f"Завод {n} запустил линию",
+                            "text": unique + common, "source": "Испытательный источник"}])
+        shared = shared_boilerplate(groups)
+        self.assertTrue(shared["Испытательный источник"])
+        for group in groups:
+            before = group[0]["text"]
+            working, notes = clean_working_materials(group, shared)
+            self.assertEqual(group[0]["text"], before)
+            self.assertTrue(notes)
+            self.assertLess(len(working[0]["text"]), len(before))
+            self.assertNotIn("Справочная заметка", working[0]["text"])
 
     def test_refuse_cloud_and_oversized_model(self):
         for model in ("gemma3:cloud", "gemma3:12b", "qwen3.5:4b"):
