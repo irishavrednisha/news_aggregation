@@ -39,6 +39,8 @@ jobs:
         run: python -m unittest discover -s tests -p "test_stage3_gold_validation.py" -v
       - name: Real missed-merge and strict false-positive guards
         run: python -m unittest discover -s tests -p "test_stage3_evidence_recall.py" -v
+      - name: Validate archival holdout labels and read-only replay
+        run: python -m unittest discover -s tests -p "test_stage3_archival_holdout.py" -v
       - name: Verify CLI and no DB connection
         run: python scripts/audit_stage3.py --help
       - name: Retrieve reproducible stage 2 accepted corpus
@@ -79,12 +81,16 @@ jobs:
       - name: Compare actual SBERT legacy vs conservative event gate on >=100 real articles
         run: |
           python scripts/audit_stage3.py --input collector_test_results/stage2_live_231_latest.json --gold tests/fixtures/stage3_real_pairs_100_provisional.json --backend sbert --min-decisions 100 --output collector_test_results/stage3_sbert_real.json
+      - name: Audit distinct archival real-news pairs with SBERT
+        run: python scripts/audit_stage3_archival_holdout.py --backend sbert --output collector_test_results/stage3_archival_sbert.json
       - name: Save real SBERT audit (gold metrics remain unknown without manual labels)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stage3-sbert-accepted-20261118
-          path: collector_test_results/stage3_sbert_real.json
+          path: |
+            collector_test_results/stage3_sbert_real.json
+            collector_test_results/stage3_archival_sbert.json
           retention-days: 14
           if-no-files-found: warn
 
