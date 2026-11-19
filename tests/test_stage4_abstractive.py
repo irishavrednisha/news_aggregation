@@ -56,11 +56,20 @@ def stub(summary=DRAFT):
         if schema is SUMMARY_FORMAT:
             return {"summary": summary}
         if schema is VERDICT_FORMAT:
-            from processing.abstractive_validator import sentences
-            return {"claims": [
-                {"claim": part, "verdict": "supported", "evidence": EVIDENCES[i]}
-                for i, part in enumerate(sentences(summary))
-            ]}
+            context = json.loads(messages[-1]["content"])
+            bank = context["source_evidence"]
+            claims = []
+            for part in context["summary_sentences"]:
+                sentence = part["text"]
+                keyword = ("40" if "40" in sentence else
+                           "120" if "120" in sentence else "Туле")
+                matching = [b["id"] for b in bank if keyword in b["text"]]
+                if not matching:
+                    raise AssertionError("Mock evidence missing: " + keyword)
+                claims.append({"sentence_id": part["sentence_id"],
+                               "verdict": "supported",
+                               "evidence_ids": [matching[0]]})
+            return {"claims": claims}
         raise AssertionError("Unexpected request schema")
     return request, calls
 
@@ -83,6 +92,38 @@ class ValidatorTests(unittest.TestCase):
         candidate = DRAFT.replace("линию металлообработки", "ядерный реактор")
         issues = validate_summary(candidate, MATERIAL).issues
         self.assertTrue(any(x.startswith("unsupported_technical_object:реактор") for x in issues))
+
+    def test_inflected_company_name_is_not_a_new_organization(self):
+        original = [{"title": "«Гиредмет» разработал технологию",
+                     "text": "АО «Гиредмет» создало оборудование для переработки руды."}]
+        generated = ("Совместно с «Гиредметом» разработано оборудование для руды. "
+                     "Технология предназначена для промышленной переработки. "
+                     "Проект использует новое оборудование.")
+        issues = validate_summary(generated, original).issues
+        self.assertFalse(any("unsupported_quoted_name:Гиредметом" in x for x in issues), issues)
+        altered = generated.replace("Гиредметом", "Гиремотором")
+        self.assertTrue(any("unsupported_quoted_name:" in x for x in
+                            validate_summary(altered, original).issues))
+
+    def test_ongoing_harvest_not_reported_as_completed(self):
+        original = [{"title": "На птицефабрике завершается посев озимой пшеницы",
+                     "text": "Предприятие продолжает посев озимых культур. "
+                             "Агроном рассказал о проведении работ."}]
+        generated = ("Птицефабрика завершила посев озимой пшеницы. "
+                     "Агрономы внесли удобрения. "
+                     "Хозяйство готовится к следующему сезону.")
+        self.assertIn("main_event_ongoing_changed_to_completed",
+                      validate_summary(generated, original).issues)
+
+    def test_forecast_not_reported_as_revenue(self):
+        original = [{"title": "Минфин прогнозирует доходы на уровне 100 млрд рублей",
+                     "text": "Ожидается поступление 100 млрд рублей в бюджет. "
+                             "Показатель остаётся прогнозом."}]
+        generated = ("Минфин зафиксировал доходы в 100 млрд рублей. "
+                     "Финансовые поступления выросли. "
+                     "Данные представлены в отчёте.")
+        self.assertIn("forecast_changed_to_observed_result",
+                      validate_summary(generated, original).issues)
 
     def test_copied_headline(self):
         copied = "АО «Север» запустило линию в Туле. " + DRAFT
@@ -229,9 +270,11 @@ class PipelineTests(unittest.TestCase):
         request, calls = stub()
         def fake(messages, schema, *, model):
             if schema is VERDICT_FORMAT:
-                return {"claims": [{"claim": part, "verdict": "supported",
-                                    "evidence": "выдуманная цитата"}
-                                   for part in DRAFT.split(". ")][:3]}
+                context = json.loads(messages[-1]["content"])
+                return {"claims": [{"sentence_id": part["sentence_id"],
+                                    "verdict": "supported",
+                                    "evidence_ids": [9999]}
+                                   for part in context["summary_sentences"]]}
             return request(messages, schema, model=model)
         result = summarize_event_cluster(19, MATERIAL, "", request=fake, max_retries=0)
         self.assertEqual(result.status, "summary_review")
