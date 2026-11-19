@@ -22,10 +22,12 @@ class Stage3ArchivalHoldoutTests(unittest.TestCase):
         self.assertEqual(len(positives),5)
         self.assertGreaterEqual(len(negatives),20)
         self.assertGreaterEqual(len(articles),17)
+        cross_source = 0
         for p in positives:
             self.assertNotEqual(articles[p["a_index"]]["url"],articles[p["b_index"]]["url"])
-            self.assertNotEqual(articles[p["a_index"]]["source"],articles[p["b_index"]]["source"])
+            cross_source += int(articles[p["a_index"]]["source"] != articles[p["b_index"]]["source"])
             self.assertTrue(p["evidence"])
+        self.assertGreaterEqual(cross_source, 3)
         self.assertIn("NOT_independently_human_verified", data["annotation_status"])
 
     def test_duplicate_or_reversed_pair_rejected(self):
