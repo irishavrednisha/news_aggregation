@@ -1,0 +1,73 @@
+name: Stage 4 grounded Gemma (offline contract and DB)
+on:
+  push:
+    branches:
+      - feat/stage4-grounded-gemma-abstractive-2026-11-19
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      MAX_PUBLISHING_ENABLED: "false"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile stage 4 modules
+        run: python -m py_compile processing/abstractive_validator.py processing/abstractive_summary.py scripts/run_stage4_summaries.py database/summary_models.py tests/test_stage4_abstractive.py
+      - name: Validate fact guards, retries and review states (no model calls)
+        run: python -m unittest discover -s tests -p "test_stage4_abstractive.py" -v
+      - name: Verify Windows-friendly command syntax
+        run: python scripts/run_stage4_summaries.py --help
+
+  isolated-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: stage4_ci_password
+          POSTGRES_DB: stage4_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d stage4_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_NAME: stage4_ci
+      DB_USER: postgres
+      DB_PASSWORD: stage4_ci_password
+      STAGE4_TEST_URL: postgresql+psycopg2://postgres:stage4_ci_password@127.0.0.1:5432/stage4_ci
+      STAGE4_TEST_WRITE_ACK: ephemeral-only
+      MAX_PUBLISHING_ENABLED: "false"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install only migration and database dependencies
+        run: python -m pip install sqlalchemy psycopg2-binary python-dotenv alembic
+      - name: Create legacy baseline in disposable database
+        run: python -c "from database.db import create_tables; create_tables()"
+      - name: Apply every real additive Alembic migration
+        run: python -m alembic upgrade head
+      - name: Verify frozen source and approved posts remain unchanged
+        run: python -m unittest discover -s tests -p "test_stage4_postgres.py" -v
