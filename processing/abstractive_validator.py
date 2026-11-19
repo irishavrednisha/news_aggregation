@@ -28,6 +28,11 @@ FALL_RE = re.compile(r"\b(?:сократил\w*|снизил\w*|уменьшил
 CAUSE_RE = re.compile(r"\b(?:из-за|благодаря|поскольку|вследствие|по причине)\b", re.I)
 COMMON_STARTS = {"Компания", "Предприятие", "Завод", "Производство", "Организация",
                  "В", "На", "Для", "По", "Также", "Кроме", "Это", "При", "Согласно"}
+TECHNICAL_OBJECT_STEMS = ("реактор", "турбин", "генератор", "двигател", "станк",
+                          "самолет", "вертолет", "подлод", "танкер", "контейнер",
+                          "спутник", "ракет", "конвейер", "электростанц",
+                          "комбайн", "беспилотник", "экскаватор", "тепловоз",
+                          "трансформатор", "компрессор", "робот", "рудник", "шахт")
 
 
 def normalize(text: str) -> str:
@@ -114,6 +119,15 @@ def validate_summary(summary: str, materials: list[dict],
             issues.append("unsupported_number:" + number)
         elif any(u and u not in orig_numbers[number] for u in units):
             issues.append("number_unit_mismatch:" + number)
+    for material in materials:
+        headline = normalize(str(material.get("title") or ""))
+        if len(headline) >= 28 and headline in normalize(summary):
+            issues.append("headline_copied_verbatim")
+            break
+    for stem in TECHNICAL_OBJECT_STEMS:
+        if (re.search(r"\\b" + re.escape(stem), normalize(summary))
+                and not re.search(r"\\b" + re.escape(stem), norm_source)):
+            issues.append("unsupported_technical_object:" + stem)
     for quoted in QUOTES_RE.findall(summary):
         if normalize(quoted) not in norm_source:
             issues.append("unsupported_quoted_name:" + quoted[:60])
