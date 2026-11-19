@@ -20,10 +20,11 @@ EVENT = re.compile(
     r"готовит\w*|готовится|вернул\w*|возвраща\w*|останов\w*|"
     r"заключ\w*|признал\w*|смонтир\w*|отправ\w*|обеспеч\w*|"
     r"подключ\w*|прогнозир\w*|предлага\w*|подтверд\w*|наращива\w*|"
-    r"пере[шёе]л\w*|перевыполн\w*|проходит|обязал\w*|награжд\w*|"
+    r"переш[её]л\w*|перешла|перевыполн\w*|проходит|обязал\w*|награжд\w*|"
     r"удосто\w*|признан\w*|передал\w*|вводят|введен\w*|"
-    r"пройдет|проедет|перешли|планир\w*|хочет)\b", re.I)
-NON_NEWS = re.compile(r"(?:^|\b)(?:как\s+|обзор\s+|советы\s+|реклама\b|что\s+ломается|почему\s+|топ[-\s]?\d+)", re.I)
+    r"пройдет|проедет|перешли|планир\w*|хочет|усил\w*|способен|перерабатыва\w*|"
+    r"попал\w*|организован\w*|объяснил\w*|проводит|провела|состоится)\b", re.I)
+NON_NEWS = re.compile(r"^(?:как\s+|обзор\s+|советы\s+|реклама\b|что\s+ломается|почему\s+|топ[-\s]?\d+)", re.I)
 NUMBER = re.compile(
     r"(?<!\w)\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?\s*"
     r"(?:%|тыс\.?|млн|млрд|руб\.?|тонн|кг|МВт)(?!\w)", re.I)
@@ -163,8 +164,10 @@ def extract_grounded_facts(materials: list[dict], max_facts: int = 9
             break
         match = YEAR.search(snippet)
         if match:
-            add("date", match.group(), snippet[:260] if match.start() < 260
-                else match.group())
+            # Always include the *entire* date value in the literal quote.
+            start = max(0, match.start() - 110)
+            end = min(len(snippet), match.end() + 105)
+            add("date", match.group(), snippet[start:end])
             break
     return (facts, []) if len(facts) >= 3 else (
         facts, ["insufficient_supported_facts"])
