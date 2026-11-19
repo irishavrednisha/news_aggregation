@@ -134,8 +134,8 @@ news (без смешивания «полный текст» и «заголо�
 
 ## Дополнительный аудит пропущенных событий — 19.11.2026
 
-Ветка: \`fix/stage3-evidence-recall-2026-11-19\`, основание: успешно проверенный
-\`6b3d3daa087fed77cace7d32310eadac13bd513d\` этапа 3. В main/master
+Ветка: `fix/stage3-evidence-recall-2026-11-19`, основание: успешно проверенный
+`6b3d3daa087fed77cace7d32310eadac13bd513d` этапа 3. В main/master
 изменений нет. Фильтрацию, суммаризацию и публикацию не запускаем.
 
 После изучения **полного текста** реальных принятых статей исходной выборки
@@ -145,11 +145,11 @@ news (без смешивания «полный текст» и «заголо�
    заголовках (медные месторождения / цветная металлургия), но одна территория,
    пять проектов «Нордголда», 159 тыс. гектаров, суммы 23,3/6,5/35 млрд
    рублей и дата-центр 150 МВт. В старом SBERT-аудите разделено по
-   \`different_object\` при similarity около 0,78735.
+   `different_object` при similarity около 0,78735.
 2. **Проект повышения риска для россыпного золота**, НедраДВ / «Добывающая
    промышленность». Одно правительственное постановление, один предмет,
    обсуждение до 27 ноября 2026 г. Ранее разделено по
-   \`insufficient_action_object_evidence\`, similarity около 0,74459.
+   `insufficient_action_object_evidence`, similarity около 0,74459.
 
 Общий глобальный порог не снижен. Для кандидатов с similarity >= 0,71
 добавлена строго ограниченная фактологическая проверка:
@@ -165,34 +165,34 @@ news (без смешивания «полный текст» и «заголо�
 Контрольная выборка расширена до 101 реальной пары: 4 положительных,
 97 отрицательных. Две новые/исправленные пары проверены по первичным текстам;
 остальные метки по-прежнему **предварительные и не независимо проверены**.
-\`corpus_sha256\` привязан к артефакту GitHub Actions
-\`stage2-live-231-replay-ubuntu-latest\` run \`44283065624\`.
+`corpus_sha256` привязан к артефакту GitHub Actions
+`stage2-live-231-replay-ubuntu-latest` run `44283065624`.
 Не использовать метрики как доказательство качества на всём потоке.
 
 ### Команды для локального WSL (read-only)
 
-\`\`\`powershell
+```powershell
 cd D:\Projects\news_aggregation
 git fetch origin
 git switch --track origin/fix/stage3-evidence-recall-2026-11-19
 # либо git switch fix/stage3-evidence-recall-2026-11-19
 wsl -d Ubuntu-24.04
-\`\`\`
+```
 
 В терминале Ubuntu (после перехода в него):
 
-\`\`\`bash
+```bash
 cd /mnt/d/Projects/news_aggregation
 python scripts/audit_stage3.py \
   --input collector_test_results/stage2_live_231_latest.json \
   --gold tests/fixtures/stage3_real_pairs_100_provisional.json \
   --backend sbert --min-decisions 100 \
   --output collector_test_results/stage3_sbert_evidence.json
-\`\`\`
+```
 
 Аудит **не пишет** в PostgreSQL, не вызывает MAX и не создаёт summary.
 Убедиться, что входной файл — именно CI-артефакт, чей SHA-256 совпадает
-с \`corpus_sha256\`, иначе скрипт намеренно прервёт проверку. После
+с `corpus_sha256`, иначе скрипт намеренно прервёт проверку. После
 успешного прогона сравнить baseline/revised, FP/FN, clusters и singleton.
 
 Этап 4 не запускать до независимой проверки спорных 101 пар, дополнительных
