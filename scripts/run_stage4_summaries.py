@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from processing.abstractive_summary import (
-    ALLOWED_MODELS, DEFAULT_MODEL, summarize_event_cluster,
+    ALLOWED_MODELS, DEFAULT_MODEL, source_digest, summarize_event_cluster,
 )
 from processing.abstractive_validator import normalize
 
@@ -165,13 +165,25 @@ def _persist(session, row: dict):
 
 
 def run(*, limit: int, min_clusters: int, model: str, max_retries: int,
-        output: Path, persist: bool, cluster_ids: list[int] | None = None) -> dict:
+        output: Path, persist: bool, resume: bool = False,
+        cluster_ids: list[int] | None = None) -> dict:
     from database.db import get_session
     from database.models import Cluster, News
     from sqlalchemy import inspect
     session = get_session()
     started = datetime.now(timezone.utc).isoformat()
     rows = []
+    previous = {}
+    if resume:
+        if not output.is_file():
+            raise FileNotFoundError("Cannot resume: no existing JSON report")
+        report = json.loads(output.read_text(encoding="utf-8"))
+        if report.get("stage") != 4 or report.get("model") != model:
+            raise ValueError("Cannot resume: model/stage mismatch")
+        if persist and not report.get("persist_audit_to_db"):
+            raise ValueError("Cannot resume with --persist from a read-only report")
+        started = report.get("created_utc", started)
+        previous = {str(row["cluster_id"]): row for row in report.get("clusters", [])}
     try:
         if persist and not inspect(session.get_bind()).has_table("summary_runs"):
             raise RuntimeError("Apply 'python -m alembic upgrade head' to a BACKED-UP DB")
@@ -182,6 +194,12 @@ def run(*, limit: int, min_clusters: int, model: str, max_retries: int,
         ids = [x[0] for x in query.limit(limit).all()]
         for idx, cluster_id in enumerate(ids, 1):
             materials = _materials(session, cluster_id)
+            cached = previous.get(str(cluster_id))
+            if (cached and cached.get("source_sha256") == source_digest(materials)
+                    and cached.get("model") == model):
+                rows.append(cached)
+                print(f"[{idx}/{len(ids)}] #{cluster_id} resumed, source unchanged", flush=True)
+                continue
             baseline, textrank_flags = _textrank(materials)
             outcome = summarize_event_cluster(
                 cluster_id, materials, baseline, model=model,
@@ -204,8 +222,10 @@ def run(*, limit: int, min_clusters: int, model: str, max_retries: int,
                   f"flags={outcome['validation'].get('issues', [])}", flush=True)
     finally:
         session.close()
-    return assemble(rows, min_clusters=min_clusters, model=model,
-                    started_utc=started, persisted=persist)
+    final = assemble(rows, min_clusters=min_clusters, model=model,
+                     started_utc=started, persisted=persist)
+    checkpoint(output, final)
+    return final
 
 
 def main(argv=None) -> int:
@@ -217,6 +237,8 @@ def main(argv=None) -> int:
     parser.add_argument("--model", choices=sorted(ALLOWED_MODELS), default=DEFAULT_MODEL)
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--resume", action="store_true",
+                        help="Reuse successful or review results when source and model match")
     parser.add_argument("--persist", action="store_true",
                         help="Append audit rows to migrated DB. No legacy writes.")
     args = parser.parse_args(argv)
@@ -226,7 +248,7 @@ def main(argv=None) -> int:
         parser.error("Output must be a JSON file")
     report = run(limit=args.limit, min_clusters=args.min_clusters, model=args.model,
                  max_retries=args.max_retries, output=args.output,
-                 persist=args.persist, cluster_ids=args.cluster_id)
+                 persist=args.persist, resume=args.resume, cluster_ids=args.cluster_id)
     stats = report["metrics"]
     print(json.dumps(stats, ensure_ascii=False, indent=2))
     print(f"Report: {args.output.resolve()}")
