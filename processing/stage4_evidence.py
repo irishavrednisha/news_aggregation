@@ -35,7 +35,7 @@ STOP = {"в", "на", "по", "для", "из", "при", "что", "как", "�
         "завод", "от", "и", "с", "об", "год", "уже", "свой"}
 
 
-def shared_boilerplate(cluster_materials: list[list[dict]], min_documents: int = 4
+def shared_boilerplate(cluster_materials: list[list[dict]], min_documents: int = 2
                        ) -> dict[str, set[str]]:
     """High-frequency same-source long sentences across DISTINCT clusters."""
     counts: dict[str, Counter] = defaultdict(Counter)
@@ -49,8 +49,12 @@ def shared_boilerplate(cluster_materials: list[list[dict]], min_documents: int =
                     by_source[source].add(key)
         for source, keys in by_source.items():
             counts[source].update(keys)
-    return {src: {s for s, n in counter.items() if n >= min_documents}
-            for src, counter in counts.items()}
+    return {
+        src: {s for s, n in counter.items()
+              if n >= min_documents and (n >= 4 or repeated_count >= 4)}
+        for src, counter in counts.items()
+        for repeated_count in [sum(n >= min_documents for n in counter.values())]
+    }
 
 
 def clean_working_materials(materials: list[dict],
