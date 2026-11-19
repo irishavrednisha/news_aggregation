@@ -421,10 +421,12 @@ def choose_existing_cluster(row: object, embedding: list[float],
             rejections.append((strongest, refused[0].reason, cluster["id"]))
             continue
         minimum = min(result.similarity for _, result in outcomes)
-        candidates.append((minimum, cluster["id"], cluster))
+        reasons = ",".join(sorted({result.reason for _, result in outcomes}))
+        candidates.append((minimum, cluster["id"], cluster, reasons))
     if candidates:
         candidates.sort(key=lambda item: (-item[0], str(item[1])))
-        return candidates[0][2], EventDecision(True, candidates[0][0], "all_members_agree")
+        chosen = candidates[0]
+        return chosen[2], EventDecision(True, chosen[0], "all_members_agree:" + chosen[3])
     rejections.sort(key=lambda item: (-item[0], str(item[2])))
     if rejections:
         return None, EventDecision(False, rejections[0][0], rejections[0][1])
