@@ -145,7 +145,7 @@ def validate_summary(summary: str, materials: list[dict],
     if summary and len(summary) < 80:
         flags.append("very_short")
     if len(parts) < 3 or len(parts) > 5:
-        flags.append("outside_target_3_to_5_sentences")
+        issues.append("outside_target_3_to_5_sentences")
 
     orig_numbers = _number_contexts(source)
     new_numbers = _number_contexts(summary)
