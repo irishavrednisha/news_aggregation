@@ -18,10 +18,11 @@ from processing.abstractive_validator import (
 from processing.extractive_rewriter import ollama_rewrite
 from processing.stage4_evidence import extract_grounded_facts
 from processing.stage4_verification import evidence_bank, check_indexed_verdict
+from processing.stage4_quality import quality_issues, source_integrity_issues
 
 ALLOWED_MODELS = frozenset({"gemma3:4b", "gemma3:1b", "gemma2:2b"})
 DEFAULT_MODEL = "gemma3:4b"
-PIPELINE_VERSION = "stage4-indexed-evidence-v3"
+PIPELINE_VERSION = "stage4-verified-quality-v4"
 PARAMETERS = {"temperature": 0, "num_ctx": 4096, "num_predict": 1024}
 KINDS = frozenset({"organization", "event", "object", "location", "date", "number", "outcome"})
 FACT_FORMAT = {
@@ -73,7 +74,10 @@ SUMMARY_SYSTEM = """Напиши НОВУЮ самостоятельную св�
 и дублирования смыслов. Соблюдай различия между планом, продолжающейся работой и завершённым
 результатом, между прогнозом и достигнутым значением, ростом и падением.
 Не придумывай статусов завершения и не переносись от одного события к другому.
-Без рекламных оценок, пустых дат «на годы» и непроверяемых эпитетов. Если достоверной связной сводки сделать нельзя, верни пустую summary.
+Без рекламных оценок, пустых дат «на годы» и непроверяемых эпитетов.
+Проверь согласование рода и числа во всех предложениях, правильные падежи,
+не склеивай слова и цитаты без пробелов, не воспроизводи поврежденные
+обороты из исходника. Не пиши «судно будет достроен», «соглашение на годы». Если достоверной связной сводки сделать нельзя, верни пустую summary.
 Верни только JSON: {"summary": "..."}."""
 
 VERDICT_SYSTEM = """Проверь каждое предложение новости на точное соответствие источникам.
@@ -245,6 +249,11 @@ def summarize_event_cluster(
         outcome.validation["issues"] = fact_issues
         outcome.validation["source_cleanup_notes"] = outcome.source_cleanup_notes
         return outcome
+    source_issues = source_integrity_issues(working)
+    if source_issues:
+        outcome.validation["issues"] = source_issues
+        outcome.validation["source_cleanup_notes"] = outcome.source_cleanup_notes
+        return outcome
 
     prior_issues: list[str] = []
     for attempt_no in range(1, max_retries + 2):
@@ -268,17 +277,22 @@ def summarize_event_cluster(
         if outcome.source_cleanup_notes:
             entry["validation"]["source_cleanup_notes"] = outcome.source_cleanup_notes
         issues = list(check.issues)
+        issues.extend(quality_issues(candidate))
         if not candidate:
             issues.append("empty_generation")
         if check.copied_sentence_ratio > .50:
             issues.append("mostly_extractive")
         if not issues:
             try:
-                bank = evidence_bank(working, facts)
+                bank = evidence_bank(working, facts, candidate)
                 entry["source_evidence"] = bank
                 verdict = call(_messages_for_verdict(candidate, bank),
                                VERDICT_FORMAT, model=model)
                 entry["semantic_verdict"] = verdict
+                if (isinstance(verdict, dict) and isinstance(verdict.get("claims"), list)
+                        and len(verdict["claims"]) > len(sentences(candidate))):
+                    entry["validation"].setdefault("flags", []).append(
+                        "semantic_extra_claims_ignored")
                 issues += check_indexed_verdict(verdict, candidate, bank)
             except Exception as exc:
                 issues.append("semantic_verifier_error:" + type(exc).__name__ + ":" + str(exc)[:160])
