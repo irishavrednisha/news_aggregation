@@ -262,7 +262,10 @@ def compare_pair_labels(rows, baseline, revised, path, input_path):
         reviewed_pairs.add(pair)
     result = {}
     for name, assignments in maps.items():
-        counts = Counter()
+        counts = Counter({key: 0 for key in (
+            "gold_same_event", "gold_different_event", "correct_merge",
+            "false_merge", "missed_merge", "correct_separation"
+        )})
         mistakes = []
         for entry in pairs:
             # Compact human-reviewed fixtures may use original accepted row
