@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
+from os.path import commonprefix
 import re
 
 SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[А-ЯЁA-Z«\"])")
@@ -41,6 +42,36 @@ def normalize(text: str) -> str:
 
 def sentences(text: str) -> list[str]:
     return [x.strip() for x in SENTENCE_RE.split((text or "").strip()) if x.strip()]
+
+
+def _stem_match(a: str, b: str) -> bool:
+    """Case endings of the same long Cyrillic name, not arbitrary synonyms."""
+    a, b = normalize(a), normalize(b)
+    if a == b:
+        return True
+    if not a or not b or a[:5] != b[:5]:
+        return False
+    prefix = len(commonprefix([a, b]))
+    return prefix >= max(5, min(len(a), len(b)) - 3)
+
+
+def _inflected_token_in_source(word: str, source: str) -> bool:
+    # Only candidates with a sufficiently long common lexical base.
+    return any(_stem_match(word, match.group())
+               for match in TOKEN_RE.finditer(source)
+               if len(match.group()) >= 5)
+
+
+def _inflected_phrase_in_source(value: str, source: str) -> bool:
+    """A quoted name may be inflected, but may not change its word sequence."""
+    words = TOKEN_RE.findall(value)
+    if not words:
+        return False
+    source_words = TOKEN_RE.findall(source)
+    count = len(words)
+    return any(all(_stem_match(a, b) for a, b in zip(
+                words, source_words[i:i+count]))
+               for i in range(len(source_words) - count + 1))
 
 
 def _number_key(value: str) -> str:
@@ -130,7 +161,8 @@ def validate_summary(summary: str, materials: list[dict],
                 and not re.search(r"\b" + re.escape(stem), norm_source)):
             issues.append("unsupported_technical_object:" + stem)
     for quoted in QUOTES_RE.findall(summary):
-        if normalize(quoted) not in norm_source:
+        if (normalize(quoted) not in norm_source
+                and not _inflected_phrase_in_source(quoted, source)):
             issues.append("unsupported_quoted_name:" + quoted[:60])
     original_acronyms = set(ACRONYM_RE.findall(source))
     for acronym in ACRONYM_RE.findall(summary):
@@ -140,15 +172,33 @@ def validate_summary(summary: str, materials: list[dict],
         name = match.group()
         if name in COMMON_STARTS:
             continue
-        if name.casefold().replace("ё", "е") not in norm_source:
+        if (name.casefold().replace("ё", "е") not in norm_source
+                and not _inflected_token_in_source(name, source)):
             # Capitals in the middle of a sentence are particularly likely to be
             # named places/organizations; initial generic words are ambiguous.
             prefix = summary[:match.start()]
             if prefix and not re.search(r"[.!?]\s*$", prefix):
                 issues.append("unsupported_proper_name:" + name)
     for month in MONTHS:
+        if month in {"мая", "мае", "май"}:
+            if (re.search(r"\\b(?:мая|мае|май)\\b", normalize(summary))
+                    and not re.search(r"\\b(?:мая|мае|май)\\b", norm_source)):
+                issues.append("unsupported_month:май")
+            continue
         if month in normalize(summary) and month not in norm_source:
             issues.append("unsupported_month:" + month)
+    # Main-event tense/forecast guards: source headlines are first-class facts.
+    # They catch completed-vs-ongoing claims missed by the same LLM verifier.
+    main_title = normalize(str(materials[0].get("title") or "")) if materials else ""
+    first_sentence = normalize(parts[0]) if parts else ""
+    if (re.search(r"\\bзаверша(?:ется|ются|ют|ет)\\b", main_title)
+            and re.search(r"\\b(?:завершил\\w*|закончил\\w*|окончил\\w*)\\b",
+                          first_sentence)):
+        issues.append("main_event_ongoing_changed_to_completed")
+    if (re.search(r"\\b(?:прогнозиру\\w*|ожида\\w*|планиру\\w*)\\b", main_title)
+            and re.search(r"\\b(?:зафиксировал\\w*|достиг\\w*|составил\\w*|получил\\w*)\\b",
+                          first_sentence)):
+        issues.append("forecast_changed_to_observed_result")
     # These are coarse global guards. A claim-by-claim verification follows.
     if FUTURE_RE.search(source) and not DONE_RE.search(source) and DONE_RE.search(summary):
         issues.append("planned_event_changed_to_completed")
