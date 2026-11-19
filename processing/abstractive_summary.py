@@ -17,10 +17,11 @@ from processing.abstractive_validator import (
 )
 from processing.extractive_rewriter import ollama_rewrite
 from processing.stage4_evidence import extract_grounded_facts
+from processing.stage4_verification import evidence_bank, check_indexed_verdict
 
 ALLOWED_MODELS = frozenset({"gemma3:4b", "gemma3:1b", "gemma2:2b"})
 DEFAULT_MODEL = "gemma3:4b"
-PIPELINE_VERSION = "stage4-literal-evidence-v2"
+PIPELINE_VERSION = "stage4-indexed-evidence-v3"
 PARAMETERS = {"temperature": 0, "num_ctx": 4096, "num_predict": 1024}
 KINDS = frozenset({"organization", "event", "object", "location", "date", "number", "outcome"})
 FACT_FORMAT = {
@@ -42,10 +43,13 @@ SUMMARY_FORMAT = {
 VERDICT_FORMAT = {
     "type": "object",
     "properties": {"claims": {"type": "array", "items": {"type": "object",
-        "properties": {"claim": {"type": "string"}, "verdict": {
-            "type": "string", "enum": ["supported", "unsupported", "uncertain"]},
-            "evidence": {"type": "string"}},
-        "required": ["claim", "verdict", "evidence"]}}},
+        "properties": {
+            "sentence_id": {"type": "integer"},
+            "verdict": {"type": "string", "enum": ["supported", "unsupported", "uncertain"]},
+            "evidence_ids": {"type": "array", "items": {"type": "integer"}},
+        },
+        "required": ["sentence_id", "verdict", "evidence_ids"]
+    }}},
     "required": ["claims"],
 }
 
@@ -66,18 +70,24 @@ SUMMARY_SYSTEM = """Напиши НОВУЮ самостоятельную св�
 Напиши сводку целиком заново, не заменяй пословно каждый исходный оборот.
 Начни с главного события, затем контекст и значимые детали. 3–5 предложений,
 до 800 символов. Без повтора заголовка целиком, списков, рекламы, канцеляризмов
-и дублирования смыслов. Соблюдай различия между планом и фактом, ростом и
-падением. Если достоверной связной сводки сделать нельзя, верни пустую summary.
+и дублирования смыслов. Соблюдай различия между планом, продолжающейся работой и завершённым
+результатом, между прогнозом и достигнутым значением, ростом и падением.
+Не придумывай статусов завершения и не переносись от одного события к другому.
+Без рекламных оценок, пустых дат «на годы» и непроверяемых эпитетов. Если достоверной связной сводки сделать нельзя, верни пустую summary.
 Верни только JSON: {"summary": "..."}."""
 
-VERDICT_SYSTEM = """Проверь каждое предложение сводки на предмет фактической опоры.
-Верни JSON claims: ПО ОДНОМУ элементу на предложение В ИСХОДНОМ ПОРЯДКЕ.
-claim = предложение сводки дословно. verdict = supported, unsupported, uncertain.
-Для supported поле evidence должно содержать ДОСЛОВНЫЙ фрагмент исходных
-документов, который поддерживает ВСЕ утверждения предложения. Если оно состоит
-из нескольких независимых фактов без единой цитаты, ответь uncertain. В поле
-evidence не придумывай цитат. При любом сомнении выбирай uncertain.
-Никакого текста вне JSON."""
+VERDICT_SYSTEM = """Проверь каждое предложение новости на точное соответствие источникам.
+Ты получаешь уже РАЗБИТЫЕ на предложения summary_sentences с идентификаторами
+sentence_id и только ДОСЛОВНЫЕ цитаты source_evidence, каждая с id.
+Верни JSON claims: РОВНО по одной записи на каждый sentence_id.
+Каждая запись: sentence_id (целое число), verdict (supported, unsupported,
+uncertain), evidence_ids (массив целых id реальных фрагментов source_evidence).
+МОЖНО указать НЕСКОЛЬКО id, если предложение содержит несколько фактов.
+Нельзя создавать или изменять цитаты и id, нельзя ссылаться на id,
+которых нет в source_evidence. Если нет прямой опоры хотя бы для одного
+утверждения, verdict=uncertain или unsupported.
+Даже если источник перечисляет похожие факты, проверяй субъект,
+событие, числа, даты, отрицание, факт/план. Никакого текста вне JSON."""
 
 
 def _source_text(material: dict) -> str:
@@ -147,10 +157,12 @@ def _messages_for_summary(facts: list[dict], materials: list[dict],
             {"role": "user", "content": json.dumps(content, ensure_ascii=False)}]
 
 
-def _messages_for_verdict(summary: str, materials: list[dict]) -> list[dict]:
+def _messages_for_verdict(summary: str, bank: list[dict]) -> list[dict]:
+    indexed = [{"sentence_id": i, "text": part}
+               for i, part in enumerate(sentences(summary), 1)]
     return [{"role": "system", "content": VERDICT_SYSTEM},
             {"role": "user", "content": json.dumps({
-                "source_fragments": _selected_sources(materials), "summary": summary,
+                "summary_sentences": indexed, "source_evidence": bank
             }, ensure_ascii=False)}]
 
 
@@ -262,10 +274,12 @@ def summarize_event_cluster(
             issues.append("mostly_extractive")
         if not issues:
             try:
-                verdict = call(_messages_for_verdict(candidate, working),
+                bank = evidence_bank(working, facts)
+                entry["source_evidence"] = bank
+                verdict = call(_messages_for_verdict(candidate, bank),
                                VERDICT_FORMAT, model=model)
                 entry["semantic_verdict"] = verdict
-                issues += check_semantic_verdict(verdict, candidate, working)
+                issues += check_indexed_verdict(verdict, candidate, bank)
             except Exception as exc:
                 issues.append("semantic_verifier_error:" + type(exc).__name__ + ":" + str(exc)[:160])
         if issues:
