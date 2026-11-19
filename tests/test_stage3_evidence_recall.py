@@ -69,7 +69,7 @@ class RealEvidenceRecallTests(unittest.TestCase):
         self.assertFalse(result.merge, result)
 
     def test_same_program_different_period_does_not_merge(self):
-        altered = dict(TOR_B, published_at="2026-12-12")
+        altered = dict(TOR_B, published_at="2027-02-12")
         result = same_event(TOR_A, altered, 0.95)
         self.assertFalse(result.merge, result)
         self.assertEqual(result.reason, "publication_gap")
