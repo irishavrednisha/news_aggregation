@@ -105,6 +105,16 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(any("unsupported_quoted_name:" in x for x in
                             validate_summary(altered, original).issues))
 
+    def test_similar_prefix_is_not_same_organization(self):
+        original = [{"title": "Предприятие «Северный» построило цех",
+                     "text": "Компания «Северный» запустила новую производственную линию."}]
+        summary = ("Компания «Северсталь» запустила новую линию. "
+                   "Предприятие расширило производственный цех. "
+                   "Работы проводились на площадке завода.")
+        issues = validate_summary(summary, original).issues
+        self.assertTrue(any("unsupported_quoted_name:Северсталь" in i
+                            for i in issues), issues)
+
     def test_ongoing_harvest_not_reported_as_completed(self):
         original = [{"title": "На птицефабрике завершается посев озимой пшеницы",
                      "text": "Предприятие продолжает посев озимых культур. "
