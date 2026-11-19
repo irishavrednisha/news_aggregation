@@ -1,0 +1,172 @@
+"""No Ollama or database needed: mocked real contract and failure modes."""
+from __future__ import annotations
+
+import unittest
+from processing.abstractive_summary import (
+    FACT_FORMAT, SUMMARY_FORMAT, VERDICT_FORMAT, summarize_event_cluster,
+)
+from processing.abstractive_validator import validate_summary
+from scripts.run_stage4_summaries import assemble, metrics, representative
+
+SOURCE = (
+    "АО «Север» сообщило о запуске новой линии обработки металла на предприятии "
+    "в Туле. В сообщении указано, что линия оснащена 40 станками и предназначена "
+    "для выпуска деталей для промышленного оборудования. Производительность "
+    "комплекса составляет 120 изделий в месяц. Работы по установке линии "
+    "завершились в ноябре 2026 года."
+)
+MATERIAL = [{"id": 11, "title": "АО «Север» запустило линию в Туле",
+             "text": SOURCE, "url": "https://example.org/one", "is_primary": True,
+             "published_at": "2026-11-01"}]
+DRAFT = (
+    "В Туле предприятие «Север» ввело в эксплуатацию линию металлообработки. "
+    "Комплекс с 40 станками будет выпускать детали для промышленного оборудования. "
+    "Заявленная производительность оборудования составляет 120 изделий в месяц."
+)
+FACTS = {"facts": [
+    {"kind": "organization", "value": "АО «Север»", "quote": "АО «Север» сообщило",
+     "source_id": "11"},
+    {"kind": "event", "value": "запуске новой линии обработки металла",
+     "quote": "сообщило о запуске новой линии обработки металла", "source_id": "11"},
+    {"kind": "number", "value": "40 станками",
+     "quote": "линия оснащена 40 станками", "source_id": "11"},
+    {"kind": "number", "value": "120 изделий в месяц",
+     "quote": "составляет 120 изделий в месяц", "source_id": "11"},
+]}
+EVIDENCES = [
+    "АО «Север» сообщило о запуске новой линии обработки металла на предприятии в Туле",
+    "линия оснащена 40 станками и предназначена для выпуска деталей для промышленного оборудования",
+    "Производительность комплекса составляет 120 изделий в месяц",
+]
+
+
+def stub(summary=DRAFT):
+    calls = []
+    def request(messages, schema, *, model):
+        calls.append((messages, schema, model))
+        if schema is FACT_FORMAT:
+            return FACTS
+        if schema is SUMMARY_FORMAT:
+            return {"summary": summary}
+        if schema is VERDICT_FORMAT:
+            from processing.abstractive_validator import sentences
+            return {"claims": [
+                {"claim": part, "verdict": "supported", "evidence": EVIDENCES[i]}
+                for i, part in enumerate(sentences(summary))
+            ]}
+        raise AssertionError("Unexpected request schema")
+    return request, calls
+
+
+class ValidatorTests(unittest.TestCase):
+    def test_valid_draft(self):
+        result = validate_summary(DRAFT, MATERIAL)
+        self.assertTrue(result.passed, result.issues)
+        self.assertEqual(result.sentence_count, 3)
+
+    def test_unsupported_numbers_and_unit(self):
+        self.assertIn("unsupported_number:50",
+                      validate_summary(DRAFT.replace("40 станками", "50 станками"),
+                                       MATERIAL).issues)
+        issues = validate_summary(
+            DRAFT.replace("40 станками", "40 тонн"), MATERIAL).issues
+        self.assertIn("number_unit_mismatch:40", issues)
+
+    def test_made_up_organization(self):
+        issues = validate_summary(DRAFT.replace("«Север»", "«Искра»"), MATERIAL).issues
+        self.assertTrue(any(x.startswith("unsupported_quoted_name:") for x in issues))
+
+    def test_invented_cause(self):
+        issues = validate_summary(DRAFT.replace("Комплекс с", "Благодаря субсидиям комплекс с"),
+                                  MATERIAL).issues
+        self.assertIn("unsupported_explicit_cause", issues)
+
+    def test_planned_not_completed(self):
+        original = [{"title": "Предприятие планирует запуск",
+                     "text": "Компания планирует создать линию на заводе. "
+                             "Предприятие намерено установить оборудование." * 3}]
+        result = validate_summary(
+            "Завод запустил линию. Предприятие начало работу. "
+            "Оборудование используется в производстве.", original)
+        self.assertIn("planned_event_changed_to_completed", result.issues)
+
+    def test_repetition(self):
+        repeated = "Предприятие «Север» ввело линию. " * 3
+        self.assertIn("repeated_sentences",
+                      validate_summary(repeated, MATERIAL).issues)
+
+
+class PipelineTests(unittest.TestCase):
+    def test_happy_path_is_draft_not_approved(self):
+        request, calls = stub()
+        result = summarize_event_cluster(19, MATERIAL, "TextRank original.",
+                                         request=request, max_retries=0)
+        self.assertEqual(result.status, "summary_draft", result.validation)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(result.facts), 4)
+        self.assertEqual(result.gemma_summary, DRAFT)
+        self.assertEqual(result.source_materials[0]["text"], SOURCE)
+        self.assertTrue(result.validation["passed"])
+
+    def test_retries_exhaust_then_manual_review(self):
+        request, calls = stub(DRAFT.replace("40 станками", "50 станками"))
+        result = summarize_event_cluster(19, MATERIAL, "TextRank original.",
+                                         request=request, max_retries=2)
+        self.assertEqual(result.status, "summary_review")
+        self.assertEqual(len(result.attempts), 3)
+        self.assertTrue(all(not x["validation"]["passed"] for x in result.attempts))
+        self.assertIn("unsupported_number:50", result.validation["issues"])
+        self.assertEqual(len(calls), 4)  # one fact extraction + three candidates
+
+    def test_insufficient_material_does_not_call_model(self):
+        request, calls = stub()
+        result = summarize_event_cluster(
+            1, [{"id": 1, "title": "Вопрос", "text": "мало"}], "",
+            request=request)
+        self.assertEqual(result.status, "summary_review")
+        self.assertEqual(result.validation["issues"], ["insufficient_source_material"])
+        self.assertFalse(calls)
+
+    def test_unverifiable_fact_fails_before_generation(self):
+        def request(messages, schema, *, model):
+            assert schema is FACT_FORMAT
+            return {"facts": [
+                {"kind": "event", "value": "запуск",
+                 "quote": "Компания произвела запуск нового реактора",
+                 "source_id": "11"}]}
+        result = summarize_event_cluster(1, MATERIAL, "", request=request)
+        self.assertEqual(result.status, "summary_review")
+        self.assertIn("fact_1_unverifiable_source_quote", result.validation["issues"])
+
+    def test_refuse_cloud_and_oversized_model(self):
+        for model in ("gemma3:cloud", "gemma3:12b", "qwen3.5:4b"):
+            with self.subTest(model=model), self.assertRaises(ValueError):
+                summarize_event_cluster(1, MATERIAL, "", model=model)
+
+    def test_verdict_wrong_or_fake_quote_blocks_draft(self):
+        request, calls = stub()
+        def fake(messages, schema, *, model):
+            if schema is VERDICT_FORMAT:
+                return {"claims": [{"claim": part, "verdict": "supported",
+                                    "evidence": "выдуманная цитата"}
+                                   for part in DRAFT.split(". ")][:3]}
+            return request(messages, schema, model=model)
+        result = summarize_event_cluster(19, MATERIAL, "", request=fake, max_retries=0)
+        self.assertEqual(result.status, "summary_review")
+        self.assertTrue(any("semantic_claim_" in x for x in result.validation["issues"]))
+
+    def test_report_never_claims_manual_accuracy(self):
+        request, _ = stub()
+        row = summarize_event_cluster(19, MATERIAL, "", request=request,
+                                      max_retries=0).to_dict()
+        report = assemble([row], min_clusters=100, model="gemma3:4b",
+                          started_utc="2026-11-19T00:00:00Z", persisted=False)
+        self.assertFalse(report["metrics"]["minimum_sample_met"])
+        self.assertIsNone(report["metrics"]["manual_factual_accuracy"])
+        self.assertEqual(report["representative_before_after"][0]["status"],
+                         "summary_draft")
+        self.assertEqual(len(report["clusters"]), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
