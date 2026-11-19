@@ -185,7 +185,7 @@ def summarize_event_cluster(
     _model_check(model)
     if not 0 <= max_retries <= 2:
         raise ValueError("max_retries must be 0..2")
-    materials = [{"id": str(m.get("id")), "url": str(m.get("url") or ""),
+    materials = [{"id": str(m.get("id")), "url": str(m.get("url") or ""), "source": str(m.get("source") or ""),
                   "title": str(m.get("title") or ""), "text": str(m.get("text") or ""),
                   "published_at": str(m.get("published_at") or ""),
                   "is_primary": bool(m.get("is_primary"))}
