@@ -15,6 +15,7 @@ from database.db import Base, engine  # noqa: E402
 import database.models  # noqa: E402,F401
 import database.moderation_models  # noqa: E402,F401
 import database.intake_models  # noqa: E402,F401
+import database.summary_models  # noqa: E402,F401
 
 config = context.config
 if config.config_file_name is not None:
