@@ -171,11 +171,12 @@ def _persist(session, row: dict):
 
 def run(*, limit: int, min_clusters: int, model: str, max_retries: int,
         output: Path, persist: bool, resume: bool = False,
-        cluster_ids: list[int] | None = None) -> dict:
-    from database.db import get_session
-    from database.models import Cluster, News
-    from sqlalchemy import inspect
-    session = get_session()
+        cluster_ids: list[int] | None = None, input_json: Path | None = None) -> dict:
+    """Use either unchanged legacy PostgreSQL or the exact previous 100 source snapshots."""
+    if input_json and persist:
+        raise ValueError("JSON replay is read-only: --persist is disabled")
+    if input_json and input_json.resolve() == output.resolve():
+        raise ValueError("Never overwrite the previous source JSON")
     started = datetime.now(timezone.utc).isoformat()
     rows = []
     previous = {}
@@ -185,29 +186,50 @@ def run(*, limit: int, min_clusters: int, model: str, max_retries: int,
         report = json.loads(output.read_text(encoding="utf-8"))
         if (report.get("stage") != 4 or report.get("model") != model
                 or report.get("pipeline_version") != PIPELINE_VERSION):
-            raise ValueError("Cannot resume: model/stage mismatch")
+            raise ValueError("Cannot resume: model/stage/pipeline mismatch")
         if persist and not report.get("persist_audit_to_db"):
             raise ValueError("Cannot resume with --persist from a read-only report")
         started = report.get("created_utc", started)
         previous = {str(row["cluster_id"]): row for row in report.get("clusters", [])}
-    try:
+    session = None
+    if input_json:
+        original = json.loads(input_json.read_text(encoding="utf-8"))
+        if original.get("stage") != 4 or not isinstance(original.get("clusters"), list):
+            raise ValueError("Input JSON must be the original Stage 4 report")
+        source_sets = {}
+        for row in original["clusters"]:
+            ident = int(row["cluster_id"])
+            if (not cluster_ids or ident in cluster_ids) and ident not in source_sets:
+                source_sets[ident] = row["source_materials"]
+                if len(source_sets) >= limit:
+                    break
+    else:
+        from database.db import get_session
+        from database.models import Cluster, News
+        from sqlalchemy import inspect
+        session = get_session()
         if persist and not inspect(session.get_bind()).has_table("summary_runs"):
+            session.close()
             raise RuntimeError("Apply 'python -m alembic upgrade head' to a BACKED-UP DB")
-        query = (session.query(Cluster.id).join(News, News.cluster_id == Cluster.id)
-                 .distinct().order_by(Cluster.id.desc()))
-        if cluster_ids:
-            query = query.filter(Cluster.id.in_(cluster_ids))
-        ids = [x[0] for x in query.limit(limit).all()]
-        source_sets = {cluster_id: _materials(session, cluster_id) for cluster_id in ids}
+        try:
+            query = (session.query(Cluster.id).join(News, News.cluster_id == Cluster.id)
+                     .distinct().order_by(Cluster.id.desc()))
+            if cluster_ids:
+                query = query.filter(Cluster.id.in_(cluster_ids))
+            ids = [r[0] for r in query.limit(limit).all()]
+            source_sets = {cluster_id: _materials(session, cluster_id) for cluster_id in ids}
+        except Exception:
+            session.close()
+            raise
+    try:
         shared = shared_boilerplate(list(source_sets.values()))
-        for idx, cluster_id in enumerate(ids, 1):
-            materials = source_sets[cluster_id]
+        for idx, (cluster_id, materials) in enumerate(source_sets.items(), 1):
             cached = previous.get(str(cluster_id))
             if (cached and cached.get("source_sha256") == source_digest(materials)
                     and cached.get("model") == model
                     and cached.get("pipeline_version") == PIPELINE_VERSION):
                 rows.append(cached)
-                print(f"[{idx}/{len(ids)}] #{cluster_id} resumed, source unchanged", flush=True)
+                print(f"[{idx}/{len(source_sets)}] #{cluster_id} reused", flush=True)
                 continue
             working, cleanup_notes = clean_working_materials(materials, shared)
             baseline, textrank_flags = _textrank(working)
@@ -228,13 +250,15 @@ def run(*, limit: int, min_clusters: int, model: str, max_retries: int,
             checkpoint(output, assemble(rows, min_clusters=min_clusters,
                                         model=model, started_utc=started,
                                         persisted=persist))
-            print(f"[{idx}/{len(ids)}] #{cluster_id} {outcome['status']} "
+            print(f"[{idx}/{len(source_sets)}] #{cluster_id} {outcome['status']} "
                   f"{len(outcome['gemma_summary'])} chars; "
-                  f"flags={outcome['validation'].get('issues', [])}", flush=True)
+                  f"issues={outcome['validation'].get('issues', [])}", flush=True)
     finally:
-        session.close()
+        if session is not None:
+            session.close()
     final = assemble(rows, min_clusters=min_clusters, model=model,
                      started_utc=started, persisted=persist)
+    final["source_input_mode"] = "previous_real_json" if input_json else "postgresql"
     checkpoint(output, final)
     return final
 
@@ -242,6 +266,8 @@ def run(*, limit: int, min_clusters: int, model: str, max_retries: int,
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Local Gemma source-grounded summary audit; no publishing")
+    parser.add_argument("--input-json", type=Path, default=None,
+                        help="Replay the EXACT original 100 real cluster source snapshots")
     parser.add_argument("--limit", type=int, default=100)
     parser.add_argument("--min-clusters", type=int, default=100)
     parser.add_argument("--cluster-id", type=int, action="append", default=[])
@@ -255,11 +281,16 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.limit < 1 or args.min_clusters < 1 or not 0 <= args.max_retries <= 2:
         parser.error("Positive limits, max-retries 0..2 required")
+    if args.input_json and args.persist:
+        parser.error("--persist cannot be used with --input-json")
+    if args.input_json and args.input_json.resolve() == args.output.resolve():
+        parser.error("Refusing to overwrite the input JSON")
     if args.output.suffix.casefold() != ".json":
         parser.error("Output must be a JSON file")
     report = run(limit=args.limit, min_clusters=args.min_clusters, model=args.model,
                  max_retries=args.max_retries, output=args.output,
-                 persist=args.persist, resume=args.resume, cluster_ids=args.cluster_id)
+                 persist=args.persist, resume=args.resume, cluster_ids=args.cluster_id,
+                 input_json=args.input_json)
     stats = report["metrics"]
     print(json.dumps(stats, ensure_ascii=False, indent=2))
     print(f"Report: {args.output.resolve()}")
