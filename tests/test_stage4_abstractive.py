@@ -72,6 +72,15 @@ class ValidatorTests(unittest.TestCase):
             DRAFT.replace("40 станками", "40 тонн"), MATERIAL).issues
         self.assertIn("number_unit_mismatch:40", issues)
 
+    def test_invented_technical_object(self):
+        candidate = DRAFT.replace("линия металлообработки", "ядерный реактор")
+        issues = validate_summary(candidate, MATERIAL).issues
+        self.assertTrue(any(x.startswith("unsupported_technical_object:реактор") for x in issues))
+
+    def test_copied_headline(self):
+        copied = "АО «Север» запустило линию в Туле. " + DRAFT
+        self.assertIn("headline_copied_verbatim", validate_summary(copied, MATERIAL).issues)
+
     def test_made_up_organization(self):
         issues = validate_summary(DRAFT.replace("«Север»", "«Искра»"), MATERIAL).issues
         self.assertTrue(any(x.startswith("unsupported_quoted_name:") for x in issues))
