@@ -206,6 +206,99 @@ def technical_specs(row: object) -> frozenset[tuple[str, float]]:
     return frozenset(result)
 
 
+# Corroboration may rescue an SBERT candidate whose headlines use different
+# industry categories ("copper mines" vs "non-ferrous metallurgy"). Never use
+# a generic company name, theme, or numeric coincidence as the sole evidence.
+_NAMED_PROGRAM = re.compile(
+    r'\b(?:тор|оэз|территори\w*\s+опережающ\w*\s+развити\w*)'
+    r'\s*[«"“]\s*([^»"”]{3,65})\s*[»"”]'
+)
+_SPEC_AMOUNT = re.compile(
+    r'\b(\d+(?:[.,]\d+)?)\s*(тыс(?:яч\w*)?\.?|млн\.?|млрд\.?)?\s*'
+    r'(гектар\w*|га|рубл\w*|руб\.?|мвт|гвт|квт|тонн\w*)\b'
+)
+_CONSULTATION_DEADLINE = re.compile(
+    r'\bдо\s+([0-3]?\d)\s+'
+    r'(январ\w*|феврал\w*|март\w*|апрел\w*|ма[йя]|июн\w*|июл\w*|'
+    r'август\w*|сентябр\w*|октябр\w*|ноябр\w*|декабр\w*)'
+)
+
+
+def _event_context(row: object) -> str:
+    # For verification only. SBERT still embeds the headline and short lead.
+    return normalize(_field(row, "title")) + " " + normalize(_field(row, "text"))[:3000]
+
+
+def _program_names(content: str) -> frozenset[str]:
+    return frozenset(match.strip() for match in _NAMED_PROGRAM.findall(content))
+
+
+def _specific_measurements(content: str) -> frozenset[tuple[str, float]]:
+    result = set()
+    for value, scale, unit in _SPEC_AMOUNT.findall(content):
+        number = float(value.replace(",", "."))
+        scale = scale.rstrip(".")
+        if scale.startswith("тыс"):
+            number *= 1_000
+        elif scale == "млн":
+            number *= 1_000_000
+        elif scale == "млрд":
+            number *= 1_000_000_000
+        if unit.startswith("гектар") or unit == "га":
+            key = "hectares"
+        elif unit.startswith("руб"):
+            key = "rubles"
+        elif unit in ("мвт", "гвт", "квт"):
+            key = unit
+        else:
+            key = "tonnes"
+        result.add((key, round(number, 3)))
+    return frozenset(result)
+
+
+def _consultation_day(content: str) -> tuple[int, int] | None:
+    match = _CONSULTATION_DEADLINE.search(content)
+    if not match:
+        return None
+    word = match.group(2)
+    month = next((number for prefix, number in _MONTH.items()
+                  if word.startswith(prefix)), None)
+    return (int(match.group(1)), month) if month else None
+
+
+def _corroborated_same_event(a: object, b: object, score: float) -> str | None:
+    """Two narrowly defined independent-evidence paths; not a threshold waiver.
+
+    Hard company/date/model/stage/quantity/modality vetoes run before this.
+    Keep reporting this reason to audit; never silently merge on text similarity.
+    """
+    if score < 0.71:
+        return None
+    left_day, right_day = day(_field(a, "published_at")), day(_field(b, "published_at"))
+    if not left_day or not right_day or abs((left_day - right_day).days) > 7:
+        return None
+    left, right = _event_context(a), _event_context(b)
+    shared_names = _program_names(left) & _program_names(right)
+    common_specs = _specific_measurements(left) & _specific_measurements(right)
+    independent_units = {unit for unit, _ in common_specs}
+    if shared_names and (len(common_specs) >= 3 or
+                         (len(common_specs) >= 2 and len(independent_units) >= 2)):
+        return "same_named_program_and_measures"
+
+    # Same published draft, same narrow subject, and SAME public-comment
+    # deadline. A mention of gold alone or of "risk" alone is not sufficient.
+    def regulatory_facts(t: str) -> bool:
+        return (bool(re.search(r"россып\w*", t)) and
+                bool(re.search(r"золот\w*", t)) and
+                bool(re.search(r"категори\w*\s+риска", t)) and
+                "обсужден" in t and "постановлен" in t)
+    first_deadline, second_deadline = _consultation_day(left), _consultation_day(right)
+    if (first_deadline and first_deadline == second_deadline and
+            regulatory_facts(left) and regulatory_facts(right)):
+        return "same_regulatory_draft_and_consultation"
+    return None
+
+
 def same_event(a: object, b: object, similarity: float,
                *, candidate_threshold: float = CANDIDATE_THRESHOLD,
                merge_threshold: float = MERGE_THRESHOLD) -> EventDecision:
@@ -232,8 +325,8 @@ def same_event(a: object, b: object, similarity: float,
         compatible = (left.actions | right.actions) == {"development", "presentation"}
         if not compatible or (score < 0.88 and not (strong_specs and score >= 0.71)):
             return EventDecision(False, score, "different_action")
-    if left.objects and right.objects and not left.objects.intersection(right.objects):
-        return EventDecision(False, score, "different_object")
+    different_object = bool(left.objects and right.objects and
+                            not left.objects.intersection(right.objects))
     quantities_a, quantities_b = {}, {}
     for unit, amount in left.quantities:
         quantities_a.setdefault(unit, set()).add(amount)
@@ -247,6 +340,11 @@ def same_event(a: object, b: object, similarity: float,
         gap = abs((left.publication_date - right.publication_date).days)
         if gap > 45 or (gap > 14 and ("production" in left.actions or "production" in right.actions)):
             return EventDecision(False, score, "publication_gap")
+    corroborated = _corroborated_same_event(a, b, score)
+    if corroborated:
+        return EventDecision(True, score, corroborated)
+    if different_object:
+        return EventDecision(False, score, "different_object")
     common_tokens = left.headline_tokens & right.headline_tokens
     # Both company AND action AND object needed for ordinary merges. Very close
     # paraphrases can omit company in one title, but still need action + object.
