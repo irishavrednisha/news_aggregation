@@ -162,10 +162,9 @@ def validate_summary(summary: str, materials: list[dict],
         flags.append("mostly_extractive")
     if len(parts) > 0 and sims and max(sims) > 0.93:
         flags.append("near_verbatim_sentence")
-    word_lengths = [len(w) for w in TOKEN_RE.findall(summary)]
-    # A measurable proxy, not a language-quality judgement.
-    readability_proxy = round(min(1.0, 17.0 / max(17.0, sum(word_lengths) /
-                             max(1, len(parts)) )), 3) if parts else 0.0
+    # Sentence-length proxy ONLY; grammar and naturalness require human scoring.
+    avg_words = len(TOKEN_RE.findall(summary)) / max(1, len(parts))
+    readability_proxy = round(max(0.0, 1.0 - max(0.0, abs(avg_words - 16) - 8) / 20), 3) if parts else 0.0
     return Validation(
         passed=not issues, issues=list(dict.fromkeys(issues)),
         flags=list(dict.fromkeys(flags)), chars=len(summary),
