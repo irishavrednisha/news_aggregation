@@ -52,7 +52,7 @@ def _stem_match(a: str, b: str) -> bool:
     if not a or not b or a[:5] != b[:5]:
         return False
     prefix = len(commonprefix([a, b]))
-    return prefix >= max(5, min(len(a), len(b)) - 3)
+    return prefix >= max(5, min(len(a), len(b)) - 2)
 
 
 def _inflected_token_in_source(word: str, source: str) -> bool:
