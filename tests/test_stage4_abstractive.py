@@ -7,6 +7,7 @@ from processing.abstractive_summary import (
     summarize_event_cluster,
 )
 from processing.abstractive_validator import validate_summary
+from processing.stage4_evidence import shared_boilerplate, clean_working_materials, extract_grounded_facts
 from scripts.run_stage4_summaries import assemble, metrics, representative
 
 SOURCE = (
@@ -112,8 +113,10 @@ class PipelineTests(unittest.TestCase):
         result = summarize_event_cluster(19, MATERIAL, "TextRank original.",
                                          request=request, max_retries=0)
         self.assertEqual(result.status, "summary_draft", result.validation)
-        self.assertEqual(len(calls), 3)
-        self.assertEqual(len(result.facts), 4)
+        self.assertEqual(len(calls), 2)  # summary + semantic review; facts are anchored locally
+        self.assertGreaterEqual(len(result.facts), 3)
+        self.assertTrue(all(f["quote"] in SOURCE or f["quote"] in MATERIAL[0]["title"]
+                            for f in result.facts))
         self.assertEqual(result.gemma_summary, DRAFT)
         self.assertEqual(result.source_materials[0]["text"], SOURCE)
         self.assertTrue(result.validation["passed"])
@@ -126,7 +129,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(result.attempts), 3)
         self.assertTrue(all(not x["validation"]["passed"] for x in result.attempts))
         self.assertIn("unsupported_number:50", result.validation["issues"])
-        self.assertEqual(len(calls), 4)  # one fact extraction + three candidates
+        self.assertEqual(len(calls), 3)  # three attempts; no lossy LLM fact extraction
 
     def test_insufficient_material_does_not_call_model(self):
         request, calls = stub()
@@ -137,16 +140,28 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result.validation["issues"], ["insufficient_source_material"])
         self.assertFalse(calls)
 
-    def test_unverifiable_fact_fails_before_generation(self):
-        def request(messages, schema, *, model):
-            assert schema is FACT_FORMAT
-            return {"facts": [
-                {"kind": "event", "value": "запуск",
-                 "quote": "Компания произвела запуск нового реактора",
-                 "source_id": "11"}]}
-        result = summarize_event_cluster(1, MATERIAL, "", request=request)
-        self.assertEqual(result.status, "summary_review")
-        self.assertIn("fact_1_unverifiable_source_quote", result.validation["issues"])
+    def test_deterministic_facts_are_verifiable_source_spans(self):
+        facts, errors = extract_grounded_facts(MATERIAL)
+        self.assertFalse(errors, errors)
+        self.assertGreaterEqual(len(facts), 3)
+        for fact in facts:
+            self.assertIn(fact["quote"], SOURCE + MATERIAL[0]["title"])
+            self.assertIn(fact["value"], fact["quote"])
+
+    def test_no_invented_event_in_advertorial(self):
+        articles = [{"id": 9, "title": "Обзор промышленного оборудования",
+                     "text": "В статье обсуждаются возможности модернизации. " * 8}]
+        facts, errors = extract_grounded_facts(articles)
+        self.assertEqual(facts, [])
+        self.assertIn("no_supported_news_event", errors)
+
+    def test_cleaned_working_sources_leave_originals_unchanged(self):
+        raw = dict(MATERIAL[0], text=SOURCE + " Услуга чужого сайта.")
+        shared = {"" : {"услуга чужого сайта."}}
+        cleaned, notes = clean_working_materials([raw], shared)
+        # Clip boundaries are conservative (>=450 characters).
+        self.assertEqual(raw["text"], SOURCE + " Услуга чужого сайта.")
+        self.assertNotEqual(raw, cleaned[0]) if notes else self.assertEqual(raw, cleaned[0])
 
     def test_fingerprint_stable_and_invalidated_when_source_changes(self):
         before = source_digest(MATERIAL)
