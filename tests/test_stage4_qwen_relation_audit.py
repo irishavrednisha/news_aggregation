@@ -67,6 +67,15 @@ class RelationsRegressionTests(unittest.TestCase):
                              for x in issues("Компания потратила 1 млн рублей на ремонт.",
                                              source)))
 
+    def test_explicit_spend_not_rejected_next_to_conditional_example(self):
+        source = ("Рассмотрим условный расчёт. Если подрядчик потратит "
+                  "1 млн рублей, срок окупаемости изменится. "
+                  "Предприятие фактически инвестировало 1 млн рублей "
+                  "в модернизацию производственного цеха.")
+        summary = "Предприятие вложило 1 млн рублей в модернизацию."
+        self.assertFalse(any(x.startswith("conditional_amount_presented_as_spending")
+                             for x in issues(summary, source)))
+
     def test_broad_alcohol_volume_not_strong_only(self):
         source = (
             "В январе-октябре производство алкоголя (без учета пива) "
