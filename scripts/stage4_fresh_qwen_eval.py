@@ -127,9 +127,29 @@ def generate(*, out_dir: Path, resume: bool = False, request=None,
     if not checked["ready_for_model_generation"]:
         raise ValueError("The independent sample gate did not pass: " +
                          ",".join(checked["errors"]))
+    output = out_dir/"qwen_holdout.json"
+    # Resuming after the blind packet was issued must NOT rewrite the
+    # auto-report and invalidate the saved review key or human annotations.
+    packet, labels, keyfile = (
+        out_dir/"blind_qwen_review.jsonl",
+        out_dir/"qwen_review_labels.csv",
+        out_dir/"private_qwen_review_key.json",
+    )
+    if resume and all(x.is_file() for x in (output, packet, labels, keyfile)):
+        old = _load(output)
+        key = _load(keyfile)
+        if (old.get("input_sha256") != _sha(manifest_path)
+                or not old.get("complete_requested_run")
+                or len(old.get("clusters") or []) != len(manifest["clusters"])
+                or key.get("qwen_report_sha256") != _sha(output)
+                or key.get("manifest_sha256") != _sha(manifest_path)):
+            raise ValueError("Frozen generated report and blind review key do not match")
+        return {"complete": True, "sample_size": len(old["clusters"]),
+                "multi_document_events": checked["multi_document_events"],
+                "output": str(output), "blind_review_ready": True,
+                "reused_frozen_review_packet": True}
     from scripts.compare_stage4_qwen import run
     from processing.qwen_abstractive_summary import MODEL
-    output = out_dir/"qwen_holdout.json"
     result = run(
         input_path=manifest_path, output=output, limit=len(manifest["clusters"]),
         model=MODEL, request=request, measure_gpu=measure_gpu,
