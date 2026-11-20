@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from urllib.error import HTTPError, URLError
 
 from processing.abstractive_validator import sentences
@@ -109,14 +110,21 @@ def _valid_language(answer: object, summary: str | None = None) -> str | None:
         # actionable language review. At least one concrete 2+word excerpt
         # from the exact summary must be reproduced in the explanation.
         source = " ".join(summary.lower().split())
-        anchored = any(
-            len(m.group(0)) >= 14 and m.group(0) in source
-            for note in answer["notes"]
-            for m in __import__("re").finditer(
-                r"[а-яёa-z0-9-]+(?:\\s+[а-яёa-z0-9-]+)+",
-                " ".join(note.lower().split()),
-            )
-        )
+        anchored = False
+        for note in answer["notes"]:
+            words = re.findall(r"[а-яёa-z0-9-]+", note.lower())
+            for index in range(len(words)):
+                for size in (5, 4, 3, 2):
+                    fragment = " ".join(words[index:index+size])
+                    if (len(fragment) >= 14 and
+                            len(fragment.split()) == size and
+                            fragment in source):
+                        anchored = True
+                        break
+                if anchored:
+                    break
+            if anchored:
+                break
         if not anchored:
             return "language_flag_without_source_excerpt"
     return None
