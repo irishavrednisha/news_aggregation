@@ -362,7 +362,18 @@ def validate_response(answer: object, original: list[dict]) -> dict:
         issues.append("model_requested_review")
     result = {"passed": not issues, "issues": list(dict.fromkeys(issues)),
               "flags": list(dict.fromkeys(flags)),
-              "mechanical_validation_is_not_fact_check": True}
+              "mechanical_validation_is_not_fact_check": True,
+              "quality_axes": {
+                  "news_event": ("model_candidate" if answer["is_news_event"]
+                                 else "model_no_event"),
+                  "industrial_relevance": "not_assessed_by_summarizer",
+                  "source_sufficiency": ("source_present_needs_editorial_check"
+                                          if original else "insufficient"),
+                  "factual_accuracy": "not_established",
+                  "summary_rewrite": ("mechanical_checks_passed_only"
+                                       if not issues else "review_needed"),
+                  "editorial_transfer": "requires_human_approval",
+              }}
     if answer["is_news_event"]:
         result["relation_audit"] = relation_audit
     return result
