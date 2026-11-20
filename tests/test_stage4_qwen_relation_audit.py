@@ -50,6 +50,13 @@ class RelationsRegressionTests(unittest.TestCase):
         self.assertIn("financial_role_mismatch:1.5:cost", issues(wrong, source))
         self.assertNotIn("financial_role_mismatch:1.5:cost", issues(correct, source))
 
+    def test_revenue_is_not_an_expense(self):
+        source = "Выручка предприятия составила 1,5 млрд рублей."
+        self.assertIn("financial_role_mismatch:1.5:cost",
+                      issues("Затраты завода составили 1,5 млрд рублей.", source))
+        self.assertNotIn("financial_role_mismatch:1.5:cost",
+                         issues("Выручка завода составила 1,5 млрд рублей.", source))
+
     def test_hypothetical_budget_not_actual_investment(self):
         source = ("Рассмотрим условный расчёт. Если грузовик перевозит 20 тонн "
                   "сырья по 1 000 рублей за тонну, 50 рейсов — это 1 млн "
