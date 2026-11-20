@@ -18,13 +18,14 @@ from urllib.request import Request, urlopen
 
 from processing.stage4_quality import quality_issues, source_integrity_issues
 from processing.qwen_evidence import build_claims
+from processing.qwen_fact_guards import equivalent_explicit_units, focused_fact_issues
 from processing.abstractive_validator import (
     ACRONYM_RE, CAUSE_RE, DONE_RE, FALL_RE, FUTURE_RE, NEGATION_RE,
     NUMBER_RE, RISE_RE, _number_contexts, normalize, sentences, validate_summary,
 )
 
 MODEL = "qwen3.5:9b-q4_K_M"
-VERSION = "stage4-qwen35-evidence-v2"
+VERSION = "stage4-qwen35-evidence-v2.1"
 DEFAULT_OPTIONS = {"temperature": 0, "num_ctx": 4096, "num_predict": 1400}
 SCHEMA = {
     "type": "object",
@@ -212,7 +213,8 @@ def _claim_issues(claim: dict, sentence: str, source_by_id: dict[str, dict],
     evidence_units = _number_contexts(evidence)
     for number, units in _number_contexts(sentence).items():
         if (number in evidence_units
-                and any(unit and unit not in evidence_units[number] for unit in units)):
+                and any(unit and unit not in evidence_units[number] for unit in units)
+                and not equivalent_explicit_units(number, sentence, evidence)):
             issues.append(tag + "_unit_not_in_evidence")
             break
     acronyms = set(ACRONYM_RE.findall(sentence))
@@ -326,7 +328,13 @@ def validate_response(answer: object, original: list[dict]) -> dict:
         if not answer["main_event"].strip():
             issues.append("main_event_empty")
         baseline = validate_summary(summary, original)
-        issues.extend(baseline.issues)
+        source_text = "\n".join(m["title"] + "\n" + m["text"] for m in original)
+        for problem in baseline.issues:
+            if (problem.startswith("number_unit_mismatch:") and
+                    equivalent_explicit_units(problem.split(":", 1)[1], summary, source_text)):
+                continue
+            issues.append(problem)
+        issues.extend(focused_fact_issues(summary, original))
         flags.extend(baseline.flags)
         if baseline.copied_sentence_ratio > 0.50:
             issues.append("mostly_extractive")
