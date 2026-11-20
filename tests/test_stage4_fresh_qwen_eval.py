@@ -6,9 +6,10 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from scripts.stage4_fresh_qwen_eval import (
-    _multi, check_manifest, score, write_blind_packets,
+    _multi, check_manifest, score, write_blind_packets, main,
 )
 from scripts.stage4_independent_holdout import atomic_json
 from processing.qwen_abstractive_summary import source_digest
@@ -94,6 +95,30 @@ class FreshSelectionGateTests(unittest.TestCase):
         self.assertTrue(_multi(row))
         row["source_materials"][1]["source"] = "Site A"
         self.assertFalse(_multi(row))
+
+
+class EndToEndCliSafetyTests(unittest.TestCase):
+    def test_run_command_never_calls_model_below_thresholds(self):
+        with patch("scripts.stage4_fresh_qwen_eval.collect",
+                   return_value={
+                       "ready_for_model_generation": False,
+                       "errors": ["fewer_than_required_multi_document_events"],
+                   }), patch("scripts.stage4_fresh_qwen_eval.generate") as model:
+            exit_code = main(["run", "--exclude", "existing.json",
+                              "--out-dir", "ignored_output"])
+        self.assertEqual(exit_code, 2)
+        model.assert_not_called()
+
+    def test_run_command_generates_only_after_sample_gate(self):
+        with patch("scripts.stage4_fresh_qwen_eval.collect",
+                   return_value={"ready_for_model_generation": True,
+                                 "errors": []}), patch(
+                       "scripts.stage4_fresh_qwen_eval.generate",
+                       return_value={"complete": True}) as model:
+            exit_code = main(["run", "--exclude", "existing.json",
+                              "--out-dir", "ignored_output"])
+        self.assertEqual(exit_code, 0)
+        model.assert_called_once()
 
 
 class BlindHumanAuditTests(unittest.TestCase):
