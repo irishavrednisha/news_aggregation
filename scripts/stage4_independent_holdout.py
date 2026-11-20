@@ -203,6 +203,7 @@ def select_holdout(groups: list[list[dict]], previous: dict, now: date,
     excluded, eligible = Counter(), []
     candidate_sources, rejection_by_source = Counter(), {}
     rejection_examples = []
+    example_count_per_source = Counter()
     for materials in groups:
         if not materials:
             excluded["empty_group"] += 1
@@ -217,10 +218,12 @@ def select_holdout(groups: list[list[dict]], previous: dict, now: date,
             if site not in rejection_by_source:
                 rejection_by_source[site] = Counter()
             rejection_by_source[site][reason] += 1
-            if (reason == "no_verified_date" and len(rejection_examples) < 20):
+            if (reason == "no_verified_date" and len(rejection_examples) < 40
+                    and example_count_per_source[site] < 2):
                 # Minimal audit metadata, no scraped article bodies or guesses.
                 source = next((m for m, issue in zip(materials, issues)
                                if issue), materials[0])
+                example_count_per_source[site] += 1
                 rejection_examples.append({
                     "source": site, "title": str(source.get("title") or "")[:180],
                     "url": str(source.get("url") or "")[:300],
