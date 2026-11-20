@@ -228,7 +228,12 @@ def run(input_path: Path, output: Path, *, baseline_path: Path | None = None,
         cluster_id, materials = raw["cluster_id"], raw["source_materials"]
         digest = source_digest(materials)
         previous = processed.get(str(cluster_id))
-        if previous and previous.get("source_sha256") == digest:
+        previous_issues = (previous or {}).get("validation", {}).get("issues", [])
+        completed = bool(previous and (
+            previous.get("qwen_summary")
+            or "model_classified_no_news_event" in previous_issues
+            or "insufficient_source_material" in previous_issues))
+        if previous and previous.get("source_sha256") == digest and completed:
             row = previous
             print(f"[{i}/{len(selected)}] #{cluster_id} reused", flush=True)
         else:
