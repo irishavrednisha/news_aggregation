@@ -8,7 +8,8 @@ on:
     paths:
       - processing/qwen_abstractive_summary.py
       - scripts/compare_stage4_qwen.py
-      - tests/test_stage4_qwen.py
+      - tests/test_stage4_qwen.py tests/test_stage4_qwen_postgres.py
+      - tests/test_stage4_qwen_postgres.py
       - .github/workflows/stage4-qwen-offline.yml
 
 permissions:
@@ -27,4 +28,4 @@ jobs:
           python -m py_compile processing/qwen_abstractive_summary.py scripts/compare_stage4_qwen.py tests/test_stage4_qwen.py
       - name: Run offline Qwen regression tests
         run: |
-          python -m unittest discover -s tests -p "test_stage4_qwen.py" -v
+          python -m unittest discover -s tests -p "test_stage4_qwen*.py" -v
