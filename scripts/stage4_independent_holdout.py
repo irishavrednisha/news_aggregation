@@ -120,17 +120,20 @@ def new_material(material: dict, prior: dict, now: date, max_days: int,
         return "invalid_or_short_source"
     if material.get("text_method") not in (None, "html"):
         return "rss_preview_not_full_html"
-    published = date_of(material.get("published_at"))
-    if published is None and not allow_undated:
-        return "no_verified_date"
-    if published is not None and not 0 <= (now - published).days <= max_days:
-        return "not_recent"
+    # Check prior exposure BEFORE missing/stale dates: a previously seen
+    # article is never an "undated new candidate". This makes the rejection
+    # counts diagnostically meaningful without loosening the freshness gate.
     if url in prior["urls"]:
         return "seen_url"
     if fingerprint(material) in prior["texts"]:
         return "seen_text"
     if any(title_duplicate(title, old) for old in prior["titles"]):
         return "seen_or_near_duplicate_event"
+    published = date_of(material.get("published_at"))
+    if published is None and not allow_undated:
+        return "no_verified_date"
+    if published is not None and not 0 <= (now - published).days <= max_days:
+        return "not_recent"
     return ""
 
 
@@ -198,14 +201,34 @@ def select_holdout(groups: list[list[dict]], previous: dict, now: date,
                    *, target: int = 100, max_days: int = 30,
                    max_per_source: int = 15, allow_undated: bool = False):
     excluded, eligible = Counter(), []
+    candidate_sources, rejection_by_source = Counter(), {}
+    rejection_examples = []
     for materials in groups:
         if not materials:
             excluded["empty_group"] += 1
             continue
+        site = str(materials[0].get("source") or "unknown")
+        candidate_sources[site] += 1
         issues = [new_material(m, previous, now, max_days,
                                allow_undated=allow_undated) for m in materials]
         if any(issues):
-            excluded[next(issue for issue in issues if issue)] += 1
+            reason = next(issue for issue in issues if issue)
+            excluded[reason] += 1
+            if site not in rejection_by_source:
+                rejection_by_source[site] = Counter()
+            rejection_by_source[site][reason] += 1
+            if (reason == "no_verified_date" and len(rejection_examples) < 20):
+                # Minimal audit metadata, no scraped article bodies or guesses.
+                source = next((m for m, issue in zip(materials, issues)
+                               if issue), materials[0])
+                rejection_examples.append({
+                    "source": site, "title": str(source.get("title") or "")[:180],
+                    "url": str(source.get("url") or "")[:300],
+                    "published_at": source.get("published_at"),
+                    "text_method": source.get("text_method"),
+                    "text_chars": len(str(source.get("text") or "")),
+                    "reason": reason,
+                })
             continue
         site = str(materials[0].get("source") or "")
         different_sites = len({str(m.get("source") or "") for m in materials})
@@ -244,6 +267,16 @@ def select_holdout(groups: list[list[dict]], previous: dict, now: date,
             break
     stats = {
         "rejections": dict(excluded), "eligible_before_deduplication": len(eligible),
+        "candidate_input_groups": len(groups),
+        "candidate_source_counts": dict(candidate_sources),
+        "rejections_by_source": {
+            source: dict(reasons) for source, reasons
+            in sorted(rejection_by_source.items())
+        },
+        "undated_unseen_examples": rejection_examples,
+        "note": ("Overlap screening precedes the date check. An undated "
+                 "candidate here is not known to be new in time: manual "
+                 "publication-date evidence is still required."),
         "source_counts": dict(counts),
         "multi_source_groups": sum(
             len({m.get("source") for m in x["source_materials"]}) > 1 for x in selected),
