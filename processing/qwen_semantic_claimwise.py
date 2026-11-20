@@ -95,7 +95,7 @@ def _valid_fact(answer: object, quote_count: int) -> str | None:
     return None
 
 
-def _valid_language(answer: object) -> str | None:
+def _valid_language(answer: object, summary: str | None = None) -> str | None:
     if not isinstance(answer, dict) or set(answer) != {"needs_edit", "notes"}:
         return "invalid_language_schema"
     if (type(answer["needs_edit"]) is not bool
@@ -104,6 +104,21 @@ def _valid_language(answer: object) -> str | None:
         return "invalid_language_fields"
     if answer["needs_edit"] and not any(x.strip() for x in answer["notes"]):
         return "language_flag_without_example"
+    if answer["needs_edit"] and summary is not None:
+        # A generic claim that the text "could be more concise" is not an
+        # actionable language review. At least one concrete 2+word excerpt
+        # from the exact summary must be reproduced in the explanation.
+        source = " ".join(summary.lower().split())
+        anchored = any(
+            len(m.group(0)) >= 14 and m.group(0) in source
+            for note in answer["notes"]
+            for m in __import__("re").finditer(
+                r"[а-яёa-z0-9-]+(?:\\s+[а-яёa-z0-9-]+)+",
+                " ".join(note.lower().split()),
+            )
+        )
+        if not anchored:
+            return "language_flag_without_source_excerpt"
     return None
 
 
@@ -225,7 +240,8 @@ def review_cluster_claimwise(row: dict, *, request=None,
             {"summary": summary}, ensure_ascii=False)},
     ]
     lang, attempts, failures, connection = _call_with_retry(
-        client, language_messages, LANG_FORMAT, _valid_language, model=model)
+        client, language_messages, LANG_FORMAT,
+        lambda output: _valid_language(output, summary), model=model)
     result["model_calls"] += len(attempts)
     result["language_diagnostics"] = attempts
     if connection:
