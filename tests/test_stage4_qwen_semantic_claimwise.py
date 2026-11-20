@@ -57,7 +57,7 @@ class FakeOneByOne:
             return {"verdict": self.verdict, "reason": "Проверены субъект и действие",
                     "quote_indices": [0]}, {}
         return {"needs_edit": self.language,
-                "notes": ["Нарушено согласование"] if self.language else []}, {}
+                "notes": ["Исправить выражение «Завод выпустил оборудование»"] if self.language else []}, {}
 
 
 class ClaimWiseTests(unittest.TestCase):
@@ -123,6 +123,14 @@ class ClaimWiseTests(unittest.TestCase):
                          "language_flag_without_example")
         self.assertIsNone(_valid_language({
             "needs_edit": True, "notes": ["Пропущено подлежащее"]}))
+        sample = "Завод выпустил оборудование для шахт."
+        self.assertEqual(_valid_language({
+            "needs_edit": True, "notes": ["Некоторые фразы можно упростить."]
+        }, sample), "language_flag_without_source_excerpt")
+        self.assertIsNone(_valid_language({
+            "needs_edit": True,
+            "notes": ["Неверно использовано «Завод выпустил оборудование»."]
+        }, sample))
         fake = FakeOneByOne(language=True)
         reviewed = review_cluster_claimwise(row(), request=fake)
         self.assertIn("model_flagged_russian_language", reviewed["issues"])
