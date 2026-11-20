@@ -249,5 +249,38 @@ class QwenStage4Tests(unittest.TestCase):
                          "baseline_source_mismatch")
 
 
+    def test_claim_local_ordinary_organization_mismatch(self):
+        sentence = "Компания Росатом планирует новую линию в Туле."
+        problems = q._claim_issues(
+            {"claim": sentence, "source_ids": ["source_1"],
+             "evidence_quotes": [QUOTES[0]]}, sentence,
+            {"source_1": q.canonical_materials([source()])[0]}, 1)
+        self.assertIn("claim_1_proper_name_not_in_evidence", problems)
+
+    def test_unit_mismatch_in_selected_claim_quote(self):
+        evidence = "Завод поставил 20 кг сырья на новый производственный участок."
+        sentence = "Завод поставил 20 тонн сырья на участок."
+        problems = q._claim_issues(
+            {"claim": sentence, "source_ids": ["source_1"],
+             "evidence_quotes": [evidence]}, sentence,
+            {"source_1": source(text=evidence)}, 1)
+        self.assertIn("claim_1_unit_not_in_evidence", problems)
+
+    def test_experimental_test_is_not_serial_production(self):
+        evidence = "Завод завершил испытания опытного станка на своей площадке."
+        sentence = "Завод начал серийное производство нового станка."
+        problems = q._claim_issues(
+            {"claim": sentence, "source_ids": ["source_1"],
+             "evidence_quotes": [evidence]}, sentence,
+            {"source_1": source(text=evidence)}, 1)
+        self.assertIn("claim_1_unsupported_serial_production", problems)
+
+    def test_explicit_model_review_is_not_suppressed(self):
+        out = q.summarize_cluster(11, [source()],
+                                  request=Fake(answer(requires_review=True)))
+        self.assertIn("model_requested_review", out["validation"]["issues"])
+        self.assertEqual(out["status"], "summary_review")
+
+
 if __name__ == "__main__":
     unittest.main()
