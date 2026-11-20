@@ -282,5 +282,25 @@ class QwenStage4Tests(unittest.TestCase):
         self.assertEqual(out["status"], "summary_review")
 
 
+    def test_resume_retries_failed_ollama_without_replacing_completed_work(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            inp, output = root/"articles.json", root/"comparison.json"
+            inp.write_text(json.dumps({"stage": 4, "clusters": [{
+                "cluster_id": 55, "source_materials": [source()],
+                "gemma_summary": "Тестовая Gemma сводка"}]},
+                ensure_ascii=False), encoding="utf-8")
+            failed = Fake(exc=ConnectionError("Ollama offline"))
+            run(inp, output, request=failed, limit=1, measure_gpu=False)
+            self.assertEqual(failed.calls, 1)
+            self.assertFalse(json.loads(output.read_text(encoding="utf-8"))
+                             ["clusters"][0]["qwen_summary"])
+            recovered = Fake()
+            report = run(inp, output, request=recovered, limit=1,
+                         measure_gpu=False, resume=True)
+            self.assertEqual(recovered.calls, 1)
+            self.assertTrue(report["clusters"][0]["qwen_summary"])
+
+
 if __name__ == "__main__":
     unittest.main()
