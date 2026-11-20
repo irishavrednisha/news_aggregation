@@ -112,6 +112,20 @@ class RelationsRegressionTests(unittest.TestCase):
         self.assertFalse(any(x.startswith("metric_binding")
                              for x in issues(summary, source)))
 
+    def test_quality_axes_separate_relevance_and_accuracy(self):
+        source = "Компания запустила новую линию производства оборудования."
+        docs = material(source)
+        raw = {"main_event": "Запуск линии", "is_news_event": True,
+               "summary": "Компания запустила линию производства оборудования.",
+               "uncertainties": [], "requires_review": False}
+        check = validate_response(attach_evidence(raw, docs), docs)
+        self.assertEqual(check["quality_axes"]["industrial_relevance"],
+                         "not_assessed_by_summarizer")
+        self.assertEqual(check["quality_axes"]["factual_accuracy"],
+                         "not_established")
+        self.assertEqual(check["quality_axes"]["editorial_transfer"],
+                         "requires_human_approval")
+
     def test_integration_review_not_publication(self):
         source = (
             "По результатам января-октября на железную дорогу погружено "
