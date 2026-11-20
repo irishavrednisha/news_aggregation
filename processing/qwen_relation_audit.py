@@ -189,6 +189,17 @@ def audit_relations(summary: str, materials: list[dict]) -> dict:
         elif len(distinct) > 1:
             problems.append(f"metric_binding_ambiguous:{fact.value}")
 
+    # A reported investment, expense, revenue or saving is not interchangeable
+    # with the same number attached to a different financial role.
+    financial_roles = {"investment", "cost", "economic_effect", "sales"}
+    for fact in generated:
+        if fact.metric not in financial_roles:
+            continue
+        values = {f.metric for f in source_facts if f.value == fact.value
+                  and f.metric in financial_roles}
+        if values and fact.metric not in values:
+            problems.append("financial_role_mismatch:" + fact.value + ":" + fact.metric)
+
     # Scope belongs to the measurement, not merely the article. Check only
     # distinctive non-percent figures where scope is explicitly stated.
     for fact in generated:
