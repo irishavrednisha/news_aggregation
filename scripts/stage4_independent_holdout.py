@@ -120,17 +120,20 @@ def new_material(material: dict, prior: dict, now: date, max_days: int,
         return "invalid_or_short_source"
     if material.get("text_method") not in (None, "html"):
         return "rss_preview_not_full_html"
-    published = date_of(material.get("published_at"))
-    if published is None and not allow_undated:
-        return "no_verified_date"
-    if published is not None and not 0 <= (now - published).days <= max_days:
-        return "not_recent"
+    # Check prior exposure BEFORE missing/stale dates: a previously seen
+    # article is never an "undated new candidate". This makes the rejection
+    # counts diagnostically meaningful without loosening the freshness gate.
     if url in prior["urls"]:
         return "seen_url"
     if fingerprint(material) in prior["texts"]:
         return "seen_text"
     if any(title_duplicate(title, old) for old in prior["titles"]):
         return "seen_or_near_duplicate_event"
+    published = date_of(material.get("published_at"))
+    if published is None and not allow_undated:
+        return "no_verified_date"
+    if published is not None and not 0 <= (now - published).days <= max_days:
+        return "not_recent"
     return ""
 
 
@@ -194,18 +197,121 @@ def load_diagnostics(path: Path):
     return groups, warnings
 
 
+def recover_rostec_article_dates(groups: list[list[dict]], previous: dict,
+                                 now: date, max_days: int,
+                                 *, fetch_article=None) -> tuple[list[list[dict]], dict]:
+    """Recheck only unseen, undated Rostec records against their official HTML.
+
+    This is strictly read-only.  Never infer a date from the text or a related
+    article, invent a timestamp, or rewrite PostgreSQL or the article body.
+    Failures leave the source undated and ineligible for the holdout.
+    """
+    from urllib.parse import urlsplit
+
+    if fetch_article is None:
+        from collectors.data_collector import build_full_article
+        fetch_article = build_full_article
+    from types import SimpleNamespace
+    recovered, failures = [], []
+    attempted = 0
+    updated = []
+    for materials in groups:
+        new_materials = []
+        for m in materials:
+            entry = dict(m)
+            url = str(entry.get("url") or "")
+            host = (urlsplit(url).hostname or "").lower()
+            if (entry.get("source") == "Ростех"
+                    and host in {"rostec.ru", "www.rostec.ru"}
+                    and not date_of(entry.get("published_at"))
+                    and clean_url(url) not in previous["urls"]
+                    and fingerprint(entry) not in previous["texts"]
+                    and not any(title_duplicate(str(entry.get("title") or ""), old)
+                                for old in previous["titles"])
+                    and len(str(entry.get("text") or "")) >= 350
+                    and len(str(entry.get("title") or "")) >= 18):
+                attempted += 1
+                try:
+                    preview = SimpleNamespace(
+                        source="Ростех", title=str(entry["title"]),
+                        url=url, published_at=None, preview_text="")
+                    article = fetch_article(preview)
+                    date = date_of(getattr(article, "published_at", None))
+                    page_title = str(getattr(article, "title", "") or "")
+                    title_matches = title_duplicate(entry["title"], page_title)
+                    # Fail closed and explain the specific cause. The article
+                    # might be blocked, undated, a different recommended story,
+                    # or outside the requested evaluation window.
+                    if not date:
+                        reason = "no_page_published_date"
+                    elif not 0 <= (now - date).days <= max_days:
+                        reason = "page_date_outside_window"
+                    elif not title_matches:
+                        reason = "article_headline_mismatch"
+                    else:
+                        reason = ""
+                    if not reason:
+                        entry["published_at"] = (
+                            article.published_at.isoformat()
+                            if hasattr(article.published_at, "isoformat")
+                            else str(article.published_at))
+                        entry["date_provenance"] = "official_rostec_article_page"
+                        recovered.append({"url": url, "published_at": entry["published_at"]})
+                    else:
+                        failures.append({
+                            "url": url, "reason": reason,
+                            "page_title": page_title[:180],
+                            "page_published_at": (
+                                str(getattr(article, "published_at", "") or "")[:60]),
+                            "title_matched": title_matches,
+                        })
+                except Exception as exc:
+                    failures.append({"url": url, "reason": type(exc).__name__})
+            new_materials.append(entry)
+        updated.append(new_materials)
+    return updated, {
+        "attempted": attempted, "recovered": len(recovered),
+        "verified": recovered, "unverified": failures,
+        "note": ("Unverified dates are NOT accepted. The article page was "
+                 "requested with the collector's normal verified TLS policy."),
+    }
+
+
 def select_holdout(groups: list[list[dict]], previous: dict, now: date,
                    *, target: int = 100, max_days: int = 30,
                    max_per_source: int = 15, allow_undated: bool = False):
     excluded, eligible = Counter(), []
+    candidate_sources, rejection_by_source = Counter(), {}
+    rejection_examples = []
+    example_count_per_source = Counter()
     for materials in groups:
         if not materials:
             excluded["empty_group"] += 1
             continue
+        site = str(materials[0].get("source") or "unknown")
+        candidate_sources[site] += 1
         issues = [new_material(m, previous, now, max_days,
                                allow_undated=allow_undated) for m in materials]
         if any(issues):
-            excluded[next(issue for issue in issues if issue)] += 1
+            reason = next(issue for issue in issues if issue)
+            excluded[reason] += 1
+            if site not in rejection_by_source:
+                rejection_by_source[site] = Counter()
+            rejection_by_source[site][reason] += 1
+            if (reason == "no_verified_date" and len(rejection_examples) < 40
+                    and example_count_per_source[site] < 2):
+                # Minimal audit metadata, no scraped article bodies or guesses.
+                source = next((m for m, issue in zip(materials, issues)
+                               if issue), materials[0])
+                example_count_per_source[site] += 1
+                rejection_examples.append({
+                    "source": site, "title": str(source.get("title") or "")[:180],
+                    "url": str(source.get("url") or "")[:300],
+                    "published_at": source.get("published_at"),
+                    "text_method": source.get("text_method"),
+                    "text_chars": len(str(source.get("text") or "")),
+                    "reason": reason,
+                })
             continue
         site = str(materials[0].get("source") or "")
         different_sites = len({str(m.get("source") or "") for m in materials})
@@ -244,6 +350,16 @@ def select_holdout(groups: list[list[dict]], previous: dict, now: date,
             break
     stats = {
         "rejections": dict(excluded), "eligible_before_deduplication": len(eligible),
+        "candidate_input_groups": len(groups),
+        "candidate_source_counts": dict(candidate_sources),
+        "rejections_by_source": {
+            source: dict(reasons) for source, reasons
+            in sorted(rejection_by_source.items())
+        },
+        "undated_unseen_examples": rejection_examples,
+        "note": ("Overlap screening precedes the date check. An undated "
+                 "candidate here is not known to be new in time: manual "
+                 "publication-date evidence is still required."),
         "source_counts": dict(counts),
         "multi_source_groups": sum(
             len({m.get("source") for m in x["source_materials"]}) > 1 for x in selected),
@@ -319,7 +435,8 @@ def blind_review_files(report: dict, directory: Path) -> None:
 def run_holdout(*, previous_reports, out_dir, target, minimum, max_days,
                 source_limit, source_cap, mode, diagnostics=None,
                 allow_undated=False, from_config=False,
-                collect_only=False, resume=False, model="gemma3:4b"):
+                collect_only=False, resume=False, model="gemma3:4b",
+                recover_missing_rostec_dates=False):
     out_dir.mkdir(parents=True, exist_ok=True)
     known = prior_signatures(previous_reports)
     manifest_path = out_dir / "holdout_manifest.json"
@@ -351,9 +468,15 @@ def run_holdout(*, previous_reports, out_dir, target, minimum, max_days,
             result, errors = load_diagnostics(diagnostics)
             groups.extend(result)
             warnings.extend(errors)
+        date_recovery = None
+        if recover_missing_rostec_dates:
+            groups, date_recovery = recover_rostec_article_dates(
+                groups, known, now, max_days)
         selected, stats = select_holdout(
             groups, known, now, target=target, max_days=max_days,
             max_per_source=source_cap, allow_undated=allow_undated)
+        if date_recovery is not None:
+            stats["rostec_date_recovery"] = date_recovery
         manifest = build_manifest(
             selected, stats, target=target, min_sample=minimum,
             mode=mode, previous=known, now=now, errors=warnings,
@@ -412,6 +535,9 @@ def main(argv=None):
     p.add_argument("--max-age-days", type=int, default=30)
     p.add_argument("--limit-per-source", type=int, default=10)
     p.add_argument("--max-per-source", type=int, default=15)
+    p.add_argument("--recover-missing-rostec-dates", action="store_true",
+                   help="Refetch unseen undated Rostec article pages with "
+                        "verified TLS; never guess or write dates to DB")
     p.add_argument("--allow-undated", action="store_true",
                    help="Diagnostic only; sample freshness is then not verified")
     p.add_argument("--from-config", action="store_true")
@@ -429,7 +555,8 @@ def main(argv=None):
         source_limit=args.limit_per_source, source_cap=args.max_per_source,
         mode=args.mode, diagnostics=args.diagnostics_json,
         allow_undated=args.allow_undated, from_config=args.from_config,
-        collect_only=args.collect_only, resume=args.resume)
+        collect_only=args.collect_only, resume=args.resume,
+        recover_missing_rostec_dates=args.recover_missing_rostec_dates)
     print(f"Output: {args.out_dir.resolve()}")
     if not report.get("minimum_sample_met", True):
         print("INSUFFICIENT UNSEEN DATED ARTICLES; no accuracy claim.")
