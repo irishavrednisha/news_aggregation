@@ -559,3 +559,37 @@ ollama list
 Перед завершением этапа 4 нужны новые положительные промышленные
 события, отдельные многодокументные кластеры и ручная оценка фактов,
 русского языка, ложно принятых и ложно отклонённых сводок.
+
+
+### Если Gemma остановилась с reviewer_unavailable:URLError
+
+Это отказ соединения локального семантического рецензента, **не** результат
+фактчекинга. Исправленная версия дополнительно записывает
+`results[0].connection_diagnostics` с причиной и рекомендуемым действием.
+Проверка без Ollama при этом могла пройти.
+
+В PowerShell:
+
+```powershell
+ollama list
+Invoke-RestMethod http://127.0.0.1:11434/api/tags
+```
+
+Если соединения нет, открой Ollama Desktop. Если используешь серверный
+запуск, выполни `ollama serve` в **отдельном** окне PowerShell.
+Не запускай второй сервер на уже занятом порту.
+
+Если сервер отвечает, но `gemma3:4b` отсутствует в `ollama list`,
+установи её командой `ollama pull gemma3:4b`.
+
+После восстановления сервера:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\stage4_semantic_audit.py `
+  --input-json collector_test_results\qwen_vs_gemma_41_mixed.json `
+  --output collector_test_results\stage4_semantic_gemma_41.json `
+  --resume
+```
+
+Новый офлайн-регрессионный тест не позволяет принимать число рейсов или
+тонн за сумму условных денежных затрат (`900014`).
