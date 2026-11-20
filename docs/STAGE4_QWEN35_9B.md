@@ -434,7 +434,25 @@ Remove-Item Env:STAGE4_TEST_WRITE_ACK
 правила фиктивными данными и не используйте диагностические 41 новости
 как независимую итоговую оценку после разработки правил на них.
 
-**Запуск без Ollama (PowerShell):**
+**Единая проверка (без Ollama, PowerShell):**
+
+```powershell
+cd D:\Projects\news_aggregation
+git fetch origin
+git switch --track origin/feat/stage4-qwen-relation-audit-2026-11-20
+.\.venv\Scripts\python.exe scripts\stage4_audit_once.py `
+  --input-json collector_test_results\qwen_vs_gemma_41_mixed.json `
+  --output collector_test_results\stage4_relation_audit_full.json
+```
+
+Один вызов Python выполняет Qwen/holdout-офлайн-тесты, повторно проверяет
+**уже сохранённые сводки без генерации**, записывает полный атомарный JSON
+со всеми замечаниями и статусами. Если прервать или получить ошибку,
+исходный JSON не перезаписывается. Отчёт отдельно помечает результаты
+тестов и отсутствие независимой оценки фактов. При существующей локальной
+ветке вместо `git switch --track` используй `git switch feat/stage4-qwen-relation-audit-2026-11-20` и `git pull --ff-only`.
+
+**Запуск только тестов (PowerShell):**
 
 ```powershell
 cd D:\Projects\news_aggregation
