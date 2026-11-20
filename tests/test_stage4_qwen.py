@@ -59,7 +59,7 @@ class Fake:
         if self.exc:
             raise self.exc
         assert model == q.MODEL
-        assert "claims" in schema["properties"]
+        assert "claims" not in schema["properties"]
         return self.result, {"eval_count": 100, "eval_duration": 2_000_000_000,
                              "tokens_per_second": 50}
 
