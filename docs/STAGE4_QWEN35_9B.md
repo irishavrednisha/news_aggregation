@@ -406,14 +406,14 @@ Remove-Item Env:STAGE4_TEST_WRITE_ACK
 
 ## Этап 4: диагностика связей фактов (ветка relation-audit)
 
-Добавлен \`processing/qwen_relation_audit.py\` и офлайн-тесты
-\`tests/test_stage4_qwen_relation_audit.py\`. Слой подключается к
-\`validate_response\` **после** генерации и восстановления дословных цитат.
+Добавлен `processing/qwen_relation_audit.py` и офлайн-тесты
+`tests/test_stage4_qwen_relation_audit.py`. Слой подключается к
+`validate_response` **после** генерации и восстановления дословных цитат.
 Он не изменяет модели, источники, PostgreSQL, Gemma или отправку в MAX.
 
 - Для числовых утверждений фиксируются значение, единица, явный показатель,
   предметная область и временной/условный статус там, где они выражены
-  в тексте. Результат доступен в \`validation.relation_audit\`.
+  в тексте. Результат доступен в `validation.relation_audit`.
 - В явном «погрузка / экспорт ... соответственно» две процентные величины
   сопоставляются с двумя показателями; перестановка процентов требует review.
 - 220 В — **напряжение**, а не «мощность 220 В».
@@ -436,29 +436,29 @@ Remove-Item Env:STAGE4_TEST_WRITE_ACK
 
 **Запуск без Ollama (PowerShell):**
 
-\`\`\`powershell
+```powershell
 cd D:\Projects\news_aggregation
 git fetch origin
 git switch --track origin/feat/stage4-qwen-relation-audit-2026-11-20
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_stage4_qwen*.py" -v
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_stage4_independent_holdout.py" -v
-\`\`\`
+```
 
 Никакой активации PowerShell-окружения не требуется. При повторном
-запуске: \`git switch feat/stage4-qwen-relation-audit-2026-11-20\`,
-затем \`git pull --ff-only\`. Ветка предназначена для проверки, **не**
-сливать автоматически с \`master\` или PR #12.
+запуске: `git switch feat/stage4-qwen-relation-audit-2026-11-20`,
+затем `git pull --ff-only`. Ветка предназначена для проверки, **не**
+сливать автоматически с `master` или PR #12.
 
 **Повторная диагностика уже созданного отчёта, без новых генераций:**
 
-\`\`\`powershell
-.\.venv\Scripts\python.exe scripts\revalidate_stage4_qwen.py \`
-  --input-json collector_test_results\qwen_vs_gemma_41_mixed.json \`
+```powershell
+.\.venv\Scripts\python.exe scripts\revalidate_stage4_qwen.py `
+  --input-json collector_test_results\qwen_vs_gemma_41_mixed.json `
   --output collector_test_results\stage4_relation_41_rechecked.json
-\`\`\`
+```
 
 Используйте существующий реальный путь к входному JSON. Если на вашем ПК
-файл лежит в другой папке, измените только путь в \`--input-json\`.
+файл лежит в другой папке, измените только путь в `--input-json`.
 
 Для финального сравнения нужен **другой** зафиксированный набор минимум
 40 редакционно подтверждённых промышленных событий (желательно 100), в
