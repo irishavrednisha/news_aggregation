@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 from processing import qwen_abstractive_summary as q
-from scripts.compare_stage4_qwen import run, match_gemma
+from scripts.compare_stage4_qwen import run, match_gemma, evaluate
 
 
 TITLE = "Тульский завод готовит новую линию выпуска деталей"
@@ -65,6 +65,24 @@ class Fake:
 
 
 class QwenStage4Tests(unittest.TestCase):
+    def test_source_pair_count_includes_missing_gemma_summary(self):
+        rows = [
+            {"status": "summary_draft", "baseline_match": "matched",
+             "gemma_summary": "Завод выпускает детали.", "qwen_summary": "Завод выпускает детали.",
+             "validation": {"issues": []}, "attempts": []},
+            {"status": "summary_review", "baseline_match": "baseline_summary_missing",
+             "gemma_summary": "", "qwen_summary": "Выпущены новые детали.",
+             "validation": {"issues": []}, "attempts": []},
+            {"status": "summary_review", "baseline_match": "baseline_source_mismatch",
+             "gemma_summary": "", "qwen_summary": "Сводка другого события.",
+             "validation": {"issues": []}, "attempts": []},
+        ]
+        report = evaluate(rows)
+        self.assertEqual(report["processed"], 3)
+        self.assertEqual(report["paired_same_source"], 2)
+        self.assertEqual(report["paired_with_gemma_summary"], 1)
+        self.assertEqual(report["gemma_generated_in_paired"], 1)
+
     def test_exact_source_digest_is_stable(self):
         self.assertEqual(q.source_digest([source()]), q.source_digest([source()]))
         self.assertNotEqual(q.source_digest([source()]),
