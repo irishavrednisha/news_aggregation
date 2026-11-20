@@ -233,7 +233,19 @@ def audit_relations(summary: str, materials: list[dict]) -> dict:
             status = []
             for m in numeric_occurrences:
                 vicinity = normalize(source_text[max(0, m.start()-430):m.end()+150])
-                status.append(bool(_CONDITIONAL.search(vicinity)))
+                # An explicit completed spend in the same sentence takes
+                # precedence over a nearby *different* hypothetical example.
+                left = max(source_text.rfind(".", 0, m.start()),
+                           source_text.rfind("!", 0, m.start()),
+                           source_text.rfind("?", 0, m.start()))
+                right = source_text.find(".", m.end())
+                sentence = normalize(source_text[left+1:right if right != -1 else None])
+                actual_spend = re.search(
+                    r"\b(?:инвестировал\w*|инвестировано|вложил\w*|"
+                    r"потратил\w*|затратил\w*|фактически\s+потрачено)\b",
+                    sentence)
+                status.append(bool(_CONDITIONAL.search(vicinity))
+                              and not bool(actual_spend))
             if all(status):
                 problems.append("conditional_amount_presented_as_spending:" + value)
 
