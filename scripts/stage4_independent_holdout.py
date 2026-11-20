@@ -211,7 +211,7 @@ def recover_rostec_article_dates(groups: list[list[dict]], previous: dict,
     if fetch_article is None:
         from collectors.data_collector import build_full_article
         fetch_article = build_full_article
-    from collectors.data_collector import ArticlePreview
+    from types import SimpleNamespace
     recovered, failures = [], []
     attempted = 0
     updated = []
@@ -232,7 +232,7 @@ def recover_rostec_article_dates(groups: list[list[dict]], previous: dict,
                     and len(str(entry.get("title") or "")) >= 18):
                 attempted += 1
                 try:
-                    preview = ArticlePreview(
+                    preview = SimpleNamespace(
                         source="Ростех", title=str(entry["title"]),
                         url=url, published_at=None, preview_text="")
                     article = fetch_article(preview)
