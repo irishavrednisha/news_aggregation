@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from urllib.error import URLError
 
 from processing.qwen_abstractive_summary import canonical_materials, source_digest
 from processing.qwen_semantic_reviewer import review_cluster, FORMAT, REVIEW_MODEL
@@ -113,6 +114,19 @@ class SemanticRefereeTests(unittest.TestCase):
             self.assertTrue(second["complete"])
             self.assertFalse(second["auto_publication"])
             self.assertFalse(second["editorial_accuracy_measured"])
+
+    def test_connection_error_explains_ollama_endpoint(self):
+        class NoServer:
+            def __call__(self, *args, **kwargs):
+                raise URLError(ConnectionRefusedError("local Ollama unavailable"))
+        result = review_cluster(row(), request=NoServer())
+        self.assertEqual(result["status"], "review_required")
+        self.assertEqual(result["issues"], ["reviewer_unavailable:URLError"])
+        diagnostics = result["connection_diagnostics"]
+        self.assertEqual(diagnostics["category"],
+                         "ollama_local_connection_failed")
+        self.assertIn("127.0.0.1:11434", diagnostics["next_step"])
+        self.assertFalse(result["publication_allowed"])
 
     def test_connection_failure_checkpoints_and_stops(self):
         class Down:
