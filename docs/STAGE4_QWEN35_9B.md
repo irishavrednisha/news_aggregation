@@ -137,20 +137,20 @@ Qwen или новый независимый тест. Сводки с непо
 перегенерировать их, изменять базу или перезаписывать исходники:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\revalidate_stage4_qwen.py 
-  --input-json collector_test_results\stage4_qwen_v2_revalidated_91.json 
+.\.venv\Scripts\python.exe scripts\revalidate_stage4_qwen.py `
+  --input-json collector_test_results\stage4_qwen_v2_revalidated_91.json `
   --output collector_test_results\stage4_qwen_v21_revalidated_91.json
 ```
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\revalidate_stage4_qwen.py 
-  --input-json collector_test_results\stage4_qwen_v2_smoke3.json 
+.\.venv\Scripts\python.exe scripts\revalidate_stage4_qwen.py `
+  --input-json collector_test_results\stage4_qwen_v2_smoke3.json `
   --output collector_test_results\stage4_qwen_v21_revalidated_smoke3.json
 ```
 
 Для независимого нового вызова Ollama используй
 `--output collector_test_results\stage4_qwen_v21_smoke3.json` и тот же
-исходный \`gemma_holdout.json\`, чтобы не затереть старые результаты.
+исходный `gemma_holdout.json`, чтобы не затереть старые результаты.
 
 ## Диагностическое сравнение на 91 сохранённой статье
 
