@@ -228,6 +228,17 @@ def audit_relations(summary: str, materials: list[dict]) -> dict:
             value = _number(num.group(1))
             if _YEAR.fullmatch(value):
                 continue
+            # A money-amount relation cannot be inherited by a nearby
+            # operational count ("50 рейсов", "20 тонн") in the same sentence.
+            # Permit the amount's currency to be elided after млн/тыс.
+            # Only explicit monetary denominations trigger this guard.
+            after_amount = summary[num.end():num.end()+28]
+            if not re.match(
+                r"\s*(?:руб\w*|₽|млн\.?|миллион\w*|"
+                r"тыс\.?|тысяч\w*|млрд\.?|миллиард\w*)\b",
+                after_amount, re.I,
+            ):
+                continue
             numeric_occurrences = [m for m in _NUMERIC.finditer(source_text)
                                    if _number(m.group(1)) == value]
             if not numeric_occurrences:
