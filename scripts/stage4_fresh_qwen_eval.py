@@ -133,7 +133,7 @@ def generate(*, out_dir: Path, resume: bool = False, request=None,
     result = run(
         input_path=manifest_path, output=output, limit=len(manifest["clusters"]),
         model=MODEL, request=request, measure_gpu=measure_gpu,
-        resume=resume, max_retries=1,
+        resume=resume and output.exists(), max_retries=1,
     )
     if (not result.get("complete_requested_run")
             or len(result["clusters"]) != len(manifest["clusters"])):
@@ -302,19 +302,20 @@ def score(*, out_dir: Path, minimum: int | None = None,
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    c = sub.add_parser("collect")
-    c.add_argument("--exclude", type=Path, action="append", required=True)
-    c.add_argument("--out-dir", type=Path, required=True)
-    c.add_argument("--mode", choices=("both", "live", "database", "diagnostics"),
-                   default="both")
-    c.add_argument("--diagnostics-json", type=Path)
-    c.add_argument("--target", type=int, default=100)
-    c.add_argument("--minimum", type=int, default=40)
-    c.add_argument("--min-multisource", type=int, default=5)
-    c.add_argument("--max-age-days", type=int, default=30)
-    c.add_argument("--limit-per-source", type=int, default=15)
-    c.add_argument("--max-per-source", type=int, default=15)
-    c.add_argument("--resume", action="store_true")
+    for command in ("collect", "run"):
+        c = sub.add_parser(command)
+        c.add_argument("--exclude", type=Path, action="append", required=True)
+        c.add_argument("--out-dir", type=Path, required=True)
+        c.add_argument("--mode", choices=("both", "live", "database", "diagnostics"),
+                       default="both")
+        c.add_argument("--diagnostics-json", type=Path)
+        c.add_argument("--target", type=int, default=100)
+        c.add_argument("--minimum", type=int, default=40)
+        c.add_argument("--min-multisource", type=int, default=5)
+        c.add_argument("--max-age-days", type=int, default=30)
+        c.add_argument("--limit-per-source", type=int, default=15)
+        c.add_argument("--max-per-source", type=int, default=15)
+        c.add_argument("--resume", action="store_true")
     g = sub.add_parser("generate")
     g.add_argument("--out-dir", type=Path, required=True)
     g.add_argument("--resume", action="store_true")
@@ -323,15 +324,21 @@ def main(argv=None) -> int:
     s.add_argument("--out-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == "collect":
-            result = collect(exclusions=args.exclude, out_dir=args.out_dir,
-                             mode=args.mode, target=args.target,
-                             minimum=args.minimum, multi_minimum=args.min_multisource,
-                             max_days=args.max_age_days,
-                             source_limit=args.limit_per_source,
-                             source_cap=args.max_per_source,
-                             diagnostics=args.diagnostics_json, resume=args.resume)
-            code = 0 if result["ready_for_model_generation"] else 2
+        if args.command in ("collect", "run"):
+            gate = collect(exclusions=args.exclude, out_dir=args.out_dir,
+                           mode=args.mode, target=args.target,
+                           minimum=args.minimum, multi_minimum=args.min_multisource,
+                           max_days=args.max_age_days,
+                           source_limit=args.limit_per_source,
+                           source_cap=args.max_per_source,
+                           diagnostics=args.diagnostics_json, resume=args.resume)
+            code = 0 if gate["ready_for_model_generation"] else 2
+            if args.command == "run" and code == 0:
+                generated = generate(out_dir=args.out_dir, resume=args.resume)
+                result = {"selection": gate, "generation": generated}
+                code = 0 if generated.get("complete") else 4
+            else:
+                result = gate
         elif args.command == "generate":
             result = generate(out_dir=args.out_dir, resume=args.resume,
                               measure_gpu=not args.no_gpu_snapshot)
