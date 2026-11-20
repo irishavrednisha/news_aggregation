@@ -18,7 +18,7 @@ from processing.qwen_abstractive_summary import (
 )
 from processing.qwen_semantic_reviewer import REVIEW_MODEL
 
-VERSION = "gemma-claimwise-v2"
+VERSION = "gemma-claimwise-v2.1"
 OPTIONS = {"temperature": 0, "num_ctx": 4096, "num_predict": 360}
 FACT_FORMAT = {
     "type": "object", "additionalProperties": False,
@@ -186,14 +186,34 @@ def review_cluster_claimwise(row: dict, *, request=None,
         "status": "review_required", "issues": [],
         "answer": {"claims": [], "language": None},
         "claim_diagnostics": [], "language_diagnostics": [],
-        "mechanical_issues": [], "model_calls": 0,
+        "mechanical_issues": [], "language_flags": [], "model_calls": 0,
     }
     if not summary.strip():
         result["issues"].append("no_summary")
         return result
+    # Replay the original writer's uncertainty/review decisions. Dropping
+    # them would silently downgrade a saved Qwen review to an advisory pass.
+    uncertainties = row.get("uncertainties", [])
+    if not isinstance(uncertainties, list) or any(
+            not isinstance(item, str) for item in uncertainties):
+        result["issues"].append("original_uncertainties_invalid")
+        return result
+    original_decision = None
+    attempts = row.get("attempts") or []
+    for previous in reversed(attempts) if isinstance(attempts, list) else []:
+        raw = previous.get("response") if isinstance(previous, dict) else None
+        if isinstance(raw, dict) and raw.get("summary") == summary:
+            original_decision = raw.get("requires_review")
+            break
+    if original_decision is None:
+        original_decision = row.get("requires_review", False)
+    if type(original_decision) is not bool:
+        result["issues"].append("original_review_flag_invalid")
+        return result
     response = attach_evidence({
         "main_event": row.get("main_event", ""), "is_news_event": True,
-        "summary": summary, "uncertainties": [], "requires_review": False,
+        "summary": summary, "uncertainties": uncertainties,
+        "requires_review": original_decision,
     }, materials)
     claims = response["claims"]
     if len(claims) != len(sentences(summary)) or len(claims) > 20:
@@ -260,7 +280,10 @@ def review_cluster_claimwise(row: dict, *, request=None,
     else:
         result["answer"]["language"] = lang
         if lang["needs_edit"]:
-            result["issues"].append("model_flagged_russian_language")
+            # A style suggestion from a 4B model is advisory metadata, NOT
+            # a universal publication blocker. Evidence/grammar blockers
+            # from the deterministic validator remain in issues.
+            result["language_flags"].append("model_flagged_russian_language")
     if not result["issues"]:
         result["status"] = "advisory_no_issues_detected"
     return result
