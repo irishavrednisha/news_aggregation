@@ -64,7 +64,8 @@ def match_gemma(row: dict, baseline: dict[str, dict]) -> tuple[str, str]:
     source_hash = source_digest(row["source_materials"])
     if source_hash != source_digest(candidate["source_materials"]):
         return "", "baseline_source_mismatch"
-    return str(candidate.get("gemma_summary") or ""), "matched"
+    summary = str(candidate.get("gemma_summary") or "")
+    return summary, "matched" if summary else "baseline_summary_missing"
 
 
 def resource_snapshot() -> dict:
@@ -191,7 +192,7 @@ def emit_review_template(rows: list[dict], path: Path) -> None:
 
 
 def run(input_path: Path, output: Path, *, baseline_path: Path | None = None,
-        model: str = MODEL, options: dict | None = None, max_input_chars: int = 7200,
+        model: str = MODEL, options: dict | None = None, max_input_chars: int = 6000,
         limit: int = 91, resume: bool = False, max_retries: int = 1,
         request=None, measure_gpu: bool = True) -> dict:
     if limit < 1:
@@ -204,7 +205,7 @@ def run(input_path: Path, output: Path, *, baseline_path: Path | None = None,
     baseline_rows = baseline_index(baseline)
     source_sha = file_sha(input_path)
     baseline_sha = file_sha(baseline_path) if baseline_path else None
-    opts = {"temperature": 0, "num_ctx": 4096, "num_predict": 1600}
+    opts = {"temperature": 0, "num_ctx": 4096, "num_predict": 1400}
     opts.update(options or {})
     processed, started = {}, datetime.now(timezone.utc).isoformat()
     if resume:
@@ -271,9 +272,9 @@ def main(argv=None) -> int:
                         "stage4_qwen_vs_gemma_91.json")
     parser.add_argument("--limit", type=int, default=91)
     parser.add_argument("--model", default=MODEL)
-    parser.add_argument("--max-input-chars", type=int, default=7200)
+    parser.add_argument("--max-input-chars", type=int, default=6000)
     parser.add_argument("--num-ctx", type=int, default=4096)
-    parser.add_argument("--num-predict", type=int, default=1600)
+    parser.add_argument("--num-predict", type=int, default=1400)
     parser.add_argument("--timeout", type=float, default=240)
     parser.add_argument("--max-retries", type=int, default=1)
     parser.add_argument("--resume", action="store_true")
