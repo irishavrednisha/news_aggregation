@@ -7,8 +7,11 @@ on:
   pull_request:
     paths:
       - processing/qwen_abstractive_summary.py
+      - processing/qwen_evidence.py
       - scripts/compare_stage4_qwen.py
+      - scripts/revalidate_stage4_qwen.py
       - tests/test_stage4_qwen.py
+      - tests/test_stage4_qwen_evidence.py
       - tests/test_stage4_qwen_postgres.py
       - .github/workflows/stage4-qwen-offline.yml
 
@@ -25,7 +28,7 @@ jobs:
           python-version: "3.11"
       - name: Compile Stage 4 Qwen files
         run: |
-          python -m py_compile processing/qwen_abstractive_summary.py scripts/compare_stage4_qwen.py tests/test_stage4_qwen.py tests/test_stage4_qwen_postgres.py
+          python -m py_compile processing/qwen_abstractive_summary.py processing/qwen_evidence.py scripts/compare_stage4_qwen.py scripts/revalidate_stage4_qwen.py tests/test_stage4_qwen.py tests/test_stage4_qwen_evidence.py tests/test_stage4_qwen_postgres.py
       - name: Run offline Qwen regression tests
         run: |
           python -m unittest discover -s tests -p "test_stage4_qwen*.py" -v
