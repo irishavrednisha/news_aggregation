@@ -30,6 +30,28 @@
   проблем. **Это не одобрение редактора, не доказательство достоверности
   и не основание для автопубликации.** Все кандидаты требуют ручной проверки.
 
+### Результаты локальной диагностики 20 ноября 2026 года
+
+Устаревшая схема v1: из 91 материала Qwen сгенерировала 58 сводок, а
+27 записей получили отказ подключения Ollama; механически принятых
+результатов не было. Пересчёт доказательств v2 **без изменения текстов**
+дал 18 формально чистых и 40 требующих проверки сводок.
+Smoke v2 на трёх статьях: 3 генерации, 1 механически принята,
+2 отклонены. Это не независимая оценка фактов.
+
+При проверке оригиналов выявлены **два опасных пропуска валидатора**:
+Qwen называла будущие 103 рабочих места уже созданными и пропускала
+исключение для Рыбинского шлюза, хотя сводка объявляла прекращение
+движения «на всех участках». Оба текста проходили механическую проверку.
+В другой сводке материал рукоятки винтовки был ошибочно приписан прикладу.
+В то же время «70 т» / «70 тонн» и «1000 м» / «1000 метров» вызывали
+ложное отклонение. Эти случаи теперь защищены точечными правилами в
+\`processing/qwen_fact_guards.py\` (v2.1), без изменения Gemma.
+
+**Порог качества не достигнут и не измерен:** ни один механический статус
+не является ручной проверкой причинно-следственной связи, главного
+события, грамматики или полноты.
+
 Самопроверка Qwen не является независимой верификацией. Механические
 проверки также не способны гарантированно доказать, что организация,
 действие и число относятся к одному событию. Неподтверждённые связи
@@ -45,7 +67,7 @@ git switch --track origin/feat/stage4-qwen35-9b-auditable-2026-11-20
 ollama list
 ollama ps
 
-.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_stage4_qwen.py" -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_stage4_qwen*.py" -v
 ```
 
 Если локальная ветка уже создана: `git switch feat/stage4-qwen35-9b-auditable-2026-11-20`,
@@ -97,8 +119,8 @@ API, проверь процесс/журнал Ollama; не начинай но
 полных источников, не меняя сводок Qwen и не вызывая модель:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\revalidate_stage4_qwen.py \`
-  --input-json collector_test_results\stage4_qwen_vs_gemma_91.json \`
+.\.venv\Scripts\python.exe scripts\revalidate_stage4_qwen.py `
+  --input-json collector_test_results\stage4_qwen_vs_gemma_91.json `
   --output collector_test_results\stage4_qwen_v2_revalidated_91.json
 ```
 
@@ -107,6 +129,28 @@ API, проверь процесс/журнал Ollama; не начинай но
 Qwen или новый независимый тест. Сводки с неподтверждёнными числами и
 смысловыми несоответствиями по-прежнему отправляются на проверку.
 Передай файл `stage4_qwen_v2_revalidated_91.json` для анализа.
+
+## Повторная проверка твоих файлов v2 уже с правилами v2.1 (без Ollama)
+
+Сохрани исходные v2-отчёты. Новая команда перепроверит как старые 58
+сводок, так и **три новых текста Qwen** в уже имеющихся JSON, не будет
+перегенерировать их, изменять базу или перезаписывать исходники:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\revalidate_stage4_qwen.py 
+  --input-json collector_test_results\stage4_qwen_v2_revalidated_91.json 
+  --output collector_test_results\stage4_qwen_v21_revalidated_91.json
+```
+
+```powershell
+.\.venv\Scripts\python.exe scripts\revalidate_stage4_qwen.py 
+  --input-json collector_test_results\stage4_qwen_v2_smoke3.json 
+  --output collector_test_results\stage4_qwen_v21_revalidated_smoke3.json
+```
+
+Для независимого нового вызова Ollama используй
+`--output collector_test_results\stage4_qwen_v21_smoke3.json` и тот же
+исходный \`gemma_holdout.json\`, чтобы не затереть старые результаты.
 
 ## Диагностическое сравнение на 91 сохранённой статье
 
