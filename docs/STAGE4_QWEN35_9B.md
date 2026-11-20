@@ -142,6 +142,28 @@ URL/заголовков/текстов, но не заменяет ручную
 Отдельно требуется тест с **реальными многодокументными кластерами**:
 в прежних 91 материалах таких не было.
 
+## Дополнительная проверка неизменности PostgreSQL
+
+Включён отдельный интеграционный тест
+`tests/test_stage4_qwen_postgres.py`: он вычисляет хеши полных строк
+`news`, `clusters`, `posts` до и после прогона без Ollama. Тест
+только читает БД и отказывается работать с именем базы, отличным
+от `stage4_ci`. В GitHub Actions он пропускается, поскольку
+подключения к локальной PostgreSQL нет.
+
+Если **уже подготовлена отдельная тестовая копия БД** `stage4_ci`:
+
+```powershell
+$env:STAGE4_TEST_URL = "postgresql+psycopg2://USER:PASSWORD@127.0.0.1:5432/stage4_ci"
+$env:STAGE4_TEST_WRITE_ACK = "ephemeral-only"
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_stage4_qwen_postgres.py" -v
+Remove-Item Env:STAGE4_TEST_URL
+Remove-Item Env:STAGE4_TEST_WRITE_ACK
+```
+
+Замени USER и PASSWORD данными **только тестовой копии**. Не направляй
+тест на рабочую БД и не передавай строку подключения вместе с отчётами.
+
 ## Ручная редакционная оценка
 
 В `*_human_review.csv` для каждой сводки оцени (pass/fail/na):
