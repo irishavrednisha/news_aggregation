@@ -91,7 +91,9 @@ def resource_snapshot() -> dict:
 
 def evaluate(rows: list[dict]) -> dict:
     status = Counter(r["status"] for r in rows)
-    paired = [r for r in rows if r.get("baseline_match") == "matched"]
+    paired = [r for r in rows if r.get("baseline_match") in
+              {"matched", "baseline_summary_missing"}]
+    paired_with_text = [r for r in paired if r.get("gemma_summary")]
     elapsed = [a["elapsed_seconds"] for r in rows
                for a in r.get("attempts", []) if "elapsed_seconds" in a]
     tps = [a.get("ollama_metrics", {}).get("tokens_per_second")
@@ -102,8 +104,9 @@ def evaluate(rows: list[dict]) -> dict:
                      for issue in r.get("validation", {}).get("issues", []))
     return {
         "processed": len(rows), "paired_same_source": len(paired),
+        "paired_with_gemma_summary": len(paired_with_text),
         "qwen_generated": sum(bool(r.get("qwen_summary")) for r in rows),
-        "gemma_generated_in_paired": sum(bool(r.get("gemma_summary")) for r in paired),
+        "gemma_generated_in_paired": len(paired_with_text),
         "qwen_mechanical_drafts": status["summary_draft"],
         "qwen_review": status["summary_review"],
         "mean_ollama_request_seconds": round(sum(elapsed)/len(elapsed), 3) if elapsed else None,
