@@ -21,6 +21,7 @@ _FACTUAL_SPENDING = re.compile(
 _CONDITIONAL = re.compile(
     r"\b(?:условн\w*\s+расч\w*|предполож\w*|"
     r"если\s+самосвал|пример\w*\s+расч\w*|"
+    r"расч[её]тн\w*\s+пример\w*|"
     r"не\s+оценк\w*\s+фактическ\w*)\b"
 )
 _POWER = re.compile(r"\bмощност\w*\b")
