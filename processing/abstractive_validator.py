@@ -10,6 +10,8 @@ from difflib import SequenceMatcher
 from os.path import commonprefix
 import re
 
+from processing.russian_sentence_splitter import russian_sentences
+
 SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[А-ЯЁA-Z«\"])")
 NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[\s\u00a0]\d{3})*(?:[.,]\d+)?\s*%?(?!\w)")
 QUOTES_RE = re.compile(r"«([^»]+)»")
@@ -41,7 +43,7 @@ def normalize(text: str) -> str:
 
 
 def sentences(text: str) -> list[str]:
-    return [x.strip() for x in SENTENCE_RE.split((text or "").strip()) if x.strip()]
+    return russian_sentences(text)
 
 
 def _stem_match(a: str, b: str) -> bool:
