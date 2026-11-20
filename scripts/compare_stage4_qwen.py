@@ -194,7 +194,8 @@ def emit_review_template(rows: list[dict], path: Path) -> None:
 def run(input_path: Path, output: Path, *, baseline_path: Path | None = None,
         model: str = MODEL, options: dict | None = None, max_input_chars: int = 6000,
         limit: int = 91, resume: bool = False, max_retries: int = 1,
-        request=None, measure_gpu: bool = True) -> dict:
+        request=None, measure_gpu: bool = True,
+        stop_on_unavailable: bool = True) -> dict:
     if limit < 1:
         raise ValueError("limit must be positive")
     for forbidden in (input_path, baseline_path):
@@ -223,6 +224,7 @@ def run(input_path: Path, output: Path, *, baseline_path: Path | None = None,
         raise ValueError("Duplicate cluster ID in saved source manifest")
     shared = shared_boilerplate([r["source_materials"] for r in selected])
     rows = []
+    stopped_reason = None
     hardware_before = resource_snapshot() if measure_gpu else {}
     for i, raw in enumerate(selected, 1):
         cluster_id, materials = raw["cluster_id"], raw["source_materials"]
@@ -251,14 +253,27 @@ def run(input_path: Path, output: Path, *, baseline_path: Path | None = None,
             print(f"[{i}/{len(selected)}] #{cluster_id} {row['status']} "
                   f"issues={row['validation'].get('issues', [])}", flush=True)
         rows.append(row)
+        # Avoid 27 identical failure entries when Ollama has stopped.
+        issues = row.get("validation", {}).get("issues", [])
+        if stop_on_unavailable and any(
+                str(x).startswith("generation_error:URLError:")
+                or str(x).startswith("generation_error:ConnectionRefusedError:")
+                or str(x).startswith("generation_error:TimeoutError:")
+                for x in issues):
+            stopped_reason = "local_ollama_unreachable"
         checkpoint(output, make_report(
             rows, input_sha=source_sha, baseline_sha=baseline_sha, model=model,
             options=opts, max_input_chars=max_input_chars, created_utc=started,
             source_path=str(input_path)))
+        if stopped_reason:
+            break
     result = make_report(
         rows, input_sha=source_sha, baseline_sha=baseline_sha, model=model,
         options=opts, max_input_chars=max_input_chars, created_utc=started,
         source_path=str(input_path))
+    result["complete_requested_run"] = len(rows) == len(selected)
+    result["requested_rows"] = len(selected)
+    result["stopped_reason"] = stopped_reason
     result["hardware_before"] = hardware_before
     result["hardware_after"] = resource_snapshot() if measure_gpu else {}
     checkpoint(output, result)
@@ -300,6 +315,9 @@ def main(argv=None) -> int:
                  measure_gpu=not args.no_gpu_snapshot)
     print(json.dumps(result["metrics"], ensure_ascii=False, indent=2))
     print(f"Report: {args.output.resolve()}")
+    if result.get("stopped_reason"):
+        print("Local Ollama is unavailable. Restart it, then rerun with --resume.")
+        return 4
     return 0 if result["metrics"]["qwen_generated"] else 3
 
 
