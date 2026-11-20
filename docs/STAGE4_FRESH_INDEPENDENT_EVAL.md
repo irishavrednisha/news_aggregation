@@ -105,6 +105,27 @@ git pull --ff-only
 или добавить новые реально подтверждённые кластеры Stage 3 на
 **копии** базы, не менять продакшен-события и не отключать TLS.
 
+
+### Быстрый режим без двух отдельных запусков
+
+Если нужен единый запуск сбора и локальной Qwen-генерации, вместо
+`collect` и `generate` используй подкоманду `run` с теми же
+аргументами:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\stage4_fresh_qwen_eval.py run `
+  --exclude collector_test_results\qwen_vs_gemma_41_mixed.json `
+  --exclude collector_test_results\stage4_abstractive_v5_100.json `
+  --out-dir collector_test_results\stage4_fresh_holdout `
+  --mode both --target 100 --minimum 40 --min-multisource 5
+```
+
+Если наберётся меньше 40 реальных свежих событий или меньше пяти
+многодокументных групп, команда сохранит диагностический манифест,
+**не вызвав Qwen**. После возобновления окружения можно повторить
+ровно эту команду с `--resume`, при том же наборе прежних исключений.
+Ручную разметку и `score` эта команда **не имитирует**.
+
 ## Ограничения
 
 Офлайн unit-тесты используют синтетические фикстуры и **не считаются
