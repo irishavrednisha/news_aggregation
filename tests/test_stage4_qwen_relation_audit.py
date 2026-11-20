@@ -42,6 +42,14 @@ class RelationsRegressionTests(unittest.TestCase):
         self.assertNotIn("dimension_mismatch:power_vs_voltage",
                          issues("Напряжение на выходе составляет 220 В.", source))
 
+    def test_project_cost_cannot_inherit_economic_effect(self):
+        source = ("Экономический эффект модернизации оценивается в 1,5 млн рублей. "
+                  "Затраты на проект не раскрывались.")
+        wrong = "Модернизация обошлась предприятию в 1,5 млн рублей."
+        correct = "Ожидаемый экономический эффект составляет 1,5 млн рублей."
+        self.assertIn("financial_role_mismatch:1.5:cost", issues(wrong, source))
+        self.assertNotIn("financial_role_mismatch:1.5:cost", issues(correct, source))
+
     def test_hypothetical_budget_not_actual_investment(self):
         source = ("Рассмотрим условный расчёт. Если грузовик перевозит 20 тонн "
                   "сырья по 1 000 рублей за тонну, 50 рейсов — это 1 млн "
