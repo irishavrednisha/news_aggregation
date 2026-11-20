@@ -21,7 +21,7 @@ from processing.abstractive_validator import (
 
 MODEL = "qwen3.5:9b-q4_K_M"
 VERSION = "stage4-qwen35-auditable-v1"
-DEFAULT_OPTIONS = {"temperature": 0, "num_ctx": 4096, "num_predict": 1600}
+DEFAULT_OPTIONS = {"temperature": 0, "num_ctx": 4096, "num_predict": 1400}
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -97,7 +97,7 @@ def _long_excerpt(body: str, title: str, allowance: int) -> str:
     tail_size = min(650, allowance * 20 // 100)
     head = body[:head_size]
     tail = body[-tail_size:]
-    middle_budget = allowance - len(head) - len(tail) - 45
+    middle_budget = allowance - len(head) - len(tail) - 85
     terms = _tokens(title)
     middle = body[head_size:len(body)-tail_size]
     # Scan complete original sentences, keeping original spelling and numbers.
@@ -127,7 +127,7 @@ def _long_excerpt(body: str, title: str, allowance: int) -> str:
         "\n[...пропущены фрагменты...]\n" if middle_text else "") + tail
 
 
-def prepare_context(materials: list[dict], max_chars: int = 7200) -> tuple[list[dict], dict]:
+def prepare_context(materials: list[dict], max_chars: int = 6000) -> tuple[list[dict], dict]:
     """Bound the 4096-token prompt without dropping every article tail."""
     if max_chars < 2000:
         raise ValueError("max_chars must be >= 2000")
@@ -217,6 +217,31 @@ def _claim_issues(claim: dict, sentence: str, source_by_id: dict[str, dict],
     return list(dict.fromkeys(issues))
 
 
+def cross_source_issues(materials: list[dict]) -> list[str]:
+    """Surface suspected event conflicts, NEVER silently select a winning source."""
+    problems = []
+    for i, left in enumerate(materials):
+        for right in materials[i+1:]:
+            left_title = _tokens(left["title"])
+            right_title = _tokens(right["title"])
+            common = left_title & right_title
+            if len(common) < 2 or len(common) / max(1, len(left_title | right_title)) < 0.45:
+                continue
+            left_lead = left["title"] + ". " + left["text"][:600]
+            right_lead = right["title"] + ". " + right["text"][:600]
+            left_nums = _number_keys(left_lead)
+            right_nums = _number_keys(right_lead)
+            if left_nums and right_nums and left_nums != right_nums:
+                problems.append("potential_cross_source_numeric_conflict")
+            if (FUTURE_RE.search(left_lead) and DONE_RE.search(right_lead)
+                    and not DONE_RE.search(left_lead)):
+                problems.append("potential_cross_source_event_stage_conflict")
+            if (FUTURE_RE.search(right_lead) and DONE_RE.search(left_lead)
+                    and not DONE_RE.search(right_lead)):
+                problems.append("potential_cross_source_event_stage_conflict")
+    return list(dict.fromkeys(problems))
+
+
 def validate_response(answer: object, original: list[dict]) -> dict:
     """Fail closed; quote existence and lexical overlap are NOT factual proof."""
     issues, flags = [], []
@@ -245,6 +270,9 @@ def validate_response(answer: object, original: list[dict]) -> dict:
         baseline = validate_summary(summary, original)
         issues.extend(baseline.issues)
         flags.extend(baseline.flags)
+        if baseline.copied_sentence_ratio > 0.50:
+            issues.append("mostly_extractive")
+        issues.extend(cross_source_issues(original))
         # Do not force two extra fabricated sentences from a genuinely brief source.
         source_size = max((len(m["text"]) for m in original), default=0)
         if source_size < 600 and 1 <= len(sentences(summary)) <= 2:
@@ -300,7 +328,7 @@ class LocalOllama:
 def summarize_cluster(cluster_id: int | str, materials: list[dict], *,
                       working_materials: list[dict] | None = None,
                       model: str = MODEL, options: dict | None = None,
-                      max_input_chars: int = 7200, request=None,
+                      max_input_chars: int = 6000, request=None,
                       max_retries: int = 1) -> dict:
     """Generate a candidate and a fully inspectable result, never publish."""
     if not model.startswith("qwen3.5:"):
