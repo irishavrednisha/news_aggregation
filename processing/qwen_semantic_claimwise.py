@@ -80,7 +80,8 @@ def _valid_fact(answer: object, quote_count: int) -> str | None:
     if not isinstance(answer, dict) or set(answer) != {
             "verdict", "reason", "quote_indices"}:
         return "invalid_fact_schema"
-    if answer["verdict"] not in {"supported", "contradicted", "insufficient"}:
+    if (not isinstance(answer["verdict"], str) or answer["verdict"]
+            not in {"supported", "contradicted", "insufficient"}):
         return "invalid_fact_verdict"
     if not isinstance(answer["reason"], str) or not answer["reason"].strip():
         return "empty_fact_reason"
