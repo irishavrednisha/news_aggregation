@@ -11,6 +11,7 @@ from unittest.mock import patch
 from scripts.stage4_independent_holdout import (
     blind_review_files, build_manifest, clean_url, fingerprint,
     new_material, prior_signatures, select_holdout, title_duplicate, run_holdout,
+    recover_rostec_article_dates,
 )
 from scripts.score_stage4_holdout import score, confidence_interval
 
@@ -106,6 +107,66 @@ class HoldoutTests(unittest.TestCase):
         self.assertEqual(
             stats["undated_unseen_examples"][0]["url"], undated_new["url"])
         self.assertNotIn("text", stats["undated_unseen_examples"][0])
+
+    def test_rostec_date_recovery_requires_official_domain_and_same_title(self):
+        from types import SimpleNamespace
+        undated = article(21, source="Ростех", published="",
+                          url="https://rostec.ru/media/news/rostec-new-production/",
+                          title="Ростех запустил новую линию производства деталей")
+        other = article(22, source="Ростех", published="",
+                        url="https://fake-rostec.ru/media/news/unsafe/",
+                        title="Ростех начал испытания на заводе в Казани")
+        originals = [[undated], [other]]
+        calls = []
+        def fake_fetch(preview):
+            calls.append(preview.url)
+            return SimpleNamespace(title=preview.title,
+                                   published_at=datetime(2026, 11, 18))
+        prior = {"urls": set(), "titles": [], "texts": set(), "source_files": []}
+        updated, metrics = recover_rostec_article_dates(
+            originals, prior, TODAY, 30, fetch_article=fake_fetch)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(metrics["recovered"], 1)
+        self.assertEqual(updated[0][0]["published_at"], "2026-11-18T00:00:00")
+        self.assertEqual(updated[0][0]["date_provenance"],
+                         "official_rostec_article_page")
+        self.assertEqual(updated[1][0].get("published_at"), "")
+        self.assertEqual(undated["published_at"], "")  # Original is untouched.
+        self.assertEqual(other["published_at"], "")
+
+    def test_rostec_date_recovery_rejects_unverified_related_date(self):
+        from types import SimpleNamespace
+        item = article(23, source="Ростех", published="",
+                       url="https://www.rostec.ru/media/news/other/")
+        prior = {"urls": set(), "titles": [], "texts": set(), "source_files": []}
+        wrong = lambda preview: SimpleNamespace(
+            title="Совершенно другой заголовок соседней статьи",
+            published_at=datetime(2026, 11, 19))
+        updated, metrics = recover_rostec_article_dates(
+            [[item]], prior, TODAY, 30, fetch_article=wrong)
+        self.assertEqual(metrics["recovered"], 0)
+        self.assertEqual(len(metrics["unverified"]), 1)
+        self.assertEqual(updated[0][0]["published_at"], "")
+
+        future = lambda preview: SimpleNamespace(
+            title=preview.title, published_at=datetime(2026, 11, 23))
+        updated, metrics = recover_rostec_article_dates(
+            [[item]], prior, TODAY, 30, fetch_article=future)
+        self.assertEqual(metrics["recovered"], 0)
+        self.assertEqual(updated[0][0]["published_at"], "")
+
+    def test_rostec_date_recovery_never_refetches_seen_articles(self):
+        from types import SimpleNamespace
+        item = article(24, source="Ростех", published="",
+                       url="https://rostec.ru/media/news/seen/")
+        prior = {"urls": {clean_url(item["url"])}, "titles": [],
+                 "texts": set(), "source_files": []}
+        def forbidden(preview):
+            raise AssertionError("No fetch for old sources")
+        updated, metrics = recover_rostec_article_dates(
+            [[item]], prior, TODAY, 30, fetch_article=forbidden)
+        self.assertEqual(metrics["attempted"], 0)
+        self.assertEqual(updated[0][0]["published_at"], "")
 
     def test_source_cap_and_multiple_overlaps(self):
         old = article(1)
