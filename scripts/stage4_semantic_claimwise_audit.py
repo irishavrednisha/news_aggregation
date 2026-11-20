@@ -12,6 +12,11 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from scripts.stage4_semantic_audit import _save, _source_rows
 from processing.qwen_semantic_claimwise import (
@@ -118,7 +123,10 @@ def run(input_path: Path, output_path: Path, *, limit: int | None = None,
         "issues": dict(allissues),
     }
     report["schema_all_valid"] = not any(
-        "schema" in x or "quote_indices" in x or "empty_fact_reason" in x
+        any(token in x for token in (
+            "schema", "quote_indices", "empty_fact_reason",
+            "invalid_fact_verdict", "language_flag_without_example",
+            "supported_without_quoted_evidence"))
         for x in allissues
     )
     _save(output_path, report)
