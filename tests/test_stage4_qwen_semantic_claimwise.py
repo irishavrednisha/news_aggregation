@@ -133,7 +133,8 @@ class ClaimWiseTests(unittest.TestCase):
         }, sample))
         fake = FakeOneByOne(language=True)
         reviewed = review_cluster_claimwise(row(), request=fake)
-        self.assertIn("model_flagged_russian_language", reviewed["issues"])
+        self.assertIn("model_flagged_russian_language", reviewed["language_flags"])
+        self.assertNotIn("model_flagged_russian_language", reviewed["issues"])
 
     def test_invalid_model_types_fail_closed(self):
         self.assertEqual(_valid_fact({"verdict": [], "reason": "text",
@@ -142,6 +143,34 @@ class ClaimWiseTests(unittest.TestCase):
         self.assertEqual(_valid_fact({"verdict": "supported", "reason": "text",
                                      "quote_indices": ["zero"]}, 1),
                          "invalid_fact_quote_indices")
+
+    def test_original_qwen_uncertainty_is_not_discarded(self):
+        original = row()
+        original["uncertainties"] = ["В источнике нет подтверждения итогов проекта"]
+        reviewed = review_cluster_claimwise(
+            original, request=FakeOneByOne())
+        self.assertEqual(reviewed["status"], "review_required")
+        self.assertIn("model_reported_uncertainties",
+                      reviewed["mechanical_issues"])
+        self.assertIn("deterministic_review_required", reviewed["issues"])
+
+    def test_original_qwen_request_for_review_is_not_discarded(self):
+        original = row()
+        original["attempts"] = [{"response": {
+            "summary": original["qwen_summary"], "requires_review": True,
+        }}]
+        reviewed = review_cluster_claimwise(
+            original, request=FakeOneByOne())
+        self.assertEqual(reviewed["status"], "review_required")
+        self.assertIn("model_requested_review", reviewed["mechanical_issues"])
+
+    def test_malformed_original_uncertainties_fails_closed(self):
+        original = row()
+        original["uncertainties"] = "not a list"
+        fake = FakeOneByOne()
+        reviewed = review_cluster_claimwise(original, request=fake)
+        self.assertIn("original_uncertainties_invalid", reviewed["issues"])
+        self.assertEqual(fake.calls, 0)
 
     def test_no_summary_is_not_a_model_call(self):
         fake = FakeOneByOne()
