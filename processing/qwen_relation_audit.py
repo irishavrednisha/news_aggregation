@@ -35,7 +35,8 @@ _METRICS = {
     "export": re.compile(r"\bэкспорт\w*\b"),
     "loading": re.compile(r"\b(?:погруз\w*|погруж\w*|отгруз\w*)\b"),
     "sales": re.compile(r"\b(?:продаж\w*|реализац\w*|спрос\w*)\b"),
-    "investment": re.compile(r"\b(?:инвестиц\w*|вложени\w*|вложил\w*)\b"),
+    "revenue": re.compile(r"\b(?:выручк\w*|доход\w*|денежн\w*\s+поступлен\w*)\b"),
+    "investment": re.compile(r"\b(?:инвестиц\w*|инвестир\w*|вложени\w*|вложил\w*)\b"),
     "cost": re.compile(r"\b(?:расход\w*|затрат\w*|обошл\w*|потратил\w*)\b"),
     "economic_effect": re.compile(r"\b(?:экономи\w*|сэконом\w*|эффект\w*)\b"),
     "power": _POWER,
@@ -191,7 +192,7 @@ def audit_relations(summary: str, materials: list[dict]) -> dict:
 
     # A reported investment, expense, revenue or saving is not interchangeable
     # with the same number attached to a different financial role.
-    financial_roles = {"investment", "cost", "economic_effect", "sales"}
+    financial_roles = {"investment", "cost", "economic_effect", "revenue"}
     for fact in generated:
         if fact.metric not in financial_roles:
             continue
