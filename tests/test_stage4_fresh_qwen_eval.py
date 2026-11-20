@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.stage4_fresh_qwen_eval import (
-    _multi, check_manifest, score, write_blind_packets, main,
+    _multi, _sha, check_manifest, score, write_blind_packets, main, generate, VERSION,
 )
 from scripts.stage4_independent_holdout import atomic_json
 from processing.qwen_abstractive_summary import source_digest
@@ -134,6 +134,32 @@ class BlindHumanAuditTests(unittest.TestCase):
             "minimum": 40, "multi_minimum": 5,
         })
         write_blind_packets(self.m, self.report, self.root)
+
+    def test_resume_after_editor_started_keeps_frozen_sources_and_labels(self):
+        manifest_path = self.root/"holdout_manifest.json"
+        report_path = self.root/"qwen_holdout.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["input_sha256"] = _sha(manifest_path)
+        report["complete_requested_run"] = True
+        atomic_json(report_path, report)
+        key_path = self.root/"private_qwen_review_key.json"
+        key = json.loads(key_path.read_text(encoding="utf-8"))
+        key["qwen_report_sha256"] = _sha(report_path)
+        atomic_json(key_path, key)
+        atomic_json(self.root/"qwen_holdout_gate.json", {
+            "version": VERSION, "manifest_sha256": _sha(manifest_path),
+            "minimum": 40, "multi_minimum": 5,
+        })
+        labels = self.root/"qwen_review_labels.csv"
+        before = labels.read_bytes()
+        with patch("scripts.compare_stage4_qwen.run") as runner:
+            result = generate(out_dir=self.root, resume=True,
+                              measure_gpu=False)
+            runner.assert_not_called()
+        self.assertTrue(result["complete"])
+        self.assertTrue(result["reused_frozen_review_packet"])
+        self.assertEqual(labels.read_bytes(), before)
+        self.assertEqual(_sha(report_path), key["qwen_report_sha256"])
 
     def test_packet_is_blind_and_labels_preserved(self):
         packet = (self.root/"blind_qwen_review.jsonl").read_text(
