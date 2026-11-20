@@ -114,3 +114,23 @@ def audit_claim_links(claims: list[dict], materials: list[dict]) -> dict:
         })
     return {"issues": list(dict.fromkeys(all_issues)),
             "assessments": assessments, "factually_verified": False}
+
+
+def safe_acronym_alias(acronym: str, claim: str, evidence: str) -> bool:
+    """Narrow alias: 'правительство РФ' == 'Правительство России'.
+
+    Never treat РФ as a globally safe replacement: it could be used in
+    unrelated organizations or technological contexts.
+    """
+    if acronym != "РФ":
+        return False
+    return (bool(re.search(r"\bправительств\w*\s+РФ\b", claim, re.I))
+            and bool(re.search(
+                r"\bправительств\w*\s+(?:России|Российской\s+Федерации)\b",
+                evidence, re.I)))
+
+
+def safe_geography_equivalence(name: str, evidence: str) -> bool:
+    """Russian metallurgy / production can explicitly indicate Russia."""
+    return (normalize(name) in {"россия", "россии"}
+            and bool(re.search(r"\bроссийск\w*\b", evidence, re.I)))
