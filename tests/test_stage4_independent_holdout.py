@@ -146,13 +146,21 @@ class HoldoutTests(unittest.TestCase):
             [[item]], prior, TODAY, 30, fetch_article=wrong)
         self.assertEqual(metrics["recovered"], 0)
         self.assertEqual(len(metrics["unverified"]), 1)
+        self.assertEqual(metrics["unverified"][0]["reason"], "article_headline_mismatch")
         self.assertEqual(updated[0][0]["published_at"], "")
+
+        missing = lambda preview: SimpleNamespace(
+            title=preview.title, published_at=None)
+        _, metrics = recover_rostec_article_dates(
+            [[item]], prior, TODAY, 30, fetch_article=missing)
+        self.assertEqual(metrics["unverified"][0]["reason"], "no_page_published_date")
 
         future = lambda preview: SimpleNamespace(
             title=preview.title, published_at=datetime(2026, 11, 23))
         updated, metrics = recover_rostec_article_dates(
             [[item]], prior, TODAY, 30, fetch_article=future)
         self.assertEqual(metrics["recovered"], 0)
+        self.assertEqual(metrics["unverified"][0]["reason"], "page_date_outside_window")
         self.assertEqual(updated[0][0]["published_at"], "")
 
     def test_rostec_date_recovery_never_refetches_seen_articles(self):
