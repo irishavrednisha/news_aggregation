@@ -237,11 +237,20 @@ def recover_rostec_article_dates(groups: list[list[dict]], previous: dict,
                         url=url, published_at=None, preview_text="")
                     article = fetch_article(preview)
                     date = date_of(getattr(article, "published_at", None))
-                    # The page must describe the same article. The collector
-                    # may otherwise have parsed a recommendation/sidebar.
-                    if (date and 0 <= (now - date).days <= max_days
-                            and title_duplicate(
-                                entry["title"], str(getattr(article, "title", "")))):
+                    page_title = str(getattr(article, "title", "") or "")
+                    title_matches = title_duplicate(entry["title"], page_title)
+                    # Fail closed and explain the specific cause. The article
+                    # might be blocked, undated, a different recommended story,
+                    # or outside the requested evaluation window.
+                    if not date:
+                        reason = "no_page_published_date"
+                    elif not 0 <= (now - date).days <= max_days:
+                        reason = "page_date_outside_window"
+                    elif not title_matches:
+                        reason = "article_headline_mismatch"
+                    else:
+                        reason = ""
+                    if not reason:
                         entry["published_at"] = (
                             article.published_at.isoformat()
                             if hasattr(article.published_at, "isoformat")
@@ -249,8 +258,13 @@ def recover_rostec_article_dates(groups: list[list[dict]], previous: dict,
                         entry["date_provenance"] = "official_rostec_article_page"
                         recovered.append({"url": url, "published_at": entry["published_at"]})
                     else:
-                        failures.append({"url": url, "reason": (
-                            "date_or_title_unverified_or_outside_window")})
+                        failures.append({
+                            "url": url, "reason": reason,
+                            "page_title": page_title[:180],
+                            "page_published_at": (
+                                str(getattr(article, "published_at", "") or "")[:60]),
+                            "title_matched": title_matches,
+                        })
                 except Exception as exc:
                     failures.append({"url": url, "reason": type(exc).__name__})
             new_materials.append(entry)
