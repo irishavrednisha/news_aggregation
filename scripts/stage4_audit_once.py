@@ -53,7 +53,7 @@ def run_audit(input_json: Path, output: Path, *, skip_tests: bool = False) -> di
         "input_file": str(input_json), "source_report_is_immutable": True,
         "ollama_called": False, "database_writes": False, "max_publications": 0,
         "editorial_approval_required": True,
-        "tests": tests,
+        "tests": tests, "tests_skipped_by_request": bool(skip_tests),
         "all_executed_tests_passed": all(x["passed"] for x in tests),
         "revalidation": None,
         "revalidation_error": None,
