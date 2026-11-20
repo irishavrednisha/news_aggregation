@@ -67,6 +67,18 @@ class RelationsRegressionTests(unittest.TestCase):
                              for x in issues("Приведён условный расчёт на 1 млн рублей.",
                                              source)))
 
+    def test_shipping_quantity_is_not_misclassified_as_cost(self):
+        source = ("Рассмотрим условный расчёт: на внедрение системы "
+                  "потребуется 1 млн рублей. Сумма эквивалентна 50 рейсам "
+                  "самосвалов, перевозящих по 20 тонн. Фактической закупки "
+                  "ещё не было.")
+        summary = ("Внедрение системы обошлось в 1 млн рублей, "
+                   "что соответствует стоимости 50 рейсов по 20 тонн.")
+        flagged = issues(summary, source)
+        self.assertIn("conditional_amount_presented_as_spending:1", flagged)
+        self.assertNotIn("conditional_amount_presented_as_spending:50", flagged)
+        self.assertNotIn("conditional_amount_presented_as_spending:20", flagged)
+
     def test_real_investment_not_treated_as_hypothetical(self):
         source = ("Компания инвестировала 1 млн рублей в обновление цеха. "
                   "Проект завершили и передали заказчику.")
