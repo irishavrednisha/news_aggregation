@@ -83,6 +83,30 @@ class HoldoutTests(unittest.TestCase):
             "В Якутии построили новый горнодобывающий объект",
             "В Москве запустили лабораторию по микроэлектронике"))
 
+    def test_missing_dates_are_counted_only_after_old_exposure(self):
+        old = article(1, source="Источник А", published="")
+        prior = {"urls": {clean_url(old["url"])},
+                 "texts": {fingerprint(old)}, "titles": [old["title"]],
+                 "source_files": []}
+        undated_new = article(2, source="Источник Б", published="")
+        fresh_new = article(3, source="Источник В", published="2026-11-19")
+        self.assertEqual(new_material(old, prior, TODAY, 30), "seen_url")
+        self.assertEqual(new_material(undated_new, prior, TODAY, 30),
+                         "no_verified_date")
+        selected, stats = select_holdout(
+            [[old], [undated_new], [fresh_new]], prior,
+            TODAY, target=5, max_days=30)
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(stats["rejections"]["seen_url"], 1)
+        self.assertEqual(stats["rejections"]["no_verified_date"], 1)
+        self.assertEqual(stats["candidate_input_groups"], 3)
+        self.assertEqual(stats["candidate_source_counts"]["Источник Б"], 1)
+        self.assertEqual(
+            stats["rejections_by_source"]["Источник Б"]["no_verified_date"], 1)
+        self.assertEqual(
+            stats["undated_unseen_examples"][0]["url"], undated_new["url"])
+        self.assertNotIn("text", stats["undated_unseen_examples"][0])
+
     def test_source_cap_and_multiple_overlaps(self):
         old = article(1)
         prior = {"urls": {clean_url(old["url"])}, "texts": {fingerprint(old)},
