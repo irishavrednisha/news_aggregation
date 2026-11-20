@@ -20,6 +20,9 @@ from processing.stage4_quality import quality_issues, source_integrity_issues
 from processing.qwen_evidence import build_claims
 from processing.qwen_fact_guards import equivalent_explicit_units, focused_fact_issues
 from processing.qwen_relation_audit import audit_relations
+from processing.qwen_claim_relations import (audit_claim_links, safe_acronym_alias,
+                                             safe_geography_equivalence)
+from processing.qwen_language_audit import audit_russian_quality
 from processing.abstractive_validator import (
     ACRONYM_RE, CAUSE_RE, DONE_RE, FALL_RE, FUTURE_RE, NEGATION_RE,
     NUMBER_RE, RISE_RE, _number_contexts, normalize, sentences, validate_summary,
@@ -219,6 +222,7 @@ def _claim_issues(claim: dict, sentence: str, source_by_id: dict[str, dict],
             issues.append(tag + "_unit_not_in_evidence")
             break
     acronyms = set(ACRONYM_RE.findall(sentence))
+    acronyms = {a for a in acronyms if not safe_acronym_alias(a, sentence, evidence)}
     if not acronyms.issubset(set(ACRONYM_RE.findall(evidence))):
         issues.append(tag + "_actor_acronym_not_in_evidence")
     # Proper names must belong to the cited passage, not merely to
@@ -230,7 +234,8 @@ def _claim_issues(claim: dict, sentence: str, source_by_id: dict[str, dict],
     for found in re.finditer(r"(?<!\w)[А-ЯЁ][а-яё]{4,}(?!\w)", sentence):
         if found.start() == 0 or sentence[max(0, found.start()-2):found.start()].endswith(". "):
             continue
-        if normalize(found.group())[:6] not in normalize(evidence):
+        if (normalize(found.group())[:6] not in normalize(evidence)
+                and not safe_geography_equivalence(found.group(), evidence)):
             issues.append(tag + "_proper_name_not_in_evidence")
             break
     focus = _anchors(sentence)
@@ -334,10 +339,17 @@ def validate_response(answer: object, original: list[dict]) -> dict:
             if (problem.startswith("number_unit_mismatch:") and
                     equivalent_explicit_units(problem.split(":", 1)[1], summary, source_text)):
                 continue
+            if (problem == "unsupported_acronym:РФ"
+                    and all(safe_acronym_alias("РФ", part, source_text)
+                            for part in sentences(summary) if "РФ" in part)):
+                continue
             issues.append(problem)
         issues.extend(focused_fact_issues(summary, original))
         relation_audit = audit_relations(summary, original)
         issues.extend(relation_audit["issues"])
+        language_audit = audit_russian_quality(summary)
+        issues.extend(language_audit["issues"])
+        flags.extend(language_audit["flags"])
         flags.extend(baseline.flags)
         if baseline.copied_sentence_ratio > 0.50:
             issues.append("mostly_extractive")
@@ -356,6 +368,8 @@ def validate_response(answer: object, original: list[dict]) -> dict:
             if i > len(answer["claims"]):
                 break
             issues.extend(_claim_issues(answer["claims"][i-1], part, sources, i))
+        claim_audit = audit_claim_links(answer["claims"], original)
+        issues.extend(claim_audit["issues"])
     if answer["uncertainties"]:
         issues.append("model_reported_uncertainties")
     if answer["requires_review"]:
@@ -376,6 +390,8 @@ def validate_response(answer: object, original: list[dict]) -> dict:
               }}
     if answer["is_news_event"]:
         result["relation_audit"] = relation_audit
+        result["language_audit"] = language_audit
+        result["claim_relation_audit"] = claim_audit
     return result
 
 
