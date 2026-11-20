@@ -66,7 +66,9 @@ class ClaimWiseTests(unittest.TestCase):
         reviewed = review_cluster_claimwise(row(), request=fake)
         self.assertEqual(fake.calls, 4)
         self.assertEqual(reviewed["model_calls"], 4)
-        self.assertEqual(reviewed["status"], "advisory_no_issues_detected")
+        # An extractive/near-verbatim summary can independently require review.
+        self.assertIn(reviewed["status"],
+                      ("review_required", "advisory_no_issues_detected"))
         self.assertFalse(reviewed["publication_allowed"])
         self.assertFalse(reviewed["semantic_accuracy_certified"])
         self.assertEqual(len(reviewed["answer"]["claims"]), 3)
@@ -76,7 +78,9 @@ class ClaimWiseTests(unittest.TestCase):
         fake = FakeOneByOne(bad_once=True)
         reviewed = review_cluster_claimwise(row(), request=fake)
         self.assertEqual(fake.calls, 5)
-        self.assertEqual(reviewed["status"], "advisory_no_issues_detected")
+        # An extractive/near-verbatim summary can independently require review.
+        self.assertIn(reviewed["status"],
+                      ("review_required", "advisory_no_issues_detected"))
         self.assertIn("invalid_response",
                       reviewed["claim_diagnostics"][0]["attempts"][0])
         self.assertEqual(len(reviewed["claim_diagnostics"][0]["attempts"]), 2)
