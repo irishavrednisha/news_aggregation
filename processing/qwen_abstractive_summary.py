@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 from processing.stage4_quality import quality_issues, source_integrity_issues
 from processing.qwen_evidence import build_claims
 from processing.qwen_fact_guards import equivalent_explicit_units, focused_fact_issues
+from processing.qwen_relation_audit import audit_relations
 from processing.abstractive_validator import (
     ACRONYM_RE, CAUSE_RE, DONE_RE, FALL_RE, FUTURE_RE, NEGATION_RE,
     NUMBER_RE, RISE_RE, _number_contexts, normalize, sentences, validate_summary,
@@ -335,6 +336,8 @@ def validate_response(answer: object, original: list[dict]) -> dict:
                 continue
             issues.append(problem)
         issues.extend(focused_fact_issues(summary, original))
+        relation_audit = audit_relations(summary, original)
+        issues.extend(relation_audit["issues"])
         flags.extend(baseline.flags)
         if baseline.copied_sentence_ratio > 0.50:
             issues.append("mostly_extractive")
@@ -357,9 +360,12 @@ def validate_response(answer: object, original: list[dict]) -> dict:
         issues.append("model_reported_uncertainties")
     if answer["requires_review"]:
         issues.append("model_requested_review")
-    return {"passed": not issues, "issues": list(dict.fromkeys(issues)),
-            "flags": list(dict.fromkeys(flags)),
-            "mechanical_validation_is_not_fact_check": True}
+    result = {"passed": not issues, "issues": list(dict.fromkeys(issues)),
+              "flags": list(dict.fromkeys(flags)),
+              "mechanical_validation_is_not_fact_check": True}
+    if answer["is_news_event"]:
+        result["relation_audit"] = relation_audit
+    return result
 
 
 class _GpuMonitor:
