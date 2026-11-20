@@ -170,7 +170,7 @@ def review_cluster_claimwise(row: dict, *, request=None,
         return result
     response = attach_evidence({
         "main_event": row.get("main_event", ""), "is_news_event": True,
-        "summary": summary, "uncertainties": [], "requires_review": True,
+        "summary": summary, "uncertainties": [], "requires_review": False,
     }, materials)
     claims = response["claims"]
     if len(claims) != len(sentences(summary)) or len(claims) > 20:
