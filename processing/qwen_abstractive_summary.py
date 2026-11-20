@@ -10,10 +10,13 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import re
+import subprocess
+import threading
 import time
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from processing.stage4_quality import quality_issues, source_integrity_issues
 from processing.abstractive_validator import (
     ACRONYM_RE, CAUSE_RE, DONE_RE, FALL_RE, FUTURE_RE, NEGATION_RE,
     NUMBER_RE, RISE_RE, normalize, sentences, validate_summary,
@@ -273,6 +276,8 @@ def validate_response(answer: object, original: list[dict]) -> dict:
         if baseline.copied_sentence_ratio > 0.50:
             issues.append("mostly_extractive")
         issues.extend(cross_source_issues(original))
+        issues.extend(source_integrity_issues(original))
+        issues.extend(quality_issues(summary))
         # Do not force two extra fabricated sentences from a genuinely brief source.
         source_size = max((len(m["text"]) for m in original), default=0)
         if source_size < 600 and 1 <= len(sentences(summary)) <= 2:
@@ -294,6 +299,59 @@ def validate_response(answer: object, original: list[dict]) -> dict:
             "mechanical_validation_is_not_fact_check": True}
 
 
+class _GpuMonitor:
+    """Sample observed system-wide GPU usage while a request is in flight."""
+    def __init__(self):
+        self.samples = []
+        self.stop = threading.Event()
+        self.worker = None
+
+    def _sample(self):
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=3, check=False)
+            if result.returncode == 0:
+                for line in result.stdout.strip().splitlines():
+                    parts = [x.strip() for x in line.split(",")]
+                    if len(parts) >= 3:
+                        self.samples.append({
+                            "used_mib": float(parts[0]),
+                            "total_mib": float(parts[1]),
+                            "utilization_percent": float(parts[2]),
+                        })
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass  # Systems without a GPU or nvidia-smi still run the model.
+
+    def _loop(self):
+        while not self.stop.wait(0.75):
+            self._sample()
+
+    def __enter__(self):
+        self._sample()
+        self.worker = threading.Thread(target=self._loop, daemon=True)
+        self.worker.start()
+        return self
+
+    def __exit__(self, *_):
+        self.stop.set()
+        if self.worker is not None:
+            self.worker.join(timeout=4)
+        self._sample()
+
+    def metrics(self) -> dict:
+        return {
+            "sample_count": len(self.samples),
+            "max_observed_used_mib": max(
+                (x["used_mib"] for x in self.samples), default=None),
+            "max_observed_utilization_percent": max(
+                (x["utilization_percent"] for x in self.samples), default=None),
+            "note": ("Observed GPU-wide nvidia-smi samples, not a model-only "
+                     "allocation or guaranteed hardware peak."),
+        }
+
+
 class LocalOllama:
     """Allow only a local loopback endpoint; never send source data to a cloud."""
     def __init__(self, url: str = "http://127.0.0.1:11434", timeout: float = 240):
@@ -311,8 +369,9 @@ class LocalOllama:
                    "stream": False, "think": False, "options": options}
         request = Request(self.url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                           headers={"Content-Type": "application/json"}, method="POST")
-        with urlopen(request, timeout=self.timeout) as response:
-            data = json.load(response)
+        with _GpuMonitor() as monitor:
+            with urlopen(request, timeout=self.timeout) as response:
+                data = json.load(response)
         raw = data.get("message", {}).get("content", "")
         answer = json.loads(raw)
         elapsed = {key: data.get(key) for key in (
@@ -322,6 +381,7 @@ class LocalOllama:
         elapsed["tokens_per_second"] = round(
             (elapsed.get("eval_count") or 0) * 1e9 / eval_duration, 2
         ) if eval_duration else None
+        elapsed["gpu_during_request"] = monitor.metrics()
         return answer, elapsed
 
 
