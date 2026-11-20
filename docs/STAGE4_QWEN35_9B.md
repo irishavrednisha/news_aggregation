@@ -315,17 +315,17 @@ git pull --ff-only
 документированной ручной оценки и отдельных multi-source кейсов.
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_stage4_summaries.py 
-  --input-json collector_test_results\stage4_qwen_60day_holdout\holdout_manifest.json 
-  --limit 41 --min-clusters 40 
+.\.venv\Scripts\python.exe scripts\run_stage4_summaries.py `
+  --input-json collector_test_results\stage4_qwen_60day_holdout\holdout_manifest.json `
+  --limit 41 --min-clusters 40 `
   --output collector_test_results\stage4_qwen_60day_holdout\gemma_41_mixed.json
 ```
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\compare_stage4_qwen.py 
-  --input-json collector_test_results\stage4_qwen_60day_holdout\holdout_manifest.json 
-  --gemma-json collector_test_results\stage4_qwen_60day_holdout\gemma_41_mixed.json 
-  --limit 41 
+.\.venv\Scripts\python.exe scripts\compare_stage4_qwen.py `
+  --input-json collector_test_results\stage4_qwen_60day_holdout\holdout_manifest.json `
+  --gemma-json collector_test_results\stage4_qwen_60day_holdout\gemma_41_mixed.json `
+  --limit 41 `
   --output collector_test_results\stage4_qwen_60day_holdout\qwen_vs_gemma_41_mixed.json
 ```
 
