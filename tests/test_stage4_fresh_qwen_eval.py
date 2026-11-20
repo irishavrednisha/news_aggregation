@@ -168,11 +168,10 @@ class BlindHumanAuditTests(unittest.TestCase):
         self.assertEqual(result["manually_verified_multi_document_events"], 6)
 
     def test_claim_cannot_finish_with_not_enough_positive_events(self):
-        self.fill(event_bad=set(
-            json.loads((self.root/"private_qwen_review_key.json").read_text(
-                encoding="utf-8"))["mapping"]).difference(
-                    list(json.loads((self.root/"private_qwen_review_key.json").read_text(
-                        encoding="utf-8"))["mapping"])[:39])))
+        mapping = json.loads((self.root/"private_qwen_review_key.json").read_text(
+            encoding="utf-8"))["mapping"]
+        # Only 39 manually accepted industrial events: fail the >=40 gate.
+        self.fill(event_bad=set(list(mapping)[39:]))
         result = score(out_dir=self.root)
         self.assertFalse(result["independent_evaluation_complete"])
         self.assertLess(result["manually_verified_industrial_events"], 40)
