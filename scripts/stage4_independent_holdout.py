@@ -197,6 +197,72 @@ def load_diagnostics(path: Path):
     return groups, warnings
 
 
+def recover_rostec_article_dates(groups: list[list[dict]], previous: dict,
+                                 now: date, max_days: int,
+                                 *, fetch_article=None) -> tuple[list[list[dict]], dict]:
+    """Recheck only unseen, undated Rostec records against their official HTML.
+
+    This is strictly read-only.  Never infer a date from the text or a related
+    article, invent a timestamp, or rewrite PostgreSQL or the article body.
+    Failures leave the source undated and ineligible for the holdout.
+    """
+    from urllib.parse import urlsplit
+
+    if fetch_article is None:
+        from collectors.data_collector import build_full_article
+        fetch_article = build_full_article
+    from collectors.data_collector import ArticlePreview
+    recovered, failures = [], []
+    attempted = 0
+    updated = []
+    for materials in groups:
+        new_materials = []
+        for m in materials:
+            entry = dict(m)
+            url = str(entry.get("url") or "")
+            host = (urlsplit(url).hostname or "").lower()
+            if (entry.get("source") == "Ростех"
+                    and host in {"rostec.ru", "www.rostec.ru"}
+                    and not date_of(entry.get("published_at"))
+                    and clean_url(url) not in previous["urls"]
+                    and fingerprint(entry) not in previous["texts"]
+                    and not any(title_duplicate(str(entry.get("title") or ""), old)
+                                for old in previous["titles"])
+                    and len(str(entry.get("text") or "")) >= 350
+                    and len(str(entry.get("title") or "")) >= 18):
+                attempted += 1
+                try:
+                    preview = ArticlePreview(
+                        source="Ростех", title=str(entry["title"]),
+                        url=url, published_at=None, preview_text="")
+                    article = fetch_article(preview)
+                    date = date_of(getattr(article, "published_at", None))
+                    # The page must describe the same article. The collector
+                    # may otherwise have parsed a recommendation/sidebar.
+                    if (date and 0 <= (now - date).days <= max_days
+                            and title_duplicate(
+                                entry["title"], str(getattr(article, "title", "")))):
+                        entry["published_at"] = (
+                            article.published_at.isoformat()
+                            if hasattr(article.published_at, "isoformat")
+                            else str(article.published_at))
+                        entry["date_provenance"] = "official_rostec_article_page"
+                        recovered.append({"url": url, "published_at": entry["published_at"]})
+                    else:
+                        failures.append({"url": url, "reason": (
+                            "date_or_title_unverified_or_outside_window")})
+                except Exception as exc:
+                    failures.append({"url": url, "reason": type(exc).__name__})
+            new_materials.append(entry)
+        updated.append(new_materials)
+    return updated, {
+        "attempted": attempted, "recovered": len(recovered),
+        "verified": recovered, "unverified": failures,
+        "note": ("Unverified dates are NOT accepted. The article page was "
+                 "requested with the collector's normal verified TLS policy."),
+    }
+
+
 def select_holdout(groups: list[list[dict]], previous: dict, now: date,
                    *, target: int = 100, max_days: int = 30,
                    max_per_source: int = 15, allow_undated: bool = False):
@@ -355,7 +421,8 @@ def blind_review_files(report: dict, directory: Path) -> None:
 def run_holdout(*, previous_reports, out_dir, target, minimum, max_days,
                 source_limit, source_cap, mode, diagnostics=None,
                 allow_undated=False, from_config=False,
-                collect_only=False, resume=False, model="gemma3:4b"):
+                collect_only=False, resume=False, model="gemma3:4b",
+                recover_missing_rostec_dates=False):
     out_dir.mkdir(parents=True, exist_ok=True)
     known = prior_signatures(previous_reports)
     manifest_path = out_dir / "holdout_manifest.json"
@@ -387,9 +454,15 @@ def run_holdout(*, previous_reports, out_dir, target, minimum, max_days,
             result, errors = load_diagnostics(diagnostics)
             groups.extend(result)
             warnings.extend(errors)
+        date_recovery = None
+        if recover_missing_rostec_dates:
+            groups, date_recovery = recover_rostec_article_dates(
+                groups, known, now, max_days)
         selected, stats = select_holdout(
             groups, known, now, target=target, max_days=max_days,
             max_per_source=source_cap, allow_undated=allow_undated)
+        if date_recovery is not None:
+            stats["rostec_date_recovery"] = date_recovery
         manifest = build_manifest(
             selected, stats, target=target, min_sample=minimum,
             mode=mode, previous=known, now=now, errors=warnings,
@@ -448,6 +521,9 @@ def main(argv=None):
     p.add_argument("--max-age-days", type=int, default=30)
     p.add_argument("--limit-per-source", type=int, default=10)
     p.add_argument("--max-per-source", type=int, default=15)
+    p.add_argument("--recover-missing-rostec-dates", action="store_true",
+                   help="Refetch unseen undated Rostec article pages with "
+                        "verified TLS; never guess or write dates to DB")
     p.add_argument("--allow-undated", action="store_true",
                    help="Diagnostic only; sample freshness is then not verified")
     p.add_argument("--from-config", action="store_true")
@@ -465,7 +541,8 @@ def main(argv=None):
         source_limit=args.limit_per_source, source_cap=args.max_per_source,
         mode=args.mode, diagnostics=args.diagnostics_json,
         allow_undated=args.allow_undated, from_config=args.from_config,
-        collect_only=args.collect_only, resume=args.resume)
+        collect_only=args.collect_only, resume=args.resume,
+        recover_missing_rostec_dates=args.recover_missing_rostec_dates)
     print(f"Output: {args.out_dir.resolve()}")
     if not report.get("minimum_sample_met", True):
         print("INSUFFICIENT UNSEEN DATED ARTICLES; no accuracy claim.")
