@@ -1,0 +1,34 @@
+name: Stage 4 final Qwen + Gemma offline acceptance
+
+on:
+  push:
+    branches:
+      - feat/stage4-qwen-gemma-final-integration-2026-11-21
+  pull_request:
+    paths:
+      - processing/qwen_gemma_final.py
+      - scripts/stage4_final_acceptance.py
+      - tests/test_stage4_qwen_gemma_final.py
+      - .github/workflows/stage4-qwen-gemma-final.yml
+
+permissions:
+  contents: read
+
+jobs:
+  offline-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile integrated code
+        run: |
+          python -m py_compile processing/qwen_gemma_final.py scripts/stage4_final_acceptance.py tests/test_stage4_qwen_gemma_final.py
+      - name: Integrated offline regression tests
+        run: |
+          python -m unittest discover -s tests -p "test_stage4_qwen_gemma_final.py" -v
+      - name: Existing Qwen regression tests
+        run: |
+          python -m unittest discover -s tests -p "test_stage4_qwen*.py" -v
