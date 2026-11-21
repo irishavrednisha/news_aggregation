@@ -60,7 +60,6 @@ def sentence_spans(body: str) -> list[tuple[int, int, str]]:
         tail = re.search(r"([А-Яа-яЁёA-Za-z]+)\.$", prefix)
         if tail and tail.group(1).lower() in _ABBREVIATIONS:
             continue
-        end = match.end() - len(match.group().split()[-1]) if False else None
         # match.group() contains punctuation, any closing quote and whitespace.
         end = match.start() + len(match.group().rstrip())
         raw = body[start:end]
