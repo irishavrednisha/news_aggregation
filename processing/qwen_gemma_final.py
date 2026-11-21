@@ -205,6 +205,20 @@ def _edit_differences(qwen: str, gemma: str) -> list[str]:
     q_acronyms = set(ACRONYM_RE.findall(qwen))
     if q_acronyms != set(ACRONYM_RE.findall(gemma)):
         issues.append("edit_changed_acronyms")
+    # Conservative coverage checks: never silently discard the main event or
+    # replace the actor when the original Qwen text was source-validated.
+    if qwen and len(gemma.strip()) < max(65, int(len(qwen.strip()) * 0.55)):
+        issues.append("edit_dropped_substantial_context")
+    actor_roots = (
+        "прокуратур", "суд", "министерств", "правительств", "завод",
+        "предприяти", "компани", "инвестор", "подрядчик", "ведомств",
+    )
+    before_actors = {root for root in actor_roots if re.search(
+        r"\b" + root + r"\w*", normalize(qwen))}
+    after_actors = {root for root in actor_roots if re.search(
+        r"\b" + root + r"\w*", normalize(gemma))}
+    if before_actors != after_actors:
+        issues.append("edit_changed_actor_anchors")
     if not gemma.strip():
         issues.append("edit_empty")
     return issues
