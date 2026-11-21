@@ -73,6 +73,9 @@ def propose_pairs(rows: list[dict], *, title_min: float = .135,
                 continue
             if clean_url(left.get("url")) == clean_url(right.get("url")):
                 continue
+            if (urlsplit(clean_url(left.get("url"))).hostname ==
+                    urlsplit(clean_url(right.get("url"))).hostname):
+                continue
             title_score = _similarity(titles[i], titles[j])
             if title_score < title_min:
                 continue
@@ -215,6 +218,10 @@ def reconcile(source: Path, dest: Path, *, supplement_specs: Path | None = None,
             item = _fetch_new_article(spec, fetch=fetch)
             if item["source"] in {m["source"] for m in parent["source_materials"]}:
                 raise ValueError("Not an independent source")
+            if urlsplit(item["url"]).hostname in {
+                    urlsplit(clean_url(m["url"])).hostname
+                    for m in parent["source_materials"]}:
+                raise ValueError("Same publishing hostname as existing article")
             reason = new_material(item, prior, asof, max_days)
             if reason:
                 raise ValueError("Not new/dated/full HTML: "+reason)
