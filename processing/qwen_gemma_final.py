@@ -19,6 +19,7 @@ from processing.qwen_abstractive_summary import (
     MODEL as QWEN_MODEL, DEFAULT_OPTIONS as QWEN_OPTIONS,
     GENERATION_SCHEMA, LocalOllama, attach_evidence, canonical_materials,
     prepare_context, source_digest, summarize_cluster, validate_response,
+    _claim_issues,
 )
 
 VERSION = "stage4-qwen-gemma-final-v1"
@@ -160,6 +161,17 @@ def _review_check(review: object, candidate: str, original: list[dict]) -> list[
                 issues.append("gemma_review_unverifiable_quote")
         elif claim["verdict"] == "supported":
             issues.append("gemma_review_supported_without_quote")
+        if (claim["verdict"] == "supported" and quote in source.get(sid, "")
+                and type(n) is int and 1 <= n <= len(parts)):
+            # A literal citation alone is never enough: recheck the precise
+            # subject, number, unit, temporal status and other claim bindings.
+            indexed = {
+                "claim": parts[n - 1], "source_ids": [sid],
+                "evidence_quotes": [quote],
+            }
+            original_by_id = {m["id"]: m for m in original}
+            issues.extend("gemma_review_quote:" + problem for problem in
+                          _claim_issues(indexed, parts[n - 1], original_by_id, n))
         if claim["verdict"] != "supported":
             issues.append("gemma_review_" + claim["verdict"] + "_claim_" + str(n))
             if not claim["reason"].strip():
