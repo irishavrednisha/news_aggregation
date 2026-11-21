@@ -95,6 +95,9 @@ class FreshSelectionGateTests(unittest.TestCase):
         self.assertTrue(_multi(row))
         row["source_materials"][1]["source"] = "Site A"
         self.assertFalse(_multi(row))
+        row["source_materials"][1]["source"] = "Site B"
+        row["source_materials"][1]["url"] = "https://site-a.test/another-page"
+        self.assertFalse(_multi(row))
 
 
 class EndToEndCliSafetyTests(unittest.TestCase):
