@@ -1,0 +1,31 @@
+name: Stage 4 strict extractive offline contracts
+
+on:
+  push:
+    branches:
+      - feat/stage4-extractive-qwen-selection-2026-11-22
+  pull_request:
+    paths:
+      - processing/extractive_summarizer.py
+      - scripts/stage4_extractive_acceptance.py
+      - tests/test_stage4_extractive.py
+      - .github/workflows/stage4-extractive.yml
+
+permissions:
+  contents: read
+
+jobs:
+  extractive-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile extractive modules
+        run: python -m py_compile processing/extractive_summarizer.py scripts/stage4_extractive_acceptance.py tests/test_stage4_extractive.py
+      - name: Run extraction guarantees
+        run: python -m unittest discover -s tests -p "test_stage4_extractive.py" -v
+      - name: Ensure existing Stage 4 regressions remain intact
+        run: python -m unittest discover -s tests -p "test_stage4_qwen*.py" -v
