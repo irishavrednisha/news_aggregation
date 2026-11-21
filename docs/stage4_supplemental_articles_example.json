@@ -1,0 +1,29 @@
+{
+  "note": "Optional real article pages matching already collected November 2026 events. URL pages must be re-fetched over verified TLS, with original publication date and full HTML text; skip any page failing checks. No article text or dates are fabricated here.",
+  "articles": [
+    {
+      "target_cluster_id": 900001,
+      "source": "Интерфакс Россия",
+      "url": "https://www.interfax-russia.ru/center/news/kurskiy-elektroapparatnyy-zavod-avtomatiziroval-proizvodstvo-za-350-mln-rubley",
+      "title": "Курский электроаппаратный завод автоматизировал производство за 350 млн рублей"
+    },
+    {
+      "target_cluster_id": 900006,
+      "source": "Energybase",
+      "url": "https://energybase.ru/news/companies/na-nevskom-zavode-vvedeno-v-ekspluataciu-novoe-mehanoobrabatyvausee-oborudova-2026-11-20",
+      "title": "На Невском заводе введено в эксплуатацию новое механообрабатывающее оборудование"
+    },
+    {
+      "target_cluster_id": 900012,
+      "source": "Российский морской регистр судоходства",
+      "url": "https://rs-class.org/news/general/rs-vydal-dokumenty-na-trauler-kapitan-geller/",
+      "title": "РС выдал документы на траулер «Капитан Геллер»"
+    },
+    {
+      "target_cluster_id": 900003,
+      "source": "Ликинский автобусный завод",
+      "url": "https://bus.ru/news/elektrobus-osobo-bolshogo-klassa-e-citymax-18-novaya-model-likinskogo-avtobusnogo-zavoda/",
+      "title": "Электробус особо большого класса e-CITYMAX 18: новая модель Ликинского автобусного завода"
+    }
+  ]
+}
