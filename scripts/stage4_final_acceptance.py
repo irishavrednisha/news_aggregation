@@ -95,7 +95,10 @@ def quality(rows: list[dict], total: int, tests: dict, input_sha: str) -> dict:
         "human_gemma_introduced_errors": None,
         "human_multisource_coherence": None,
         "independent_human_evaluation_complete": False,
-        "models_actually_called": any(row.get("model_requests", {}).get("qwen", 0) for row in rows),
+        "model_calls_attempted": any(row.get("model_requests", {}).get("qwen", 0) for row in rows),
+        "qwen_drafts_obtained": sum(bool(row.get("qwen_summary")) for row in rows),
+        "gemma_reviews_obtained": sum(bool(row.get("gemma_fact_review")) for row in rows),
+        "gemma_edits_obtained": sum(bool(row.get("gemma_edited_summary")) for row in rows),
         "auto_publication_allowed": False,
         "ready_for_stage5_data_contract": (
             len(rows) == total and not counts["processing_error"]
@@ -124,7 +127,7 @@ def ollama_preflight() -> list[str]:
 
 
 def test_suite() -> dict:
-    patterns = ("test_stage4_qwen*.py", "test_stage4_qwen_gemma_final.py")
+    patterns = ("test_stage4_qwen*.py",)
     records = []
     for pattern in patterns:
         cmd = [sys.executable, "-m", "unittest", "discover",
