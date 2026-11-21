@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 import random
 import sys
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -42,9 +43,11 @@ def _sha(path: Path) -> str:
 
 def _multi(row: dict) -> bool:
     materials = row.get("source_materials") or []
-    return len(materials) > 1 and len(
-        {clean_url(x.get("url", "")) for x in materials}) > 1 and len(
-        {str(x.get("source") or "") for x in materials}) > 1
+    return (len(materials) > 1
+            and len({clean_url(x.get("url", "")) for x in materials}) > 1
+            and len({str(x.get("source") or "") for x in materials}) > 1
+            and len({urlsplit(clean_url(x.get("url", ""))).hostname
+                     for x in materials}) > 1)
 
 
 def check_manifest(manifest: dict, *, minimum: int, multi_minimum: int) -> dict:
