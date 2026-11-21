@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -109,6 +110,19 @@ def quality(rows: list[dict], total: int, tests: dict, input_sha: str) -> dict:
     }
 
 
+def ollama_preflight() -> list[str]:
+    """Avoid making dozens of slow failing requests when local models are absent."""
+    try:
+        req = Request("http://127.0.0.1:11434/api/tags", method="GET")
+        with urlopen(req, timeout=6) as response:
+            data = json.load(response)
+        names = {str(m.get("name") or m.get("model") or "") for m in data.get("models", [])}
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        return ["ollama_not_available:" + type(exc).__name__]
+    return ["missing_ollama_model:" + model for model in (QWEN_MODEL, GEMMA_MODEL)
+            if model not in names]
+
+
 def test_suite() -> dict:
     patterns = ("test_stage4_qwen*.py", "test_stage4_qwen_gemma_final.py")
     records = []
@@ -148,6 +162,13 @@ def generate(input_path: Path, out_dir: Path, *, request=None,
         report = quality([], len(events), tests, input_digest)
         atomic_write(metrics_path, report)
         return report
+    if run_tests and request is None:
+        errors = ollama_preflight()
+        if errors:
+            report = quality([], len(events), tests, input_digest)
+            report["preflight_errors"] = errors
+            atomic_write(metrics_path, report)
+            return report
 
     previous = {}
     if data_path.exists():
