@@ -166,8 +166,14 @@ git pull --ff-only
 .\.venv\Scripts\python.exe scripts\stage4_reconcile_multisource.py `
   --input-manifest collector_test_results\stage4_fresh_holdout\holdout_manifest.json `
   --out-dir collector_test_results\stage4_fresh_holdout_reconciled `
-  --supplemental-json docs\stage4_supplemental_articles_example.json
+  --supplemental-json docs\stage4_supplemental_articles_example.json `
+  --generate
 ```
+
+Параметр `--generate` вызывает Qwen **в рамках того же запуска**,
+но только когда проверка после фактического извлечения страниц
+подтвердила 40+ событий и 5+ многодокументных групп. Иначе
+Qwen не запускается, остаётся диагностический gate.
 
 Это создаст новые `holdout_manifest.json`,
 `qwen_holdout_gate.json` и `multi_event_candidates.json` только
