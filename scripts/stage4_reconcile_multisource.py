@@ -112,11 +112,14 @@ def _load_prior_from_manifest(document: dict, root: Path) -> dict:
 
 
 def _fetch_new_article(spec: dict, *, fetch=None) -> dict:
-    url = clean_url(spec.get("url"))
+    # clean_url canonicalization rewrites http:// to https://. Check the
+    # *original* scheme first to avoid silently upgrading untrusted links.
+    original_url = str(spec.get("url") or "").strip()
+    if urlsplit(original_url).scheme != "https":
+        raise ValueError("Supplemental source must use HTTPS")
+    url = clean_url(original_url)
     if not url:
         raise ValueError("Invalid supplemental URL")
-    if urlsplit(url).scheme != "https":
-        raise ValueError("Supplemental source must use HTTPS")
     source = str(spec.get("source") or "").strip()
     if not source or len(source) > 100:
         raise ValueError("Invalid supplemental source name")
