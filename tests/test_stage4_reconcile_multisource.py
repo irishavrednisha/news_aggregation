@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 import json
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
@@ -153,6 +155,17 @@ class RecoveryTests(unittest.TestCase):
                     Path("old.json"),Path("new"),generate_after=True)
                 model.assert_called_once()
         self.assertTrue(result["generation"]["complete"])
+
+    def test_script_entrypoint_runs_with_python_from_repository_root(self):
+        root = Path(__file__).resolve().parents[1]
+        script = root/"scripts"/"stage4_reconcile_multisource.py"
+        result = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            cwd=root, capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--supplemental-json", result.stdout)
+        self.assertIn("--generate", result.stdout)
 
     def test_double_run_never_overwrites_frozen_manifest(self):
         with TemporaryDirectory() as td:
