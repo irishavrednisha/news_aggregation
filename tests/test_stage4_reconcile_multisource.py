@@ -7,9 +7,10 @@ import json
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from scripts.stage4_reconcile_multisource import (
-    _fetch_new_article, propose_pairs, reconcile,
+    _fetch_new_article, propose_pairs, reconcile, reconcile_then_generate,
 )
 from scripts.stage4_independent_holdout import atomic_json
 
@@ -133,6 +134,25 @@ class RecoveryTests(unittest.TestCase):
             self.assertIn("fewer_than_required_multi_document_events",
                           result["gate"]["errors"])
             self.assertEqual(result["result_sample_size"],4)
+
+    def test_one_command_model_gate_blocks_generation(self):
+        with patch("scripts.stage4_reconcile_multisource.reconcile",
+                   return_value={"gate":{"ready_for_model_generation":False}}):
+            with patch("scripts.stage4_fresh_qwen_eval.generate") as model:
+                result = reconcile_then_generate(
+                    Path("old.json"),Path("new"),generate_after=True)
+                model.assert_not_called()
+        self.assertFalse(result["generation"]["model_called"])
+
+    def test_one_command_generates_only_after_successful_gate(self):
+        with patch("scripts.stage4_reconcile_multisource.reconcile",
+                   return_value={"gate":{"ready_for_model_generation":True}}):
+            with patch("scripts.stage4_fresh_qwen_eval.generate",
+                       return_value={"complete":True}) as model:
+                result = reconcile_then_generate(
+                    Path("old.json"),Path("new"),generate_after=True)
+                model.assert_called_once()
+        self.assertTrue(result["generation"]["complete"])
 
     def test_double_run_never_overwrites_frozen_manifest(self):
         with TemporaryDirectory() as td:
