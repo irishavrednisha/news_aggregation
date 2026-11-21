@@ -293,13 +293,40 @@ def reconcile(source: Path, dest: Path, *, supplement_specs: Path | None = None,
             "gate":gate, "output":str(dest)}
 
 
+def reconcile_then_generate(source: Path, dest: Path, *,
+                            supplement_specs: Path | None = None,
+                            generate_after: bool = False,
+                            root: Path | None = None, fetch=None) -> dict:
+    """An opt-in single command; a failed sample gate NEVER invokes Qwen."""
+    result = reconcile(source, dest, supplement_specs=supplement_specs,
+                       root=root, fetch=fetch)
+    if generate_after:
+        if result["gate"]["ready_for_model_generation"]:
+            from scripts.stage4_fresh_qwen_eval import generate
+            result["generation"] = generate(out_dir=dest)
+        else:
+            result["generation"] = {"complete": False,
+                                     "reason": "insufficient_verified_multisource_events",
+                                     "model_called": False}
+    return result
+
+
 if __name__ == "__main__":
     import argparse
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--input-manifest",type=Path,required=True)
     ap.add_argument("--out-dir",type=Path,required=True)
     ap.add_argument("--supplemental-json",type=Path)
+    ap.add_argument("--generate",action="store_true",
+                    help="Run local Qwen ONLY if 40 events and 5 sources pass gate")
     args=ap.parse_args()
-    print(json.dumps(reconcile(args.input_manifest,args.out_dir,
-                  supplement_specs=args.supplemental_json),
-                  ensure_ascii=False,indent=2))
+    result = reconcile_then_generate(
+        args.input_manifest, args.out_dir,
+        supplement_specs=args.supplemental_json,
+        generate_after=args.generate,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    if args.generate and not result["gate"]["ready_for_model_generation"]:
+        raise SystemExit(2)
+    if args.generate and not result["generation"].get("complete"):
+        raise SystemExit(4)
