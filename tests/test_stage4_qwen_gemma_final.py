@@ -89,6 +89,14 @@ class Stage4FinalTests(unittest.TestCase):
         self.assertIn("edit_changed_negation", f._edit_differences(
             "Завод не завершил испытания.", "Завод завершил испытания."))
 
+    def test_editor_cannot_hide_actor_change_or_main_event(self):
+        result = f._edit_differences(
+            "Прокуратура направила заявление в суд о взыскании денег. "
+            "Решение ещё не принято, рассмотрение продолжается.",
+            "Суд уже взыскал деньги.")
+        self.assertIn("edit_changed_actor_anchors", result)
+        self.assertIn("edit_dropped_substantial_context", result)
+
     def test_verbatim_evidence_required_and_all_claims_covered(self):
         bad = f._review_check(review(quote_override="Это не текст источника."), DRAFT, SOURCE)
         self.assertIn("gemma_review_unverifiable_quote", bad)
