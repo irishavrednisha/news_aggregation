@@ -19,6 +19,11 @@ import re
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from scripts.stage4_independent_holdout import (
     atomic_json, clean_url, date_of, fingerprint, new_material,
