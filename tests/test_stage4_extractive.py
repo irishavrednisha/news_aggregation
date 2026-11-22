@@ -167,5 +167,64 @@ class ExtractiveTests(unittest.TestCase):
             e.LocalOllama("https://example.org")
 
 
+    def test_syndicated_identical_event_not_repeated(self):
+        duplicate = dict(SOURCE[0], id="source-b",
+                         text=BODY.replace('"', '«'))
+        row = e.summarize_extractive(1, SOURCE + [duplicate], request=FakeOllama({
+            "selected_ids": ["s1_1", "s2_1", "s1_2"], "needs_review": False,
+        }))
+        self.assertEqual(row["final_summary"], FIRST + " " + SECOND)
+        self.assertEqual(row["dropped_duplicate_ids"], ["s2_1"])
+        self.assertEqual(len(row["extractive_sentences"]), 2)
+        self.assertEqual(row["status"], "ready_for_moderation")
+
+    def test_output_restores_source_sentence_order(self):
+        row = e.summarize_extractive(1, SOURCE, request=FakeOllama({
+            "selected_ids": ["s1_1", "s1_3", "s1_2"], "needs_review": False,
+        }))
+        self.assertEqual(row["final_summary"], BODY)
+        self.assertEqual(row["selected_ids"], ["s1_1", "s1_2", "s1_3"])
+
+    def test_long_model_selection_trims_complete_sentences(self):
+        fragments = [
+            f"На предприятии начался выпуск оборудования модели {n} для промышленного производства, "
+            + "и специалисты проверили стабильность работы автоматизированных систем на испытаниях."
+            for n in range(1, 6)
+        ]
+        source = [dict(SOURCE[0], text=" ".join(fragments))]
+        row = e.summarize_extractive(1, source, request=FakeOllama({
+            "selected_ids": ["s1_1", "s1_2", "s1_3", "s1_4", "s1_5"],
+            "needs_review": False,
+        }))
+        self.assertLessEqual(len(row["final_summary"]), e.MAX_SUMMARY_CHARS)
+        self.assertTrue(row["dropped_to_fit_ids"])
+        self.assertNotIn("extractive_summary_too_long", row["review_reasons"])
+        self.assertTrue(all(s["text"] in source[0]["text"]
+                            for s in row["extractive_sentences"]))
+
+    def test_site_footer_candidates_filtered(self):
+        source = [dict(SOURCE[0], text=(
+            FIRST + " Наши контакты: г. Москва, Ленинградский проспект, д. 72, к. "
+            + SECOND
+        ))]
+        candidates, _ = e.build_candidates(source)
+        self.assertTrue(candidates)
+        self.assertFalse(any("г. Москва" in x["text"] for x in candidates))
+
+    def test_background_lead_is_not_automatic_main_event(self):
+        source = [dict(SOURCE[0], title="КЭАЗ представил инновационные разработки",
+                       text=("На отраслевой конференции прошла встреча участников рынка оборудования. "
+                             "В ходе встречи обсуждались различные проекты промышленного сектора. "
+                             "КЭАЗ представил инновационные разработки в области электротехники. "
+                             "Специалисты рассказали о новых технологических решениях для производства."))]
+        row = e.summarize_extractive(1, source, request=FakeOllama({
+            "selected_ids": ["s1_1", "s1_3", "s1_4"],
+            "needs_review": False,
+        }))
+        self.assertEqual(row["status"], "needs_manual_review")
+        self.assertIn("opening_misses_headline_event", row["review_reasons"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
