@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 from processing.qwen_abstractive_summary import MODEL, source_digest
 from processing.extractive_summarizer import VERSION, summarize_extractive
 
-DEFAULT_DIR = ROOT / "collector_test_results" / "stage4_extractive"
+DEFAULT_DIR = ROOT / "collector_test_results" / "stage4_extractive_v1_1"
 FINISHED = {"ready_for_moderation", "needs_manual_review", "not_for_publication"}
 
 
