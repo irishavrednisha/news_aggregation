@@ -188,7 +188,7 @@ class ExtractiveTests(unittest.TestCase):
     def test_long_model_selection_trims_complete_sentences(self):
         fragments = [
             f"На предприятии начался выпуск оборудования модели {n} для промышленного производства, "
-            + "и специалисты проверили стабильность работы автоматизированных систем на испытаниях."
+            + "и специалисты проверили стабильность работы автоматизированных систем на длительных испытаниях после запуска."
             for n in range(1, 6)
         ]
         source = [dict(SOURCE[0], text=" ".join(fragments))]
