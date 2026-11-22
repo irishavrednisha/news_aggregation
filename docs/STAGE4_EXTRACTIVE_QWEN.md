@@ -33,7 +33,7 @@ ollama list
 
 ## Отчёты
 
-В collector_test_results/stage4_extractive/ появятся:
+В collector_test_results/stage4_extractive_v1_1/ появятся:
 - stage4_extractive_results.json — текст каждой экстрактивной сводки, номера предложений, источник, URL, позиции в исходном тексте, хеши источников и статусы.
 - stage4_extractive_quality_report.json — число готовых к модерации событий, ошибки выбора, статистика, встроенные офлайн-тесты.
 
