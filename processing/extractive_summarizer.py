@@ -9,12 +9,13 @@ from __future__ import annotations
 import json
 import re
 import time
+import unicodedata
 
 from processing.qwen_abstractive_summary import (
     MODEL, LocalOllama, canonical_materials, source_digest,
 )
 
-VERSION = "stage4-extractive-qwen-v1"
+VERSION = "stage4-extractive-qwen-v1.1"
 OPTIONS = {"temperature": 0, "num_ctx": 4096, "num_predict": 260}
 MAX_CANDIDATES = 34
 MAX_CONTEXT_CHARS = 6600
@@ -45,7 +46,26 @@ _ABBREVIATIONS = {
 }
 _WORDS = re.compile(r"[А-Яа-яЁёA-Za-z]{4,}")
 _NUMBERS = re.compile(r"\d")
-_LEAD_BAD = re.compile(r"^(?:он|она|они|это|эти|также|при этом|по его словам)\b", re.I)
+_LEAD_BAD = re.compile(r"^(?:он|она|они|это|эти|также|при этом|по его словам)\\b", re.I)
+_BOILERPLATE = re.compile(
+    r"(?:контактная информация|политика конфиденциальности|"
+    r"персональных данных|пользовательское соглашение|"
+    r"©|\\bcookie\\b|\\bг\\.\\s*[А-ЯЁ][а-яё]+[^.]{0,100}\\bд\\.\\s*\\d+)",
+    re.I,
+)
+
+
+def _literal_equivalence(text: str) -> str:
+    """For deduplication only. Published fragments retain their exact spelling."""
+    text = unicodedata.normalize("NFKC", text).casefold().replace("ё", "е")
+    return "".join(ch for ch in text if ch.isalnum())
+
+
+def _stem_tokens(text: str) -> set[str]:
+    """Conservative title-overlap signal; never changes source text."""
+    return {token[:5] for token in re.findall(r"[А-Яа-яЁёA-Za-z]{3,}", text.lower())
+            if token[:5] not in {"котор", "новые", "также", "после", "своих"}}
+
 
 
 def sentence_spans(body: str) -> list[tuple[int, int, str]]:
@@ -95,6 +115,8 @@ def build_candidates(materials: list[dict]) -> tuple[list[dict], dict]:
             if len(value) < 28 or len(value) > 400:
                 continue
             if _LEAD_BAD.search(value) and index > 1:
+                continue
+            if _BOILERPLATE.search(value):
                 continue
             overlap = len(_terms(value) & title_terms)
             priority = (70 if index <= 2 else 0) + min(8, overlap) * 5
@@ -185,6 +207,7 @@ def summarize_extractive(cluster_id: int | str, materials: list[dict], *,
         "source_sha256": source_digest(original),
         "final_summary": "", "main_event": "",
         "extractive_sentences": [], "selected_ids": [],
+        "dropped_duplicate_ids": [], "dropped_to_fit_ids": [],
         "selected_version": "none", "validation_issues": [],
         "review_reasons": [], "status": "needs_manual_review",
         "source_coverage": {}, "model_versions": {
@@ -242,7 +265,38 @@ def summarize_extractive(cluster_id: int | str, materials: list[dict], *,
             outcome["review_reasons"] = ["unusable_qwen_selection"]
             return outcome
 
-        picked = [by_id[key] for key in selection["selected_ids"]]
+        # Remove equivalent sentences across syndicated articles. This does
+        # not edit any sentence: we keep one whole original span.
+        picked_in_rank_order = []
+        seen_equivalent = set()
+        for key in selection["selected_ids"]:
+            item = by_id[key]
+            equivalent = _literal_equivalence(item["text"])
+            if equivalent in seen_equivalent:
+                outcome["dropped_duplicate_ids"].append(key)
+                continue
+            seen_equivalent.add(equivalent)
+            picked_in_rank_order.append(item)
+
+        # The model ranks importance; keep its priority when applying the
+        # length cap, then restore source order for readable chronology.
+        within_budget = []
+        size = 0
+        for item in picked_in_rank_order:
+            extra = len(item["text"]) + (1 if within_budget else 0)
+            if size + extra <= MAX_SUMMARY_CHARS:
+                within_budget.append(item)
+                size += extra
+            else:
+                outcome["dropped_to_fit_ids"].append(item["candidate_id"])
+        source_order = {doc["id"]: pos for pos, doc in enumerate(original)}
+        picked = sorted(within_budget,
+                        key=lambda item: (source_order[item["source_id"]],
+                                          item["sentence_index"]))
+        if not picked:
+            outcome["review_reasons"] = ["no_sentence_within_summary_budget"]
+            return outcome
+
         # A source sentence is trusted only through literal offsets, never LLM text.
         for sentence in picked:
             doc = next(d for d in original if d["id"] == sentence["source_id"])
@@ -253,7 +307,7 @@ def summarize_extractive(cluster_id: int | str, materials: list[dict], *,
             outcome["review_reasons"] = ["source_provenance_failed"]
             return outcome
 
-        outcome["selected_ids"] = selection["selected_ids"]
+        outcome["selected_ids"] = [item["candidate_id"] for item in picked]
         outcome["extractive_sentences"] = picked
         outcome["final_summary"] = " ".join(sentence["text"] for sentence in picked)
         outcome["main_event"] = picked[0]["text"]
@@ -261,6 +315,18 @@ def summarize_extractive(cluster_id: int | str, materials: list[dict], *,
 
         if len(outcome["final_summary"]) > MAX_SUMMARY_CHARS:
             outcome["review_reasons"].append("extractive_summary_too_long")
+        # If a later selected sentence is much closer to the actual article
+        # headline than the opening, Qwen may have selected a background
+        # paragraph as the main event. Flag it instead of claiming approval.
+        first = picked[0]
+        same_source = [item for item in picked if item["source_id"] == first["source_id"]]
+        title_words = _stem_tokens(first["source_title"])
+        if title_words and len(same_source) > 1:
+            lead_overlap = len(_stem_tokens(first["text"]) & title_words)
+            strongest = max(len(_stem_tokens(item["text"]) & title_words)
+                            for item in same_source)
+            if strongest >= 2 and lead_overlap + 2 <= strongest:
+                outcome["review_reasons"].append("opening_misses_headline_event")
         if picked[0]["sentence_index"] > 3:
             outcome["review_reasons"].append("main_event_not_from_article_lead")
         if len({x["source_id"] for x in picked}) > 1:
